@@ -1,0 +1,255 @@
+version: '3.8'
+services:
+  limesurvey:
+    image: limesurvey:latest
+    ports:
+      - '8080:8080'
+    environment:
+      DB_TYPE: mysql
+      DB_HOST: limesurvey-mariadb
+      DB_PORT: '3306'
+      DB_NAME: limesurvey
+      DB_USERNAME: limesurvey
+      DB_PASSWORD: limesurvey-mariadb-password
+      ADMIN_USER: '{user.firstName}_{user.lastName}'
+      ADMIN_NAME: '{user.firstName} {user.lastName}'
+      ADMIN_EMAIL: '{user.userEmail}'
+      ADMIN_PASSWORD: bundle-password
+      PUBLIC_URL: http://localhost:8080
+      INSTALL_DEMO_DATA: 'true'
+      ENABLE_SUITECRM_INTEGRATION: 'true'
+      SUITECRM_URL: suitecrm
+      SUITECRM_ADMIN_USER: '{user.userEmail}'
+      SUITECRM_ADMIN_PASSWORD: bundle-password
+      SUITECRM_DB_HOST: suitecrm-mariadb
+      SUITECRM_DB_PORT: '3306'
+      SUITECRM_DB_NAME: suitecrm
+      SUITECRM_DB_USER: suitecrm
+      SUITECRM_DB_PASSWORD: suitecrm-mariadb-password
+    x-clouve-environment-types:
+      DB_TYPE: static
+      DB_HOST: containerReference
+      DB_PORT: static
+      DB_NAME: static
+      DB_USERNAME: static
+      DB_PASSWORD: secret
+      ADMIN_USER: applicationUsername
+      ADMIN_NAME: userConfigurable
+      ADMIN_EMAIL: applicationUsername
+      ADMIN_PASSWORD: applicationPassword
+      PUBLIC_URL: applicationUrl
+      INSTALL_DEMO_DATA: static
+      ENABLE_SUITECRM_INTEGRATION: static
+      SUITECRM_URL: containerReference
+      SUITECRM_ADMIN_USER: applicationUsername
+      SUITECRM_ADMIN_PASSWORD: applicationPassword
+      SUITECRM_DB_HOST: containerReference
+      SUITECRM_DB_PORT: static
+      SUITECRM_DB_NAME: static
+      SUITECRM_DB_USER: static
+      SUITECRM_DB_PASSWORD: secret
+    volumes:
+      - limesurvey-data:/var/www/html
+      - limesurvey-upload:/var/www/html/upload
+    x-clouve-metadata:
+      containerName: limesurvey
+      purpose: Frontend
+      protocol: TCP
+      isPublic: true
+      memoryBase: 1
+      cpuBase: 1
+    x-clouve-bundle-metadata:
+      appVersion: 6.16.1
+      appTitle: LimeSurvey
+      appDescription: LimeSurvey is a powerful open-source survey platform that enables organizations to create, distribute, and analyze professional surveys with ease. Designed for flexibility and scalability, LimeSurvey offers a comprehensive suite of features including customizable question types, advanced logic and branching, multilingual support, and robust data analysis tools. Whether for market research, customer feedback, academic studies, or employee engagement, LimeSurvey empowers users to gather actionable insights through intuitive survey design and detailed reporting capabilities. Its user-friendly interface and extensive customization options make it an ideal solution for businesses and institutions seeking to make data-driven decisions.
+    x-clouve-healthcheck:
+      enabled: true
+      type: HTTP
+      path: /
+      port: 8080
+      initialDelay: 30
+      interval: 15
+      timeout: 15
+      failureThreshold: 5
+      successThreshold: 1
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - '--spider'
+        - '-q'
+        - http://localhost:8080/
+      interval: 15s
+      timeout: 15s
+      retries: 5
+      start_period: 30s
+    x-clouve-volumes:
+      - name: limesurvey-data
+        size: 10
+        description: Volume for LimeSurvey application files and configuration
+      - name: limesurvey-upload
+        size: 10
+        description: Volume for LimeSurvey uploaded files and surveys
+  limesurvey-mariadb:
+    image: limesurvey-mariadb:latest
+    ports:
+      - '3306:3306'
+    environment:
+      MYSQL_DATABASE: limesurvey
+      MYSQL_USER: limesurvey
+      MYSQL_PASSWORD: limesurvey-mariadb-password
+      MYSQL_ROOT_PASSWORD: limesurvey-mariadb-root-password
+    x-clouve-environment-types:
+      MYSQL_DATABASE: static
+      MYSQL_USER: static
+      MYSQL_PASSWORD: secret
+      MYSQL_ROOT_PASSWORD: secret
+    volumes:
+      - limesurvey-db-data:/var/lib/mysql
+    x-clouve-metadata:
+      containerName: limesurvey-mariadb
+      purpose: Database
+      protocol: TCP
+      isPublic: false
+      memoryBase: 1
+      cpuBase: 0.5
+    x-clouve-healthcheck:
+      enabled: true
+      type: Command
+      path: healthcheck.sh --connect --innodb_initialized
+      port: 3306
+      initialDelay: 10
+      interval: 10
+      timeout: 5
+      failureThreshold: 5
+      successThreshold: 1
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - healthcheck.sh --connect --innodb_initialized
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    x-clouve-volumes:
+      - name: limesurvey-db-data
+        size: 10
+        description: Volume for LimeSurvey MariaDB database files
+  suitecrm:
+    image: suitecrm:latest
+    ports:
+      - '80:80'
+    environment:
+      DATABASE_HOST: suitecrm-mariadb
+      DATABASE_PORT: '3306'
+      DATABASE_NAME: suitecrm
+      DATABASE_USER: suitecrm
+      DATABASE_PASSWORD: suitecrm-mariadb-password
+      SUITECRM_URL: http://localhost:8081
+      SUITECRM_ADMIN_USER: '{user.userEmail}'
+      SUITECRM_ADMIN_PASSWORD: bundle-password
+      SUITECRM_INSTALL_DEMO_DATA: 'no'
+    x-clouve-environment-types:
+      DATABASE_HOST: containerReference
+      DATABASE_PORT: static
+      DATABASE_NAME: static
+      DATABASE_USER: static
+      DATABASE_PASSWORD: secret
+      SUITECRM_URL: applicationUrl
+      SUITECRM_ADMIN_USER: applicationUsername
+      SUITECRM_ADMIN_PASSWORD: applicationPassword
+      SUITECRM_INSTALL_DEMO_DATA: static
+    volumes:
+      - suitecrm-data:/var/www/html
+    x-clouve-metadata:
+      containerName: suitecrm
+      purpose: Frontend
+      protocol: TCP
+      isPublic: true
+      memoryBase: 1
+      cpuBase: 1
+    x-clouve-bundle-metadata:
+      appVersion: 8.9.1
+      appTitle: SuiteCRM
+      appDescription: SuiteCRM is a comprehensive open-source Customer Relationship Management (CRM) solution designed to help businesses manage customer interactions, sales processes, and marketing campaigns effectively. Built for flexibility and scalability, SuiteCRM offers powerful features including contact management, sales automation, marketing tools, customer support ticketing, and detailed analytics. Its intuitive interface and extensive customization options enable organizations to tailor the platform to their specific business needs. Whether for small businesses or large enterprises, SuiteCRM empowers teams to build stronger customer relationships, streamline workflows, and drive revenue growth through data-driven insights and efficient process management.
+    x-clouve-healthcheck:
+      enabled: true
+      type: HTTP
+      path: /
+      port: 80
+      initialDelay: 30
+      interval: 15
+      timeout: 15
+      failureThreshold: 5
+      successThreshold: 1
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - '--spider'
+        - '-q'
+        - http://localhost:80/
+      interval: 15s
+      timeout: 15s
+      retries: 5
+      start_period: 30s
+    x-clouve-volumes:
+      - name: suitecrm-data
+        size: 10
+        description: Volume for SuiteCRM application files and data
+  suitecrm-mariadb:
+    image: suitecrm-mariadb:latest
+    ports:
+      - '3306:3306'
+    environment:
+      MYSQL_DATABASE: suitecrm
+      MYSQL_USER: suitecrm
+      MYSQL_PASSWORD: suitecrm-mariadb-password
+      MYSQL_ROOT_PASSWORD: suitecrm-mariadb-root-password
+    x-clouve-environment-types:
+      MYSQL_DATABASE: static
+      MYSQL_USER: static
+      MYSQL_PASSWORD: secret
+      MYSQL_ROOT_PASSWORD: secret
+    volumes:
+      - suitecrm-db-data:/var/lib/mysql
+    x-clouve-metadata:
+      containerName: suitecrm-mariadb
+      purpose: Database
+      protocol: TCP
+      isPublic: false
+      memoryBase: 1
+      cpuBase: 0.5
+    x-clouve-healthcheck:
+      enabled: true
+      type: Command
+      path: healthcheck.sh --connect --innodb_initialized
+      port: 3306
+      initialDelay: 10
+      interval: 10
+      timeout: 5
+      failureThreshold: 5
+      successThreshold: 1
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - healthcheck.sh --connect --innodb_initialized
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    x-clouve-volumes:
+      - name: suitecrm-db-data
+        size: 10
+        description: Volume for SuiteCRM MariaDB database files
+volumes:
+  limesurvey-data:
+    driver: local
+  limesurvey-upload:
+    driver: local
+  limesurvey-db-data:
+    driver: local
+  suitecrm-data:
+    driver: local
+  suitecrm-db-data:
+    driver: local

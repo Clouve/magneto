@@ -1,0 +1,68 @@
+version: '3.8'
+
+networks:
+  odoo_network:
+    driver: bridge
+
+volumes:
+  odoo_data:
+  odoo_addons:
+  postgres_data:
+
+services:
+  odoo-postgres:
+    image: r.clv.zone/e2eorg/odoo-postgres:latest
+    container_name: odoo_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: odoo
+      POSTGRES_PASSWORD: odoo_password
+    volumes:
+      # PostgreSQL 18+ uses /var/lib/postgresql as the mount point
+      # This allows pg_upgrade to work properly with version-specific subdirectories
+      - postgres_data:/var/lib/postgresql
+    networks:
+      - odoo_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U odoo"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  odoo:
+    image: r.clv.zone/e2eorg/odoo:latest
+    container_name: odoo_app
+    restart: unless-stopped
+    ports:
+      - "${TEST_PORT:-8080}:8069"
+    environment:
+      # Database Configuration
+      POSTGRES_DB_HOST: odoo-postgres
+      POSTGRES_DB_USER: odoo
+      POSTGRES_DB_PASSWORD: odoo_password
+
+      # Odoo Master Password (Database Manager)
+      # This password protects database management operations
+      # IMPORTANT: Change this to a strong password in production!
+      ODOO_MASTER_PASSWORD: odoo_master_password
+
+      # Automatic Database Initialization
+      # These settings control the automatic creation of the default database
+      ODOO_DB_NAME: odoo
+      ODOO_ADMIN_EMAIL: admin@example.com
+      ODOO_ADMIN_PASSWORD: Admin@123
+      ODOO_LANGUAGE: en_US
+      ODOO_COUNTRY: US
+
+      # Odoo URL Configuration
+      # This URL is used for web.base.url configuration in Odoo
+      ODOO_URL: http://${TEST_DOMAIN:-t1.test.clv}:${TEST_PORT:-8080}
+    volumes:
+      - odoo_data:/var/lib/odoo
+      - odoo_addons:/mnt/extra-addons
+    networks:
+      - odoo_network
+
+
+

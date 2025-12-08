@@ -1,0 +1,118 @@
+version: '3.8'
+services:
+  limesurvey:
+    image: limesurvey:latest
+    ports:
+      - '8080:8080'
+    environment:
+      DB_TYPE: mysql
+      DB_HOST: limesurvey-mariadb
+      DB_PORT: '3306'
+      DB_NAME: limesurvey
+      DB_USERNAME: limesurvey
+      DB_PASSWORD: limesurvey-mariadb-password
+      ADMIN_USER: '{user.firstName}_{user.lastName}'
+      ADMIN_NAME: '{user.firstName} {user.lastName}'
+      ADMIN_EMAIL: '{user.userEmail}'
+      ADMIN_PASSWORD: limesurvey-password
+      PUBLIC_URL: http://localhost:8080
+      INSTALL_DEMO_DATA: 'false'
+    x-clouve-environment-types:
+      DB_TYPE: static
+      DB_HOST: containerReference
+      DB_PORT: static
+      DB_NAME: static
+      DB_USERNAME: static
+      DB_PASSWORD: secret
+      ADMIN_USER: applicationUsername
+      ADMIN_NAME: userConfigurable
+      ADMIN_EMAIL: applicationUsername
+      ADMIN_PASSWORD: applicationPassword
+      PUBLIC_URL: applicationUrl
+      INSTALL_DEMO_DATA: userConfigurable
+    volumes:
+      - limesurvey-data:/var/www/html
+      - limesurvey-upload:/var/www/html/upload
+    x-clouve-metadata:
+      containerName: limesurvey
+      purpose: Frontend
+      protocol: TCP
+      isPublic: true
+      memoryBase: 1
+      cpuBase: 1
+    x-clouve-bundle-metadata:
+      appVersion: 6.16.1
+      appTitle: LimeSurvey
+      appDescription: LimeSurvey is a powerful, open-source survey platform that enables businesses and organizations to create, distribute, and analyze professional surveys with ease. Renowned for its flexibility and comprehensive feature set, LimeSurvey supports unlimited surveys, questions, and responses, making it ideal for market research, customer feedback, employee engagement, and academic studies. With an intuitive interface, advanced question types, multilingual support, and robust data analysis tools, LimeSurvey empowers users to gather actionable insights and make data-driven decisions. Its self-hosted nature ensures complete data privacy and control, while extensive customization options allow organizations to tailor surveys to their specific needs and brand identity.
+    x-clouve-healthcheck:
+      enabled: true
+      type: HTTP
+      path: /
+      port: 8080
+      initialDelay: 30
+      interval: 15
+      timeout: 15
+      failureThreshold: 5
+      successThreshold: 1
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - '--spider'
+        - '-q'
+        - http://localhost:8080/
+      interval: 15s
+      timeout: 15s
+      retries: 5
+      start_period: 30s
+    x-clouve-volumes:
+      - name: limesurvey-data
+        size: 10
+        description: Volume for LimeSurvey application files and configuration
+      - name: limesurvey-upload
+        size: 10
+        description: Volume for LimeSurvey uploaded files and surveys
+  limesurvey-mariadb:
+    image: limesurvey-mariadb:latest
+    ports:
+      - '3306:3306'
+    environment:
+      MYSQL_DATABASE: limesurvey
+      MYSQL_USER: limesurvey
+      MYSQL_PASSWORD: limesurvey-mariadb-password
+      MYSQL_ROOT_PASSWORD: limesurvey-mariadb-root-password
+    x-clouve-environment-types:
+      MYSQL_DATABASE: static
+      MYSQL_USER: static
+      MYSQL_PASSWORD: secret
+      MYSQL_ROOT_PASSWORD: secret
+    volumes:
+      - limesurvey-db-data:/var/lib/mysql
+    x-clouve-metadata:
+      containerName: limesurvey-mariadb
+      purpose: Database
+      protocol: TCP
+      isPublic: false
+      memoryBase: 1
+      cpuBase: 0.5
+    x-clouve-healthcheck:
+      enabled: false
+      type: HTTP
+      path: /health
+      port: 3306
+      initialDelay: 30
+      interval: 10
+      timeout: 5
+      failureThreshold: 3
+      successThreshold: 1
+    x-clouve-volumes:
+      - name: limesurvey-db-data
+        size: 10
+        description: Volume for MariaDB database files
+volumes:
+  limesurvey-data:
+    driver: local
+  limesurvey-upload:
+    driver: local
+  limesurvey-db-data:
+    driver: local

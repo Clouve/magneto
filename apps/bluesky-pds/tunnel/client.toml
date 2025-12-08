@@ -1,0 +1,28 @@
+# Rathole Client Configuration
+# This configuration connects to the rathole server deployed at clouve.dev
+
+[client]
+# Address of the rathole server (clouve.dev:2333)
+# Port 2333 is the control port for rathole tunnel management
+remote_addr = "clouve.dev:2333"
+
+# Authentication token - must match the server's token
+# This token is stored in Google Secret Manager on the server side
+default_token = "1FEpga448EH29inCrH3COwgc7MSiqVkLsQZB1HSMtxA="
+
+# Transport configuration - must match server settings
+[client.transport]
+type = "noise"
+
+[client.transport.noise]
+# Use the same Noise pattern as the server
+pattern = "Noise_XX_25519_ChaChaPoly_BLAKE2s"
+
+# Service configuration
+# This exposes the local nginx SSL proxy through the tunnel
+# Nginx handles SSL termination and proxies to the PDS backend
+
+# HTTPS service - exposed on port 8443
+[client.services.port-8443]
+type = "tcp"
+local_addr = "nginx:443"

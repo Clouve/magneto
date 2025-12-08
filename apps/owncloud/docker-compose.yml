@@ -1,0 +1,79 @@
+version: '3.8'
+
+networks:
+  owncloud_network:
+    driver: bridge
+
+volumes:
+  owncloud_data:
+  db_data:
+  redis_data:
+
+services:
+  owncloud-mariadb:
+    image: r.clv.zone/e2eorg/owncloud-mariadb
+    container_name: owncloud_mariadb
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: owncloud
+      MYSQL_USER: owncloud
+      MYSQL_PASSWORD: owncloud_password
+      MYSQL_ROOT_PASSWORD: root_password
+      MARIADB_AUTO_UPGRADE: 1
+    command: ["--max-allowed-packet=128M", "--innodb-log-file-size=64M"]
+    volumes:
+      - db_data:/var/lib/mysql
+    networks:
+      - owncloud_network
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost", "-u", "root", "--password=root_password"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  owncloud-redis:
+    image: r.clv.zone/e2eorg/owncloud-redis
+    container_name: owncloud_redis
+    restart: unless-stopped
+    command: ["--databases", "1"]
+    volumes:
+      - redis_data:/data
+    networks:
+      - owncloud_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  owncloud:
+    image: r.clv.zone/e2eorg/owncloud
+    container_name: owncloud_app
+    restart: unless-stopped
+    depends_on:
+      owncloud-redis:
+        condition: service_healthy
+    ports:
+      - "${TEST_PORT:-8080}:8080"
+    environment:
+      # Database Configuration
+      OWNCLOUD_DB_TYPE: mysql
+      OWNCLOUD_DB_HOST: owncloud-mariadb
+      OWNCLOUD_DB_NAME: owncloud
+      OWNCLOUD_DB_USERNAME: owncloud
+      OWNCLOUD_DB_PASSWORD: owncloud_password
+      # ownCloud Application Configuration
+      OWNCLOUD_DOMAIN: ${TEST_DOMAIN:-t1.test.clv}:${TEST_PORT:-8080}
+      OWNCLOUD_TRUSTED_DOMAINS: ${TEST_DOMAIN:-t1.test.clv}
+      OWNCLOUD_ADMIN_USERNAME: admin
+      OWNCLOUD_ADMIN_PASSWORD: Admin@123
+      # MySQL UTF8MB4 support
+      OWNCLOUD_MYSQL_UTF8MB4: "true"
+      # Redis Configuration
+      OWNCLOUD_REDIS_ENABLED: "true"
+      OWNCLOUD_REDIS_HOST: owncloud-redis
+    volumes:
+      - owncloud_data:/mnt/data
+    networks:
+      - owncloud_network
+

@@ -1,0 +1,361 @@
+version: '3.8'
+services:
+  gibbon:
+    image: gibbon:latest
+    ports:
+      - '80:80'
+    environment:
+      DB_HOST: gibbon-mysql
+      DB_NAME: gibbon
+      DB_USER: gibbon
+      DB_PASSWORD: gibbon-mysql-password
+      GIBBON_URL: http://localhost:8081
+      GIBBON_TITLE: '{org.name}'
+      GIBBON_SYSTEM_NAME: '{org.name}'
+      GIBBON_ORGANISATION_NAME: '{org.name}'
+      GIBBON_FIRSTNAME: '{user.firstName}'
+      GIBBON_LASTNAME: '{user.lastName}'
+      GIBBON_EMAIL: '{user.userEmail}'
+      GIBBON_USERNAME: '{user.firstName}_{user.lastName}'
+      GIBBON_PASSWORD: bundle-password
+      GIBBON_AUTOINSTALL: '1'
+      DEMO_DATA: 'N'
+      GIBBON_LOG_LEVEL: info
+      ENABLE_MOODLE_INTEGRATION: 'true'
+      GIBBON_INTEGRATION_SQL_1: |
+        CREATE OR REPLACE VIEW moodleUser AS
+          SELECT
+            username,
+            preferredName,
+            surname,
+            email,
+            website
+          FROM gibbonPerson
+          JOIN gibbonRole ON (gibbonRole.gibbonRoleID = gibbonPerson.gibbonRoleIDPrimary)
+          WHERE (category = 'Student' OR category = 'Staff')
+            AND status = 'Full';
+      GIBBON_INTEGRATION_SQL_2: |
+        CREATE OR REPLACE VIEW moodleCourse AS
+          SELECT *
+          FROM gibbonCourse
+          WHERE gibbonSchoolYearID = (
+            SELECT gibbonSchoolYearID
+            FROM gibbonSchoolYear
+            WHERE status = 'Current'
+          );
+      GIBBON_INTEGRATION_SQL_3: |
+        CREATE OR REPLACE VIEW moodleEnrolment AS
+          -- Student enrollments
+          SELECT
+            gibbonCourseClass.gibbonCourseID,
+            gibbonPerson.username,
+            'student' AS role
+          FROM gibbonCourseClassPerson
+          JOIN gibbonPerson ON (gibbonCourseClassPerson.gibbonPersonID = gibbonPerson.gibbonPersonID)
+          JOIN gibbonCourseClass ON (gibbonCourseClassPerson.gibbonCourseClassID = gibbonCourseClass.gibbonCourseClassID)
+          WHERE gibbonCourseClassPerson.role = 'Student'
+            AND gibbonPerson.status = 'Full'
+          UNION
+          -- Teacher enrollments
+          SELECT
+            gibbonCourseClass.gibbonCourseID,
+            gibbonPerson.username,
+            'editingteacher' AS role
+          FROM gibbonCourseClassPerson
+          JOIN gibbonPerson ON (gibbonCourseClassPerson.gibbonPersonID = gibbonPerson.gibbonPersonID)
+          JOIN gibbonCourseClass ON (gibbonCourseClassPerson.gibbonCourseClassID = gibbonCourseClass.gibbonCourseClassID)
+          WHERE gibbonCourseClassPerson.role = 'Teacher'
+            AND gibbonPerson.status = 'Full';
+    x-clouve-environment-types:
+      DB_HOST: containerReference
+      DB_NAME: static
+      DB_USER: static
+      DB_PASSWORD: secret
+      GIBBON_URL: applicationUrl
+      GIBBON_TITLE: userConfigurable
+      GIBBON_SYSTEM_NAME: userConfigurable
+      GIBBON_ORGANISATION_NAME: userConfigurable
+      GIBBON_FIRSTNAME: userConfigurable
+      GIBBON_LASTNAME: userConfigurable
+      GIBBON_EMAIL: applicationUsername
+      GIBBON_USERNAME: applicationUsername
+      GIBBON_PASSWORD: applicationPassword
+      GIBBON_AUTOINSTALL: static
+      DEMO_DATA: static
+      GIBBON_LOG_LEVEL: static
+      ENABLE_MOODLE_INTEGRATION: static
+      GIBBON_INTEGRATION_SQL_1: static
+      GIBBON_INTEGRATION_SQL_2: static
+      GIBBON_INTEGRATION_SQL_3: static
+    volumes:
+      - gibbon-data:/var/www/html
+    x-clouve-metadata:
+      containerName: gibbon
+      purpose: Frontend
+      protocol: TCP
+      isPublic: true
+      memoryBase: 1
+      cpuBase: 1
+    x-clouve-bundle-metadata:
+      appVersion: 29.0.0
+      appTitle: Gibbon
+      appDescription: Gibbon is an intuitive, open-source school management platform designed to revolutionize the way educational institutions operate. Tailored to meet the diverse needs of schools, Gibbon offers a comprehensive suite of tools for managing administrative tasks, tracking student progress, and facilitating effective communication among teachers, students, and parents. Its user-friendly interface and customizable modules streamline operations such as timetabling, attendance, and grade reporting. By enhancing organization and efficiency, Gibbon empowers educators to focus on delivering high-quality education, fostering an enriched learning environment, and ultimately supporting student success.
+      appIcon: /thermo/assets/Company/clouveinc327/attachments/15a52686bee90504-gibbon.png
+    x-clouve-healthcheck:
+      enabled: true
+      type: HTTP
+      path: /index.php
+      port: 80
+      initialDelay: 60
+      interval: 30
+      timeout: 15
+      failureThreshold: 15
+      successThreshold: 1
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - '--spider'
+        - '-q'
+        - http://localhost:80/index.php
+      interval: 30s
+      timeout: 15s
+      retries: 15
+      start_period: 60s
+    x-clouve-volumes:
+      - name: gibbon-data
+        size: 10
+        description: 'Volume from Docker Compose for gibbon (original: gibbon_data)'
+  gibbon-mysql:
+    image: gibbon-mysql:latest
+    ports:
+      - '3306:3306'
+    environment:
+      MYSQL_DATABASE: gibbon
+      MYSQL_USER: gibbon
+      MYSQL_PASSWORD: gibbon-mysql-password
+      MYSQL_ROOT_PASSWORD: gibbon-mysql-root-password
+    x-clouve-environment-types:
+      MYSQL_DATABASE: static
+      MYSQL_USER: static
+      MYSQL_PASSWORD: secret
+      MYSQL_ROOT_PASSWORD: secret
+    volumes:
+      - gibbon-db-data:/var/lib/mysql
+    x-clouve-metadata:
+      containerName: gibbon-mysql
+      purpose: Database
+      protocol: TCP
+      isPublic: false
+      memoryBase: 1
+      cpuBase: 0.5
+    x-clouve-healthcheck:
+      enabled: false
+      type: Command
+      path: mysqladmin ping -h localhost -u root -proot_password
+      port: 3306
+      initialDelay: 30
+      interval: 10
+      timeout: 5
+      failureThreshold: 3
+      successThreshold: 1
+    x-clouve-volumes:
+      - name: gibbon-db-data
+        size: 10
+        description: 'Volume from Docker Compose for gibbon-mysql (original: gibbon_db_data)'
+  moodle:
+    image: moodle:latest
+    ports:
+      - '80:80'
+    environment:
+      DB_HOST: moodle-mysql
+      DB_NAME: moodle
+      DB_USER: moodle
+      DB_PASSWORD: moodle-mysql-password
+      MOODLE_URL: http://localhost:8080
+      MOODLE_SITE_NAME: '{org.name}'
+      MOODLE_SHORTNAME: NA
+      MOODLE_FULLNAME: '{user.firstName} {user.lastName}'
+      MOODLE_EMAIL: '{user.userEmail}'
+      MOODLE_USERNAME: '{user.firstName}_{user.lastName}'
+      MOODLE_PASSWORD: bundle-password
+      MOODLE_LOG_LEVEL: info
+      ENABLE_GIBBON_INTEGRATION: 'true'
+      GIBBON_DB_HOST: gibbon-mysql
+      GIBBON_DB_NAME: gibbon
+      GIBBON_DB_USER: gibbon
+      GIBBON_DB_PASSWORD: gibbon-mysql-password
+      MOODLE_INTEGRATION_SQL_1: |
+        -- Enable External Database Authentication plugin
+        INSERT INTO mdl_config (name, value)
+        VALUES ('auth', 'manual,db')
+        ON DUPLICATE KEY UPDATE value = IF(value NOT LIKE '%db%', CONCAT(value,',db'), value);
+        -- Enable External Database Enrollment plugin
+        INSERT INTO mdl_config (name, value)
+        VALUES ('enrol_plugins_enabled', 'manual,database')
+        ON DUPLICATE KEY UPDATE value = IF(value NOT LIKE '%database%', CONCAT(value,',database'), value);
+      MOODLE_INTEGRATION_SQL_2: |
+        -- Database connection settings
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'host', 'gibbon-mysql') ON DUPLICATE KEY UPDATE value = 'gibbon-mysql';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'name', 'gibbon') ON DUPLICATE KEY UPDATE value = 'gibbon';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'user', 'gibbon') ON DUPLICATE KEY UPDATE value = 'gibbon';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'pass', 'gibbon_password') ON DUPLICATE KEY UPDATE value = 'gibbon_password';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'type', 'mysql') ON DUPLICATE KEY UPDATE value = 'mysql';
+        -- User table and field mappings
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'table', 'moodleUser') ON DUPLICATE KEY UPDATE value = 'moodleUser';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'fielduser', 'username') ON DUPLICATE KEY UPDATE value = 'username';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'passtype', 'internal') ON DUPLICATE KEY UPDATE value = 'internal';
+        -- User synchronization settings
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'removeuser', '2') ON DUPLICATE KEY UPDATE value = '2';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'updateusers', '1') ON DUPLICATE KEY UPDATE value = '1';
+        -- First name field mapping
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'field_map_firstname', 'preferredName') ON DUPLICATE KEY UPDATE value = 'preferredName';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'field_updatelocal_firstname', 'onlogin') ON DUPLICATE KEY UPDATE value = 'onlogin';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'field_updateremote_firstname', '0') ON DUPLICATE KEY UPDATE value = '0';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'field_lock_firstname', 'locked') ON DUPLICATE KEY UPDATE value = 'locked';
+        -- Last name field mapping
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'field_map_lastname', 'surname') ON DUPLICATE KEY UPDATE value = 'surname';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'field_updatelocal_lastname', 'onlogin') ON DUPLICATE KEY UPDATE value = 'onlogin';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'field_updateremote_lastname', '0') ON DUPLICATE KEY UPDATE value = '0';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'field_lock_lastname', 'locked') ON DUPLICATE KEY UPDATE value = 'locked';
+        -- Email field mapping
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'field_map_email', 'email') ON DUPLICATE KEY UPDATE value = 'email';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'field_updatelocal_email', 'oncreate') ON DUPLICATE KEY UPDATE value = 'oncreate';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'field_updateremote_email', '0') ON DUPLICATE KEY UPDATE value = '0';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'field_lock_email', 'locked') ON DUPLICATE KEY UPDATE value = 'locked';
+      MOODLE_INTEGRATION_SQL_3: |
+        -- Database connection settings
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'dbhost', 'gibbon-mysql') ON DUPLICATE KEY UPDATE value = 'gibbon-mysql';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'dbname', 'gibbon') ON DUPLICATE KEY UPDATE value = 'gibbon';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'dbuser', 'gibbon') ON DUPLICATE KEY UPDATE value = 'gibbon';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'dbpass', 'gibbon_password') ON DUPLICATE KEY UPDATE value = 'gibbon_password';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'dbtype', 'mysqli') ON DUPLICATE KEY UPDATE value = 'mysqli';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'dbencoding', 'utf-8') ON DUPLICATE KEY UPDATE value = 'utf-8';
+        -- Local field mappings (Moodle side)
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'localcoursefield', 'idnumber') ON DUPLICATE KEY UPDATE value = 'idnumber';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'localuserfield', 'username') ON DUPLICATE KEY UPDATE value = 'username';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'localrolefield', 'shortname') ON DUPLICATE KEY UPDATE value = 'shortname';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'localcategoryfield', 'id') ON DUPLICATE KEY UPDATE value = 'id';
+        -- Remote enrollment table settings (Gibbon side)
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'remoteenroltable', 'moodleEnrolment') ON DUPLICATE KEY UPDATE value = 'moodleEnrolment';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'remotecoursefield', 'gibbonCourseID') ON DUPLICATE KEY UPDATE value = 'gibbonCourseID';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'remoteuserfield', 'username') ON DUPLICATE KEY UPDATE value = 'username';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'remoterolefield', 'role') ON DUPLICATE KEY UPDATE value = 'role';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'defaultrole', '5') ON DUPLICATE KEY UPDATE value = '5';
+        -- Remote course table settings (Gibbon side)
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'newcoursetable', 'moodleCourse') ON DUPLICATE KEY UPDATE value = 'moodleCourse';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'newcoursefullname', 'name') ON DUPLICATE KEY UPDATE value = 'name';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'newcourseshortname', 'nameShort') ON DUPLICATE KEY UPDATE value = 'nameShort';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'newcourseidnumber', 'gibbonCourseID') ON DUPLICATE KEY UPDATE value = 'gibbonCourseID';
+    x-clouve-environment-types:
+      DB_HOST: containerReference
+      DB_NAME: static
+      DB_USER: static
+      DB_PASSWORD: secret
+      MOODLE_URL: applicationUrl
+      MOODLE_SITE_NAME: userConfigurable
+      MOODLE_SHORTNAME: userConfigurable
+      MOODLE_FULLNAME: userConfigurable
+      MOODLE_EMAIL: userConfigurable
+      MOODLE_USERNAME: applicationUsername
+      MOODLE_PASSWORD: applicationPassword
+      MOODLE_LOG_LEVEL: static
+      ENABLE_GIBBON_INTEGRATION: static
+      GIBBON_DB_HOST: containerReference
+      GIBBON_DB_NAME: static
+      GIBBON_DB_USER: static
+      GIBBON_DB_PASSWORD: secret
+      MOODLE_INTEGRATION_SQL_1: static
+      MOODLE_INTEGRATION_SQL_2: static
+      MOODLE_INTEGRATION_SQL_3: static
+    volumes:
+      - moodle-www-data:/var/www/html
+      - moodle-data:/var/moodledata
+    x-clouve-metadata:
+      containerName: moodle
+      purpose: Frontend
+      protocol: TCP
+      isPublic: true
+      memoryBase: 1
+      cpuBase: 1
+    x-clouve-bundle-metadata:
+      appVersion: 5.1.0
+      appTitle: Moodle
+      appDescription: Moodle is a leading open-source learning management system (LMS) designed to empower educational institutions with a flexible and scalable platform for delivering high-quality online education. Renowned for its user-friendly interface and extensive customization options, Moodle enables schools, colleges, and universities to create engaging, interactive courses that cater to diverse learning styles. Its robust features include course management, assessments, grading, and analytics, all designed to enhance the teaching and learning experience. With strong community support and continuous updates, Moodle ensures a secure and reliable environment, making it an ideal solution for institutions seeking to foster collaboration, streamline administration, and improve educational outcomes.
+      appIcon: /thermo/assets/Company/clouveinc327/attachments/2e5465c63e12ebd6-moodle.png
+    x-clouve-healthcheck:
+      enabled: true
+      type: HTTP
+      path: /
+      port: 80
+      initialDelay: 60
+      interval: 30
+      timeout: 15
+      failureThreshold: 15
+      successThreshold: 1
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - '--spider'
+        - '-q'
+        - http://localhost:80/
+      interval: 30s
+      timeout: 15s
+      retries: 15
+      start_period: 60s
+    x-clouve-volumes:
+      - name: moodle-www-data
+        size: 10
+        description: Volume for Moodle user data files
+      - name: moodle-data
+        size: 10
+        description: Volume for Moodle user data files
+  moodle-mysql:
+    image: moodle-mysql:latest
+    ports:
+      - '3306:3306'
+    environment:
+      MYSQL_DATABASE: moodle
+      MYSQL_USER: moodle
+      MYSQL_PASSWORD: moodle-mysql-password
+      MYSQL_ROOT_PASSWORD: moodle-mysql-root-password
+    x-clouve-environment-types:
+      MYSQL_DATABASE: static
+      MYSQL_USER: static
+      MYSQL_PASSWORD: secret
+      MYSQL_ROOT_PASSWORD: secret
+    volumes:
+      - moodle-db-data:/var/lib/mysql
+    x-clouve-metadata:
+      containerName: moodle-mysql
+      purpose: Database
+      protocol: TCP
+      isPublic: false
+      memoryBase: 1
+      cpuBase: 0.5
+    x-clouve-healthcheck:
+      enabled: false
+      type: HTTP
+      path: /health
+      port: 3306
+      initialDelay: 30
+      interval: 10
+      timeout: 5
+      failureThreshold: 3
+      successThreshold: 1
+    x-clouve-volumes:
+      - name: moodle-db-data
+        size: 10
+        description: 'Volume from Docker Compose for moodle-mysql (original: moodle_db_data)'
+volumes:
+  gibbon-data:
+    driver: local
+  gibbon-db-data:
+    driver: local
+  moodle-www-data:
+    driver: local
+  moodle-data:
+    driver: local
+  moodle-db-data:
+    driver: local

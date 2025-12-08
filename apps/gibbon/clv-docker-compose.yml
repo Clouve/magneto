@@ -1,0 +1,120 @@
+version: '3.8'
+services:
+  gibbon:
+    image: gibbon:latest
+    ports:
+      - '80:80'
+    environment:
+      DB_HOST: gibbon-mysql
+      DB_NAME: gibbon
+      DB_USER: gibbon
+      DB_PASSWORD: gibbon-mysql-password
+      GIBBON_URL: http://localhost
+      GIBBON_TITLE: '{org.name}'
+      GIBBON_SYSTEM_NAME: '{org.name}'
+      GIBBON_ORGANISATION_NAME: '{org.name}'
+      GIBBON_FIRSTNAME: '{user.firstName}'
+      GIBBON_LASTNAME: '{user.lastName}'
+      GIBBON_EMAIL: '{user.userEmail}'
+      GIBBON_USERNAME: '{user.firstName}_{user.lastName}'
+      GIBBON_PASSWORD: gibbon-password
+      GIBBON_AUTOINSTALL: '1'
+      DEMO_DATA: 'N'
+      GIBBON_LOG_LEVEL: info
+    x-clouve-environment-types:
+      DB_HOST: containerReference
+      DB_NAME: static
+      DB_USER: static
+      DB_PASSWORD: secret
+      GIBBON_URL: applicationUrl
+      GIBBON_TITLE: userConfigurable
+      GIBBON_SYSTEM_NAME: userConfigurable
+      GIBBON_ORGANISATION_NAME: userConfigurable
+      GIBBON_FIRSTNAME: userConfigurable
+      GIBBON_LASTNAME: userConfigurable
+      GIBBON_EMAIL: applicationUsername
+      GIBBON_USERNAME: applicationUsername
+      GIBBON_PASSWORD: applicationPassword
+      GIBBON_AUTOINSTALL: static
+      DEMO_DATA: static
+      GIBBON_LOG_LEVEL: static
+    volumes:
+      - gibbondata:/var/www/html
+    x-clouve-metadata:
+      containerName: gibbon
+      purpose: Frontend
+      protocol: TCP
+      isPublic: true
+      memoryBase: 1
+      cpuBase: 1
+    x-clouve-bundle-metadata:
+      appVersion: 29.0.00
+      appTitle: Gibbon
+      appDescription: Gibbon is an intuitive, open-source school management platform designed to revolutionize the way educational institutions operate. Tailored to meet the diverse needs of schools, Gibbon offers a comprehensive suite of tools for managing administrative tasks, tracking student progress, and facilitating effective communication among teachers, students, and parents. Its user-friendly interface and customizable modules streamline operations such as timetabling, attendance, and grade reporting. By enhancing organization and efficiency, Gibbon empowers educators to focus on delivering high-quality education, fostering an enriched learning environment, and ultimately supporting student success.
+    x-clouve-healthcheck:
+      enabled: true
+      type: HTTP
+      path: /index.php
+      port: 80
+      initialDelay: 60
+      interval: 30
+      timeout: 15
+      failureThreshold: 15
+      successThreshold: 1
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - '--spider'
+        - '-q'
+        - http://localhost:80/index.php
+      interval: 30s
+      timeout: 15s
+      retries: 15
+      start_period: 60s
+    x-clouve-volumes:
+      - name: gibbondata
+        size: 10
+        description: 'Volume from Docker Compose for gibbon (original: gibbon_data)'
+  gibbon-mysql:
+    image: gibbon-mysql:latest
+    ports:
+      - '3306:3306'
+    environment:
+      MYSQL_DATABASE: gibbon
+      MYSQL_USER: gibbon
+      MYSQL_PASSWORD: gibbon-mysql-password
+      MYSQL_ROOT_PASSWORD: gibbon-mysql-root-password
+    x-clouve-environment-types:
+      MYSQL_DATABASE: static
+      MYSQL_USER: static
+      MYSQL_PASSWORD: secret
+      MYSQL_ROOT_PASSWORD: secret
+    volumes:
+      - dbdata:/var/lib/mysql
+    x-clouve-metadata:
+      containerName: gibbon-mysql
+      purpose: Database
+      protocol: TCP
+      isPublic: false
+      memoryBase: 1
+      cpuBase: 0.5
+    x-clouve-healthcheck:
+      enabled: false
+      type: HTTP
+      path: /health
+      port: 3306
+      initialDelay: 30
+      interval: 10
+      timeout: 5
+      failureThreshold: 3
+      successThreshold: 1
+    x-clouve-volumes:
+      - name: dbdata
+        size: 10
+        description: 'Volume from Docker Compose for gibbon-mysql (original: db_data)'
+volumes:
+  gibbondata:
+    driver: local
+  dbdata:
+    driver: local

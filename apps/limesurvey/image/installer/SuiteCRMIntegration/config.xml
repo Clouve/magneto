@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config>
+    <metadata>
+        <name>SuiteCRMIntegration</name>
+        <type>plugin</type>
+        <creationDate>2025-11-21</creationDate>
+        <lastUpdate>2025-12-03</lastUpdate>
+        <author>Clouve</author>
+        <authorUrl>https://www.clouve.com</authorUrl>
+        <authorEmail>info@clouve.com</authorEmail>
+        <version>2.0.0</version>
+        <license>MIT</license>
+        <description><![CDATA[Integrate LimeSurvey with SuiteCRM to automatically create leads and cases from survey responses. Features dynamic per-question field mapping, field caching, sync logging, and support for Leads and Cases modules via SuiteCRM REST API v8.]]></description>
+    </metadata>
+
+    <compatibility>
+        <version>6.0</version>
+        <version>5.0</version>
+        <version>4.0</version>
+    </compatibility>
+
+    <updaters disabled="disabled">
+    </updaters>
+</config>
+

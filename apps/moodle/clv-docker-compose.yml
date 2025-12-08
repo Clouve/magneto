@@ -1,0 +1,120 @@
+version: '3.8'
+services:
+  moodle:
+    image: moodle:latest
+    ports:
+      - '80:80'
+    environment:
+      DB_HOST: moodle-mysql
+      DB_NAME: moodle
+      DB_USER: moodle
+      DB_PASSWORD: moodle-mysql-password
+      MOODLE_URL: http://localhost:8080
+      MOODLE_SITE_NAME: '{org.name}'
+      MOODLE_SHORTNAME: '{org.name}'
+      MOODLE_FULLNAME: '{user.firstName} {user.lastName}'
+      MOODLE_EMAIL: '{user.userEmail}'
+      MOODLE_USERNAME: '{user.firstName}_{user.lastName}'
+      MOODLE_PASSWORD: moodle-password
+      MOODLE_LOG_LEVEL: info
+      ENABLE_GIBBON_INTEGRATION: 'false'
+    x-clouve-environment-types:
+      DB_HOST: containerReference
+      DB_NAME: static
+      DB_USER: static
+      DB_PASSWORD: secret
+      MOODLE_URL: applicationUrl
+      MOODLE_SITE_NAME: userConfigurable
+      MOODLE_SHORTNAME: userConfigurable
+      MOODLE_FULLNAME: userConfigurable
+      MOODLE_EMAIL: userConfigurable
+      MOODLE_USERNAME: applicationUsername
+      MOODLE_PASSWORD: applicationPassword
+      MOODLE_LOG_LEVEL: static
+      ENABLE_GIBBON_INTEGRATION: static
+    volumes:
+      - moodle-www-data:/var/www/html
+      - moodle-data:/var/moodledata
+    x-clouve-metadata:
+      containerName: moodle
+      purpose: Frontend
+      protocol: TCP
+      isPublic: true
+      memoryBase: 1
+      cpuBase: 1
+    x-clouve-bundle-metadata:
+      appVersion: '5.1'
+      appTitle: Moodle
+      appDescription: Moodle is a leading open-source learning management system (LMS) designed to empower educational institutions with a flexible and scalable platform for delivering high-quality online education. Renowned for its user-friendly interface and extensive customization options, Moodle enables schools, colleges, and universities to create engaging, interactive courses that cater to diverse learning styles. Its robust features include course management, assessments, grading, and analytics, all designed to enhance the teaching and learning experience. With strong community support and continuous updates, Moodle ensures a secure and reliable environment, making it an ideal solution for institutions seeking to foster collaboration, streamline administration, and improve educational outcomes.
+    x-clouve-healthcheck:
+      enabled: true
+      type: HTTP
+      path: /
+      port: 80
+      initialDelay: 60
+      interval: 30
+      timeout: 15
+      failureThreshold: 15
+      successThreshold: 1
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - '--spider'
+        - '-q'
+        - http://localhost:80/
+      interval: 30s
+      timeout: 15s
+      retries: 15
+      start_period: 60s
+    x-clouve-volumes:
+      - name: moodle-www-data
+        size: 10
+        description: Volume for Moodle user data files
+      - name: moodle-data
+        size: 10
+        description: Volume for Moodle user data files
+  moodle-mysql:
+    image: moodle-mysql:latest
+    ports:
+      - '3306:3306'
+    environment:
+      MYSQL_DATABASE: moodle
+      MYSQL_USER: moodle
+      MYSQL_PASSWORD: moodle-mysql-password
+      MYSQL_ROOT_PASSWORD: moodle-mysql-root-password
+    x-clouve-environment-types:
+      MYSQL_DATABASE: static
+      MYSQL_USER: static
+      MYSQL_PASSWORD: secret
+      MYSQL_ROOT_PASSWORD: secret
+    volumes:
+      - moodle-db-data:/var/lib/mysql
+    x-clouve-metadata:
+      containerName: moodle-mysql
+      purpose: Database
+      protocol: TCP
+      isPublic: false
+      memoryBase: 1
+      cpuBase: 0.5
+    x-clouve-healthcheck:
+      enabled: false
+      type: HTTP
+      path: /health
+      port: 3306
+      initialDelay: 30
+      interval: 10
+      timeout: 5
+      failureThreshold: 3
+      successThreshold: 1
+    x-clouve-volumes:
+      - name: moodle-db-data
+        size: 10
+        description: 'Volume from Docker Compose for moodle-mysql (original: moodle_db_data)'
+volumes:
+  moodle-www-data:
+    driver: local
+  moodle-data:
+    driver: local
+  moodle-db-data:
+    driver: local

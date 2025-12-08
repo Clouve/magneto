@@ -1,0 +1,70 @@
+version: '3.8'
+services:
+  bluesky-pds:
+    image: bluesky-pds:latest
+    ports:
+      - '3000:3000'
+    environment:
+      PDS_HOSTNAME: localhost:3000
+      PDS_ADMIN_PASSWORD: bluesky-admin-password
+      PDS_DATA_DIRECTORY: /pds
+      PDS_BLOBSTORE_DISK_LOCATION: /pds/blocks
+      PDS_DID_PLC_URL: https://plc.directory
+      PDS_BSKY_APP_VIEW_URL: https://api.bsky.app
+      PDS_BSKY_APP_VIEW_DID: did:web:api.bsky.app
+      PDS_REPORT_SERVICE_URL: https://mod.bsky.app
+      PDS_REPORT_SERVICE_DID: did:plc:ewvi7nxzyoun6zhxrhs64oiz
+      PDS_CRAWLERS: https://bsky.network
+      PDS_INVITE_REQUIRED: '0'
+      LOG_ENABLED: '1'
+    x-clouve-environment-types:
+      PDS_HOSTNAME: applicationHost
+      PDS_ADMIN_PASSWORD: applicationPassword
+      PDS_DATA_DIRECTORY: static
+      PDS_BLOBSTORE_DISK_LOCATION: static
+      PDS_DID_PLC_URL: static
+      PDS_BSKY_APP_VIEW_URL: static
+      PDS_BSKY_APP_VIEW_DID: static
+      PDS_REPORT_SERVICE_URL: static
+      PDS_REPORT_SERVICE_DID: static
+      PDS_CRAWLERS: static
+      PDS_INVITE_REQUIRED: static
+      LOG_ENABLED: static
+    volumes:
+      - pdsdata:/pds
+    x-clouve-metadata:
+      containerName: bluesky-pds
+      purpose: Frontend
+      protocol: TCP
+      isPublic: true
+      memoryBase: 1
+      cpuBase: 0.5
+    x-clouve-bundle-metadata:
+      appVersion: 0.4.188
+      appTitle: Bluesky PDS
+      appDescription: Bluesky PDS (Personal Data Server) is a decentralized social networking protocol designed to give users control over their data, identity, and online interactions. Built on the Authenticated Transfer (AT) Protocol, it fosters interoperability across platforms, allowing users to retain ownership of their accounts and data while seamlessly migrating between services. Bluesky emphasizes transparency and personalization by enabling customizable algorithms for content curation and moderation, reducing the dominance of platform-driven feeds. By creating an open ecosystem where developers can build interoperable applications, Bluesky aims to decentralize governance, enhance user autonomy, and address issues like platform monopolies and opaque moderation systems, aligning with the broader vision of a user-centric, open internet.
+    x-clouve-healthcheck:
+      enabled: true
+      type: Command
+      path: wget --spider -q http://localhost:3000/xrpc/_health
+      port: 3000
+      initialDelay: 30
+      interval: 10
+      timeout: 5
+      failureThreshold: 3
+      successThreshold: 1
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget --spider -q http://localhost:3000/xrpc/_health
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    x-clouve-volumes:
+      - name: pdsdata
+        size: 10
+        description: 'Volume from Docker Compose for bluesky-pds-bluesky-pds (original: pds_data)'
+volumes:
+  pdsdata:
+    driver: local

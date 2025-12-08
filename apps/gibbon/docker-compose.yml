@@ -1,0 +1,63 @@
+services:
+  gibbon-mysql:
+    image: r.clv.zone/e2eorg/gibbon-mysql
+    container_name: gibbon_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: gibbon
+      MYSQL_USER: gibbon
+      MYSQL_PASSWORD: gibbon_password
+      MYSQL_ROOT_PASSWORD: root_password
+    volumes:
+      - db_data:/var/lib/mysql
+    networks:
+      - gibbon_network
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot_password"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  gibbon:
+    image: r.clv.zone/e2eorg/gibbon
+    container_name: gibbon_app
+    restart: unless-stopped
+    ports:
+      - "${TEST_PORT:-8080}:80"
+    environment:
+      # Database Configuration
+      DB_HOST: gibbon-mysql
+      DB_NAME: gibbon
+      DB_USER: gibbon
+      DB_PASSWORD: gibbon_password
+      # Gibbon Application Configuration
+      GIBBON_AUTOINSTALL: "1"
+      GIBBON_URL: http://${TEST_DOMAIN:-t1.test.clv}:${TEST_PORT:-8080}
+      GIBBON_TITLE: My School
+      GIBBON_FIRSTNAME: Admin
+      GIBBON_LASTNAME: User
+      GIBBON_EMAIL: admin@example.com
+      GIBBON_USERNAME: admin
+      GIBBON_PASSWORD: Admin@123
+      GIBBON_SYSTEM_NAME: My School
+      GIBBON_ORGANISATION_NAME: My School
+      GIBBON_ORGANISATION_INITIALS: MS
+      DEMO_DATA: "N"
+      GIBBON_LOG_LEVEL: info
+    volumes:
+      - gibbon_data:/var/www/html
+    networks:
+      - gibbon_network
+
+volumes:
+  db_data:
+    driver: local
+  gibbon_data:
+    driver: local
+
+networks:
+  gibbon_network:
+    driver: bridge
+

@@ -1,0 +1,110 @@
+version: '3.8'
+services:
+  wordpress:
+    image: wordpress:latest
+    ports:
+      - '80:80'
+    environment:
+      WORDPRESS_DB_HOST: wordpress-mariadb
+      WORDPRESS_DB_NAME: wordpress
+      WORDPRESS_DB_USER: wordpress
+      WORDPRESS_DB_PASSWORD: wordpress-mariadb-password
+      WORDPRESS_SITE_URL: http://localhost
+      WORDPRESS_SITE_TITLE: My WordPress Site
+      WORDPRESS_ADMIN_EMAIL: '{user.userEmail}'
+      WORDPRESS_ADMIN_USER: '{user.firstName}_{user.lastName}'
+      WORDPRESS_ADMIN_PASSWORD: wordpress-password
+      WORDPRESS_TABLE_PREFIX: wp_
+      WORDPRESS_DEBUG: 'false'
+    x-clouve-environment-types:
+      WORDPRESS_DB_HOST: containerReference
+      WORDPRESS_DB_NAME: static
+      WORDPRESS_DB_USER: static
+      WORDPRESS_DB_PASSWORD: secret
+      WORDPRESS_SITE_URL: applicationUrl
+      WORDPRESS_SITE_TITLE: userConfigurable
+      WORDPRESS_ADMIN_EMAIL: applicationUsername
+      WORDPRESS_ADMIN_USER: applicationUsername
+      WORDPRESS_ADMIN_PASSWORD: applicationPassword
+      WORDPRESS_TABLE_PREFIX: static
+      WORDPRESS_DEBUG: static
+    volumes:
+      - wordpressdata:/var/www/html
+    x-clouve-metadata:
+      containerName: wordpress
+      purpose: Frontend
+      protocol: TCP
+      isPublic: true
+      memoryBase: 1
+      cpuBase: 1
+    x-clouve-bundle-metadata:
+      appVersion: 6.8.3
+      appTitle: WordPress
+      appDescription: WordPress is a versatile, open-source content management system that empowers businesses to create professional, dynamic websites with ease. Renowned for its user-friendly interface and extensive library of themes and plugins, WordPress allows businesses to customize their sites to reflect their unique brand identity and meet specific functional needs. Its built-in SEO tools, responsive design capabilities, and robust security features ensure optimal performance and visibility on search engines. Whether for blogging, e-commerce, or corporate websites, WordPress enhances online presence, drives engagement, and supports business growth by providing a scalable and adaptable platform for all digital content needs.
+    x-clouve-healthcheck:
+      enabled: true
+      type: HTTP
+      path: /
+      port: 80
+      initialDelay: 30
+      interval: 10
+      timeout: 5
+      failureThreshold: 3
+      successThreshold: 1
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - '--spider'
+        - '-q'
+        - http://localhost:80/
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    x-clouve-volumes:
+      - name: wordpressdata
+        size: 10
+        description: 'Volume from Docker Compose for wordpress-wordpress (original: wordpress_data)'
+  wordpress-mariadb:
+    image: wordpress-mariadb:latest
+    ports:
+      - '3306:3306'
+    environment:
+      MYSQL_DATABASE: wordpress
+      MYSQL_USER: wordpress
+      MYSQL_PASSWORD: wordpress-mariadb-password
+      MYSQL_ROOT_PASSWORD: wordpress-mariadb-root-password
+    x-clouve-environment-types:
+      MYSQL_DATABASE: static
+      MYSQL_USER: static
+      MYSQL_PASSWORD: secret
+      MYSQL_ROOT_PASSWORD: secret
+    volumes:
+      - dbdata:/var/lib/mysql
+    x-clouve-metadata:
+      containerName: wordpress-mariadb
+      purpose: Database
+      protocol: TCP
+      isPublic: false
+      memoryBase: 1
+      cpuBase: 0.5
+    x-clouve-healthcheck:
+      enabled: false
+      type: HTTP
+      path: /health
+      port: 3306
+      initialDelay: 30
+      interval: 10
+      timeout: 5
+      failureThreshold: 3
+      successThreshold: 1
+    x-clouve-volumes:
+      - name: dbdata
+        size: 10
+        description: 'Volume from Docker Compose for wordpress-mariadb (original: db_data)'
+volumes:
+  wordpressdata:
+    driver: local
+  dbdata:
+    driver: local

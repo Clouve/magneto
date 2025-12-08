@@ -1,0 +1,108 @@
+version: '3.8'
+services:
+  odoo:
+    image: odoo:latest
+    ports:
+      - '8069:8069'
+    environment:
+      POSTGRES_DB_HOST: odoo-postgres
+      POSTGRES_DB_USER: odoo
+      POSTGRES_DB_PASSWORD: odoo-postgres-password
+      ODOO_URL: http://localhost
+      ODOO_DB_NAME: odoo
+      ODOO_MASTER_PASSWORD: odoo-master-password
+      ODOO_ADMIN_EMAIL: '{user.userEmail}'
+      ODOO_ADMIN_PASSWORD: odoo-admin-password
+    x-clouve-environment-types:
+      POSTGRES_DB_HOST: containerReference
+      POSTGRES_DB_USER: static
+      POSTGRES_DB_PASSWORD: secret
+      ODOO_URL: applicationUrl
+      ODOO_DB_NAME: static
+      ODOO_MASTER_PASSWORD: secret
+      ODOO_ADMIN_EMAIL: applicationUsername
+      ODOO_ADMIN_PASSWORD: applicationPassword
+    volumes:
+      - odoo-data:/var/lib/odoo
+      - odoo-addons:/mnt/extra-addons
+    x-clouve-metadata:
+      containerName: odoo
+      purpose: Frontend
+      protocol: TCP
+      isPublic: true
+      memoryBase: 1
+      cpuBase: 1
+    x-clouve-bundle-metadata:
+      appVersion: '19.0'
+      appTitle: Odoo
+      appDescription: Odoo is a comprehensive, open-source suite of business applications designed to streamline and optimize every aspect of your operations. From CRM and accounting to inventory and human resources, Odoo offers an integrated solution that enhances efficiency and productivity. Its modular design allows businesses to customize and scale the platform according to their specific needs, ensuring a perfect fit for any industry. With an intuitive interface and robust features, Odoo simplifies complex processes, supports data-driven decision-making, and promotes seamless collaboration across departments. By centralizing business functions in one unified system, Odoo empowers businesses to achieve greater agility, growth, and success.
+    x-clouve-healthcheck:
+      enabled: true
+      type: HTTP
+      path: /web/health
+      port: 8069
+      initialDelay: 60
+      interval: 30
+      timeout: 15
+      failureThreshold: 10
+      successThreshold: 1
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - '--spider'
+        - '-q'
+        - http://localhost:8069/web/health
+      interval: 30s
+      timeout: 15s
+      retries: 10
+      start_period: 60s
+    x-clouve-volumes:
+      - name: odoo-data
+        size: 10
+        description: Volume for Odoo data files
+      - name: odoo-addons
+        size: 10
+        description: Volume for Odoo custom addons
+  odoo-postgres:
+    image: odoo-postgres:latest
+    ports:
+      - '5432:5432'
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: odoo
+      POSTGRES_PASSWORD: odoo-postgres-password
+    x-clouve-environment-types:
+      POSTGRES_DB: static
+      POSTGRES_USER: static
+      POSTGRES_PASSWORD: secret
+    volumes:
+      - odoo-postgres-data:/var/lib/postgresql
+    x-clouve-metadata:
+      containerName: odoo-postgres
+      purpose: Database
+      protocol: TCP
+      isPublic: false
+      memoryBase: 1
+      cpuBase: 0.5
+    x-clouve-healthcheck:
+      enabled: false
+      type: HTTP
+      path: /health
+      port: 5432
+      initialDelay: 30
+      interval: 10
+      timeout: 5
+      failureThreshold: 3
+      successThreshold: 1
+    x-clouve-volumes:
+      - name: odoo-postgres-data
+        size: 10
+        description: Volume for PostgreSQL database files
+volumes:
+  odoo-data:
+    driver: local
+  odoo-addons:
+    driver: local
+  odoo-postgres-data:
+    driver: local

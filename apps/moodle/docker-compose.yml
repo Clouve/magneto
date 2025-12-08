@@ -1,0 +1,66 @@
+version: '3.8'
+
+networks:
+  moodle_network:
+    driver: bridge
+
+volumes:
+  db_data:
+  moodle_data:
+  moodledata:
+
+services:
+  moodle-mysql:
+    image: r.clv.zone/e2eorg/moodle-mysql
+    container_name: moodle_db
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: moodle
+      MYSQL_USER: moodle
+      MYSQL_PASSWORD: moodle_password
+      MYSQL_ROOT_PASSWORD: root_password
+    volumes:
+      - db_data:/var/lib/mysql
+    networks:
+      - moodle_network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  moodle:
+    image: r.clv.zone/e2eorg/moodle
+    container_name: moodle_app
+    restart: unless-stopped
+    ports:
+      - "${TEST_PORT:-8080}:80"
+    environment:
+      # Database Configuration
+      DB_HOST: moodle-mysql
+      DB_NAME: moodle
+      DB_USER: moodle
+      DB_PASSWORD: moodle_password
+      # Moodle Application Configuration
+      MOODLE_URL: http://${TEST_DOMAIN:-t1.test.clv}:${TEST_PORT:-8080}
+      MOODLE_SITE_NAME: My Moodle Site
+      MOODLE_EMAIL: admin@example.com
+      MOODLE_USERNAME: admin
+      MOODLE_PASSWORD: Admin@123
+      MOODLE_FULLNAME: Administrator
+      MOODLE_SHORTNAME: Admin
+      MOODLE_LOG_LEVEL: info
+      # Cron Configuration
+      # Cron schedule in standard cron format (minute hour day month weekday)
+      # Default: */5 * * * * (every 5 minutes)
+      # Examples:
+      #   */1 * * * *  - Every minute
+      #   */10 * * * * - Every 10 minutes
+      #   0 * * * *    - Every hour
+      MOODLE_CRON_INTERVAL: "*/1 * * * *"
+    volumes:
+      - moodle_data:/var/www/html
+      - moodledata:/var/moodledata
+    networks:
+      - moodle_network
+
