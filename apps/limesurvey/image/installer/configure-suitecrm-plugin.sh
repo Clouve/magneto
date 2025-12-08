@@ -185,57 +185,22 @@ else
 fi
 
 # ============================================================================
-# Initialize OAuth2 Client in SuiteCRM (if not already created)
+# OAuth2 Client Setup - LAZY INITIALIZATION
+# ============================================================================
+# NOTE: OAuth2 client creation in SuiteCRM is now handled LAZILY by the plugin
+# at runtime when the user first enables integration for a survey. This approach:
+# 1. Avoids startup failures when SuiteCRM is not yet ready
+# 2. Allows the plugin to work even if SuiteCRM starts later
+# 3. Provides better user feedback through the plugin's admin UI
+#
+# The plugin will automatically create the OAuth2 client when:
+# - User enables "Enable SuiteCRM Integration for this survey" for the first time
+# - User clicks "Test Connection" in the plugin settings
+# - User clicks "Initialize OAuth2" button in the status panel
 # ============================================================================
 
-echo -e "${YELLOW}[PLUGIN-CONFIG]${NC} Checking OAuth2 client setup in SuiteCRM..."
-
-# Check if OAuth2 client already exists
-OAUTH_EXISTS=$(mariadb -h "${SUITECRM_DB_HOST:-suitecrm-mariadb}" -u "${SUITECRM_DB_USER:-suitecrm}" \
-    -p"${SUITECRM_DB_PASSWORD}" "${SUITECRM_DB_NAME:-suitecrm}" \
-    -sN -e "SELECT COUNT(*) FROM oauth2clients WHERE name = 'LimeSurvey Integration';" 2>/dev/null || echo "0")
-
-if [ "$OAUTH_EXISTS" = "0" ]; then
-    echo -e "${YELLOW}[PLUGIN-CONFIG]${NC} Creating OAuth2 client in SuiteCRM..."
-
-    # Generate OAuth2 credentials (UUID must be exactly 36 characters for SuiteCRM)
-    OAUTH_CLIENT_ID=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || uuidgen 2>/dev/null || echo "$(date +%s)-$(head -c 8 /dev/urandom | xxd -p)")
-    OAUTH_CLIENT_SECRET=$(head -c 32 /dev/urandom | xxd -p 2>/dev/null || openssl rand -hex 32)
-    OAUTH_SECRET_HASH=$(echo -n "$OAUTH_CLIENT_SECRET" | sha256sum | cut -d' ' -f1)
-    NOW=$(date '+%Y-%m-%d %H:%M:%S')
-
-    # Insert OAuth2 client into SuiteCRM
-    if mariadb -h "${SUITECRM_DB_HOST:-suitecrm-mariadb}" -u "${SUITECRM_DB_USER:-suitecrm}" \
-        -p"${SUITECRM_DB_PASSWORD}" "${SUITECRM_DB_NAME:-suitecrm}" << SQL_EOF
-INSERT INTO oauth2clients (
-    id, name, date_entered, date_modified,
-    created_by, deleted, secret, is_confidential,
-    allowed_grant_type, duration_value, duration_amount, duration_unit
-) VALUES (
-    '$OAUTH_CLIENT_ID', 'LimeSurvey Integration', '$NOW', '$NOW',
-    '1', 0, '$OAUTH_SECRET_HASH', 1,
-    'password', 3600, 1, 'hour'
-);
-SQL_EOF
-    then
-        echo -e "${GREEN}[PLUGIN-CONFIG]${NC} OAuth2 client created: $OAUTH_CLIENT_ID"
-
-        # Store OAuth credentials in LimeSurvey plugin settings (JSON-encoded strings)
-        mariadb -h "$DB_HOST" -u "$DB_USERNAME" -p"$DB_PASSWORD" "$DB_NAME" << SQL_EOF
-INSERT INTO ${DB_TABLE_PREFIX}plugin_settings (plugin_id, model, model_id, \`key\`, \`value\`)
-VALUES ($PLUGIN_ID, NULL, NULL, 'oauth_client_id', '"$OAUTH_CLIENT_ID"');
-
-INSERT INTO ${DB_TABLE_PREFIX}plugin_settings (plugin_id, model, model_id, \`key\`, \`value\`)
-VALUES ($PLUGIN_ID, NULL, NULL, 'oauth_client_secret', '"$OAUTH_CLIENT_SECRET"');
-SQL_EOF
-
-        echo -e "${GREEN}[PLUGIN-CONFIG]${NC} OAuth2 credentials stored in plugin settings"
-    else
-        echo -e "${YELLOW}[PLUGIN-CONFIG WARNING]${NC} Could not create OAuth2 client (SuiteCRM may not be ready)"
-    fi
-else
-    echo -e "${GREEN}[PLUGIN-CONFIG]${NC} OAuth2 client already exists in SuiteCRM"
-fi
+echo -e "${YELLOW}[PLUGIN-CONFIG]${NC} OAuth2 client setup will be handled lazily by the plugin at runtime"
+echo -e "${YELLOW}[PLUGIN-CONFIG]${NC} The plugin will create the OAuth2 client when SuiteCRM is first accessed"
 
 # Field mappings are stored in question attributes (suitecrm_mappings_json)
 # and are read directly at response time by the plugin - no sync needed

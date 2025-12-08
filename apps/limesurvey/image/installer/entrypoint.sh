@@ -266,26 +266,12 @@ if [ "$ENABLE_SUITECRM_INTEGRATION" = "true" ] && [ -d "$LIMESURVEY_INSTALL_PATH
         echo -e "${YELLOW}[PLUGIN-CONFIG]${NC} Waiting 3 seconds for database to stabilize..."
         sleep 3
 
-        # Wait for SuiteCRM database to be ready (for OAuth2 client setup)
-        echo -e "${YELLOW}[PLUGIN-CONFIG]${NC} Waiting for SuiteCRM database to be ready..."
-        SUITECRM_TIMEOUT=60
-        SUITECRM_ELAPSED=0
-        while [ $SUITECRM_ELAPSED -lt $SUITECRM_TIMEOUT ]; do
-            if mariadb -h "${SUITECRM_DB_HOST:-suitecrm-mariadb}" -u "${SUITECRM_DB_USER:-suitecrm}" \
-                -p"${SUITECRM_DB_PASSWORD}" "${SUITECRM_DB_NAME:-suitecrm}" \
-                -e "SELECT 1 FROM oauth2clients LIMIT 1;" 2>/dev/null >/dev/null; then
-                echo -e "${GREEN}[PLUGIN-CONFIG]${NC} SuiteCRM database is ready!"
-                break
-            fi
-            sleep 2
-            SUITECRM_ELAPSED=$((SUITECRM_ELAPSED + 2))
-        done
+        # NOTE: OAuth2 client setup in SuiteCRM is now handled LAZILY by the plugin
+        # The plugin will create the OAuth2 client when SuiteCRM is first accessed
+        # This allows LimeSurvey to start without waiting for SuiteCRM to be ready
+        echo -e "${YELLOW}[PLUGIN-CONFIG]${NC} OAuth2 setup will be handled lazily by the plugin..."
 
-        if [ $SUITECRM_ELAPSED -ge $SUITECRM_TIMEOUT ]; then
-            echo -e "${YELLOW}[PLUGIN-CONFIG WARNING]${NC} SuiteCRM database not ready, OAuth2 setup may fail"
-        fi
-
-        # Run the configuration script
+        # Run the configuration script (registers plugin and settings, but NOT OAuth2)
         /clouve/limesurvey/installer/configure-suitecrm-plugin.sh
     ) &
 

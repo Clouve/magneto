@@ -34,7 +34,9 @@ class SuiteCRMIntegration extends PluginBase
         'actionGetSyncLogs',
         'actionSaveMappings',
         'actionGetMappings',
-        'actionGetTransformRules'
+        'actionGetTransformRules',
+        'actionCheckStatus',
+        'actionInitializeOAuth2'
     ];
 
     /** @var SuiteCRMApiClient */
@@ -61,6 +63,11 @@ class SuiteCRMIntegration extends PluginBase
      * Plugin settings
      */
     protected $settings = array(
+        'connection_status' => array(
+            'type' => 'info',
+            'label' => 'SuiteCRM Connection Status',
+            'content' => '' // Will be populated dynamically in getPluginSettings()
+        ),
         'enabled' => array(
             'type' => 'select',
             'options' => array(
@@ -123,14 +130,32 @@ class SuiteCRMIntegration extends PluginBase
             'type' => 'string',
             'default' => '',
             'label' => 'OAuth2 Client ID',
-            'help' => 'OAuth2 client ID (auto-generated if empty)',
+            'help' => 'OAuth2 client ID (auto-generated when SuiteCRM is first accessed)',
             'readonly' => true
         ),
         'oauth_client_secret' => array(
             'type' => 'string',
             'default' => '',
             'label' => 'OAuth2 Client Secret',
-            'help' => 'OAuth2 client secret (auto-generated if empty)',
+            'help' => 'OAuth2 client secret (auto-generated when SuiteCRM is first accessed)',
+            'readonly' => true
+        ),
+        'oauth_initialized' => array(
+            'type' => 'select',
+            'options' => array(
+                '0' => 'Not Initialized',
+                '1' => 'Initialized'
+            ),
+            'default' => '0',
+            'label' => 'OAuth2 Status',
+            'help' => 'Indicates whether OAuth2 client has been created in SuiteCRM',
+            'readonly' => true
+        ),
+        'oauth_init_error' => array(
+            'type' => 'string',
+            'default' => '',
+            'label' => 'Last OAuth2 Error',
+            'help' => 'Last error message from OAuth2 initialization attempt',
             'readonly' => true
         ),
         'debug_mode' => array(
@@ -183,15 +208,257 @@ class SuiteCRMIntegration extends PluginBase
     }
 
     /**
+     * Override getPluginSettings to add dynamic status panel content
+     *
+     * @param bool $getValues Whether to get current values
+     * @return array Plugin settings with dynamic content
+     */
+    public function getPluginSettings($getValues = true)
+    {
+        // Get the base settings
+        $settings = parent::getPluginSettings($getValues);
+
+        // Generate the dynamic status panel HTML
+        $statusPanelHtml = $this->generateStatusPanelHtml();
+
+        // Update the connection_status setting with the dynamic HTML
+        if (isset($settings['connection_status'])) {
+            $settings['connection_status']['content'] = $statusPanelHtml;
+        }
+
+        return $settings;
+    }
+
+    /**
+     * Generate HTML for the SuiteCRM connection status panel
+     *
+     * This panel shows the current connection status and provides buttons
+     * for testing connectivity and initializing OAuth2.
+     *
+     * @return string HTML content for the status panel
+     */
+    protected function generateStatusPanelHtml(): string
+    {
+        $oauthInitialized = $this->get('oauth_initialized') === '1';
+        $oauthClientId = $this->get('oauth_client_id');
+        $oauthError = $this->get('oauth_init_error');
+        $suitecrmUrl = $this->get('suitecrm_url');
+
+        // Determine initial status display
+        $initialStatus = 'pending';
+        $statusMessage = 'Click "Check Status" to test the connection.';
+        $statusClass = 'alert-info';
+
+        if ($oauthInitialized && !empty($oauthClientId)) {
+            $initialStatus = 'configured';
+            $statusMessage = "OAuth2 client configured: {$oauthClientId}";
+            $statusClass = 'alert-success';
+        } elseif (!empty($oauthError)) {
+            $initialStatus = 'error';
+            $statusMessage = "Last error: {$oauthError}";
+            $statusClass = 'alert-warning';
+        } elseif (empty($suitecrmUrl)) {
+            $initialStatus = 'unconfigured';
+            $statusMessage = 'SuiteCRM URL not configured. Please configure the settings below.';
+            $statusClass = 'alert-secondary';
+        }
+
+        $html = <<<HTML
+<div id="suitecrm-status-panel" class="card mb-3">
+    <div class="card-header bg-primary text-white">
+        <i class="ri-link"></i> SuiteCRM Connection Status
+    </div>
+    <div class="card-body">
+        <div id="suitecrm-status-message" class="alert {$statusClass}">
+            <span id="suitecrm-status-text">{$statusMessage}</span>
+        </div>
+
+        <div id="suitecrm-status-details" class="mb-3" style="display: none;">
+            <table class="table table-sm table-bordered">
+                <tbody>
+                    <tr>
+                        <td><strong>SuiteCRM HTTP</strong></td>
+                        <td id="status-http">-</td>
+                    </tr>
+                    <tr>
+                        <td><strong>SuiteCRM Database</strong></td>
+                        <td id="status-database">-</td>
+                    </tr>
+                    <tr>
+                        <td><strong>OAuth2 Table</strong></td>
+                        <td id="status-oauth-table">-</td>
+                    </tr>
+                    <tr>
+                        <td><strong>OAuth2 Client</strong></td>
+                        <td id="status-oauth-client">-</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="btn-group" role="group">
+            <button type="button" id="btn-check-status" class="btn btn-primary" onclick="SuiteCRMStatus.checkStatus()">
+                <i class="ri-refresh-line"></i> Check Status
+            </button>
+            <button type="button" id="btn-init-oauth" class="btn btn-success" onclick="SuiteCRMStatus.initializeOAuth2()">
+                <i class="ri-key-line"></i> Initialize OAuth2
+            </button>
+            <button type="button" id="btn-test-connection" class="btn btn-info" onclick="SuiteCRMStatus.testConnection()">
+                <i class="ri-flashlight-line"></i> Test API Connection
+            </button>
+        </div>
+
+        <div id="suitecrm-status-loading" class="mt-2" style="display: none;">
+            <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+            <span id="loading-text">Checking...</span>
+        </div>
+    </div>
+</div>
+
+<script>
+var SuiteCRMStatus = {
+    // Use the correct LimeSurvey plugin direct URL format
+    ajaxUrl: (function() {
+        // Get base URL from meta tag or use relative path
+        var baseUrl = $('meta[name="baseUrl"]').attr('content') || '';
+        return baseUrl + '/index.php/plugins/direct?plugin=SuiteCRMIntegration&function=';
+    })(),
+
+    showLoading: function(text) {
+        $('#suitecrm-status-loading').show();
+        $('#loading-text').text(text || 'Processing...');
+        $('.btn-group button').prop('disabled', true);
+    },
+
+    hideLoading: function() {
+        $('#suitecrm-status-loading').hide();
+        $('.btn-group button').prop('disabled', false);
+    },
+
+    updateStatus: function(type, message) {
+        var alertClass = 'alert-info';
+        if (type === 'success' || type === 'ready') alertClass = 'alert-success';
+        else if (type === 'error') alertClass = 'alert-danger';
+        else if (type === 'warning' || type === 'pending') alertClass = 'alert-warning';
+
+        $('#suitecrm-status-message').removeClass('alert-info alert-success alert-warning alert-danger alert-secondary').addClass(alertClass);
+        $('#suitecrm-status-text').text(message);
+    },
+
+    updateDetailRow: function(id, status, message) {
+        var badgeClass = 'badge bg-secondary';
+        if (status === 'ok') badgeClass = 'badge bg-success';
+        else if (status === 'error') badgeClass = 'badge bg-danger';
+        else if (status === 'warning' || status === 'pending') badgeClass = 'badge bg-warning text-dark';
+
+        $('#' + id).html('<span class="' + badgeClass + '">' + status.toUpperCase() + '</span> ' + message);
+    },
+
+    checkStatus: function() {
+        var self = this;
+        this.showLoading('Checking SuiteCRM status...');
+
+        $.ajax({
+            url: this.ajaxUrl + 'actionCheckStatus',
+            method: 'GET',
+            dataType: 'json',
+            success: function(data) {
+                self.hideLoading();
+                $('#suitecrm-status-details').show();
+
+                self.updateDetailRow('status-http', data.suitecrm_http.status, data.suitecrm_http.message);
+                self.updateDetailRow('status-database', data.suitecrm_database.status, data.suitecrm_database.message);
+                self.updateDetailRow('status-oauth-table', data.oauth2_table.status, data.oauth2_table.message);
+                self.updateDetailRow('status-oauth-client', data.oauth2_client.status, data.oauth2_client.message);
+
+                if (data.overall === 'ready') {
+                    self.updateStatus('success', 'All checks passed - SuiteCRM integration is ready!');
+                } else if (data.overall === 'error') {
+                    self.updateStatus('error', 'Some checks failed - see details above');
+                } else {
+                    self.updateStatus('warning', 'Some checks pending - SuiteCRM may still be initializing');
+                }
+            },
+            error: function(xhr, status, error) {
+                self.hideLoading();
+                self.updateStatus('error', 'Failed to check status: ' + error);
+            }
+        });
+    },
+
+    initializeOAuth2: function() {
+        var self = this;
+        this.showLoading('Initializing OAuth2 client...');
+
+        $.ajax({
+            url: this.ajaxUrl + 'actionInitializeOAuth2',
+            method: 'GET',
+            dataType: 'json',
+            success: function(data) {
+                self.hideLoading();
+                if (data.success) {
+                    self.updateStatus('success', 'OAuth2 initialized: ' + (data.client_id || 'Success'));
+                    // Refresh the status details
+                    setTimeout(function() { self.checkStatus(); }, 500);
+                } else {
+                    self.updateStatus('error', 'OAuth2 initialization failed: ' + (data.error || 'Unknown error'));
+                }
+            },
+            error: function(xhr, status, error) {
+                self.hideLoading();
+                var errMsg = 'Failed to initialize OAuth2: ' + error;
+                try {
+                    var resp = JSON.parse(xhr.responseText);
+                    if (resp.error) errMsg = resp.error;
+                } catch(e) {}
+                self.updateStatus('error', errMsg);
+            }
+        });
+    },
+
+    testConnection: function() {
+        var self = this;
+        this.showLoading('Testing API connection...');
+
+        $.ajax({
+            url: this.ajaxUrl + 'actionTestConnection',
+            method: 'GET',
+            dataType: 'json',
+            success: function(data) {
+                self.hideLoading();
+                if (data.success) {
+                    self.updateStatus('success', 'API connection successful! Found ' + (data.modules_count || 0) + ' modules.');
+                } else {
+                    self.updateStatus('error', 'API connection failed: ' + (data.message || 'Unknown error'));
+                }
+            },
+            error: function(xhr, status, error) {
+                self.hideLoading();
+                var errMsg = 'API connection test failed: ' + error;
+                try {
+                    var resp = JSON.parse(xhr.responseText);
+                    if (resp.error) errMsg = resp.error;
+                } catch(e) {}
+                self.updateStatus('error', errMsg);
+            }
+        });
+    }
+};
+</script>
+HTML;
+
+        return $html;
+    }
+
+    /**
      * Handle plugin activation
+     *
+     * NOTE: OAuth2 initialization is now LAZY - it happens when the user first
+     * enables integration for a survey or manually triggers it via the admin UI.
+     * This allows the plugin to activate even if SuiteCRM is not yet available.
      */
     public function beforeActivate()
     {
-        // Initialize OAuth2 client if not already set
-        if (empty($this->get('oauth_client_id'))) {
-            $this->initializeOAuth2Client();
-        }
-
         // Install database schema if not already installed
         $schema = $this->getDbSchema();
         if (!$schema->isInstalled()) {
@@ -202,6 +469,10 @@ class SuiteCRMIntegration extends PluginBase
                 $this->debugLog("Database schema installed successfully");
             }
         }
+
+        // NOTE: OAuth2 client initialization is DEFERRED until first use
+        // This allows LimeSurvey to start without waiting for SuiteCRM
+        $this->debugLog("Plugin activated - OAuth2 will be initialized lazily when first needed");
     }
 
     /**
@@ -246,10 +517,21 @@ class SuiteCRMIntegration extends PluginBase
      * Get API client instance
      *
      * @return SuiteCRMApiClient
+     * @throws Exception if OAuth2 initialization fails and SuiteCRM is not available
      */
     protected function getApiClient(): SuiteCRMApiClient
     {
         if ($this->apiClient === null) {
+            // Skip lazy initialization in console mode to avoid interfering with imports
+            if (!$this->isConsoleMode()) {
+                // Ensure OAuth2 is initialized before creating the API client
+                $oauthStatus = $this->ensureOAuth2Initialized();
+                if (!$oauthStatus['ready']) {
+                    $this->debugLog("getApiClient() - OAuth2 not ready: " . ($oauthStatus['error'] ?? 'Unknown'));
+                    // Continue anyway - the API client will fail gracefully if credentials are missing
+                }
+            }
+
             $this->apiClient = new SuiteCRMApiClient([
                 'baseUrl' => $this->get('suitecrm_url'),
                 'clientId' => $this->get('oauth_client_id'),
@@ -260,6 +542,19 @@ class SuiteCRMIntegration extends PluginBase
             ]);
         }
         return $this->apiClient;
+    }
+
+    /**
+     * Check if we're running in console/CLI mode
+     *
+     * This is important to avoid triggering lazy initialization or logging
+     * that could interfere with console command output (e.g., survey imports).
+     *
+     * @return bool True if running in console mode
+     */
+    protected function isConsoleMode(): bool
+    {
+        return php_sapi_name() === 'cli' || defined('STDIN');
     }
 
     /**
@@ -650,28 +945,88 @@ class SuiteCRMIntegration extends PluginBase
     }
 
     /**
-     * Initialize OAuth2 client in SuiteCRM database
+     * Initialize OAuth2 client in SuiteCRM database (LAZY INITIALIZATION)
+     *
+     * This method is called lazily when:
+     * 1. User first enables integration for a survey
+     * 2. User clicks "Test Connection" in the admin UI
+     * 3. User clicks "Initialize OAuth2" button in the status panel
+     *
+     * @return array Result with 'success', 'message', and optionally 'error' keys
      */
-    protected function initializeOAuth2Client()
+    protected function initializeOAuth2Client(): array
     {
+        $this->debugLog("initializeOAuth2Client() called - attempting lazy OAuth2 setup");
+
         try {
+            // First, check if OAuth2 is already initialized
+            $existingClientId = $this->get('oauth_client_id');
+            if (!empty($existingClientId) && $this->get('oauth_initialized') === '1') {
+                $this->debugLog("OAuth2 already initialized with client ID: {$existingClientId}");
+                return [
+                    'success' => true,
+                    'message' => 'OAuth2 client already initialized',
+                    'client_id' => $existingClientId
+                ];
+            }
+
+            // Generate new credentials
             $clientId = 'limesurvey-' . uniqid();
             $clientSecret = bin2hex(random_bytes(32));
             $secretHash = hash('sha256', $clientSecret);
 
-            // Connect to SuiteCRM database
+            // Try to connect to SuiteCRM database
             $pdo = $this->getSuiteCRMDatabaseConnection();
 
-            // Check if client already exists
-            $stmt = $pdo->prepare("SELECT id FROM oauth2clients WHERE name = ?");
-            $stmt->execute(['LimeSurvey Integration']);
-
-            if ($stmt->fetch()) {
-                $this->log("OAuth2 client already exists", 'info');
-                return;
+            // Check if oauth2clients table exists (SuiteCRM may not be fully initialized)
+            try {
+                $stmt = $pdo->query("SHOW TABLES LIKE 'oauth2clients'");
+                if ($stmt->rowCount() === 0) {
+                    $error = "SuiteCRM database not fully initialized - oauth2clients table does not exist";
+                    $this->debugLog($error);
+                    $this->set('oauth_init_error', $error);
+                    return [
+                        'success' => false,
+                        'message' => 'SuiteCRM not ready',
+                        'error' => $error,
+                        'retry_suggested' => true
+                    ];
+                }
+            } catch (Exception $e) {
+                $error = "Cannot check SuiteCRM database: " . $e->getMessage();
+                $this->debugLog($error);
+                $this->set('oauth_init_error', $error);
+                return [
+                    'success' => false,
+                    'message' => 'Cannot access SuiteCRM database',
+                    'error' => $error,
+                    'retry_suggested' => true
+                ];
             }
 
-            // Insert OAuth2 client
+            // Check if client already exists in SuiteCRM
+            $stmt = $pdo->prepare("SELECT id, secret FROM oauth2clients WHERE name = ?");
+            $stmt->execute(['LimeSurvey Integration']);
+            $existing = $stmt->fetch();
+
+            if ($existing) {
+                // Client exists - retrieve and use existing credentials
+                $this->debugLog("OAuth2 client already exists in SuiteCRM: " . $existing['id']);
+                $this->set('oauth_client_id', $existing['id']);
+                // Note: We can't retrieve the original secret since only hash is stored
+                // User may need to recreate if secret was lost
+                $this->set('oauth_initialized', '1');
+                $this->set('oauth_init_error', '');
+
+                return [
+                    'success' => true,
+                    'message' => 'Using existing OAuth2 client from SuiteCRM',
+                    'client_id' => $existing['id'],
+                    'note' => 'Client secret may need to be regenerated if lost'
+                ];
+            }
+
+            // Insert new OAuth2 client
             $now = date('Y-m-d H:i:s');
             $stmt = $pdo->prepare("
                 INSERT INTO oauth2clients (
@@ -696,13 +1051,58 @@ class SuiteCRMIntegration extends PluginBase
             // Store credentials in plugin settings
             $this->set('oauth_client_id', $clientId);
             $this->set('oauth_client_secret', $clientSecret);
+            $this->set('oauth_initialized', '1');
+            $this->set('oauth_init_error', '');
 
             $this->log("OAuth2 client created successfully: {$clientId}", 'info');
+            $this->debugLog("OAuth2 client created successfully: {$clientId}");
+
+            return [
+                'success' => true,
+                'message' => 'OAuth2 client created successfully',
+                'client_id' => $clientId
+            ];
 
         } catch (Exception $e) {
-            $this->log("Error initializing OAuth2 client: " . $e->getMessage(), 'error');
-            throw $e;
+            $error = $e->getMessage();
+            $this->log("Error initializing OAuth2 client: " . $error, 'error');
+            $this->debugLog("OAuth2 initialization failed: " . $error);
+            $this->set('oauth_init_error', $error);
+
+            return [
+                'success' => false,
+                'message' => 'OAuth2 initialization failed',
+                'error' => $error,
+                'retry_suggested' => true
+            ];
         }
+    }
+
+    /**
+     * Ensure OAuth2 is initialized before any SuiteCRM operation
+     * This is the main entry point for lazy initialization.
+     *
+     * @return array Status with 'ready' boolean and details
+     */
+    protected function ensureOAuth2Initialized(): array
+    {
+        // Check if already initialized
+        if ($this->get('oauth_initialized') === '1' && !empty($this->get('oauth_client_id'))) {
+            return [
+                'ready' => true,
+                'message' => 'OAuth2 is initialized'
+            ];
+        }
+
+        // Attempt lazy initialization
+        $result = $this->initializeOAuth2Client();
+
+        return [
+            'ready' => $result['success'],
+            'message' => $result['message'],
+            'error' => $result['error'] ?? null,
+            'initialization_result' => $result
+        ];
     }
 
     /**
@@ -786,6 +1186,9 @@ class SuiteCRMIntegration extends PluginBase
 
     /**
      * Log a message
+     *
+     * In console mode, logging is done only to debugLog (file) to avoid
+     * interfering with console command output (e.g., survey imports).
      */
     public function log($message, $level = 'info')
     {
@@ -796,6 +1199,12 @@ class SuiteCRMIntegration extends PluginBase
         }
 
         $prefix = '[SuiteCRM Integration] ';
+
+        // In console mode, only log to file to avoid corrupting console output
+        if ($this->isConsoleMode()) {
+            $this->debugLog("[$level] $message");
+            return;
+        }
 
         if (function_exists('Yii') && isset(Yii::app()->log)) {
             switch ($level) {
@@ -812,7 +1221,7 @@ class SuiteCRMIntegration extends PluginBase
                     Yii::log($prefix . $message, 'info', 'application.plugins.SuiteCRMIntegration');
             }
         } else {
-            // Fallback to error_log
+            // Fallback to error_log (goes to Apache error log, not stdout)
             error_log($prefix . "[$level] " . $message);
         }
     }
@@ -1285,6 +1694,186 @@ class SuiteCRMIntegration extends PluginBase
             ]);
         } catch (Exception $e) {
             $this->sendJsonResponse(['error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * AJAX: Check SuiteCRM connectivity and OAuth2 status
+     *
+     * This endpoint provides a comprehensive status check including:
+     * - SuiteCRM HTTP endpoint availability
+     * - SuiteCRM database connectivity
+     * - oauth2clients table existence (indicates SuiteCRM is fully initialized)
+     * - OAuth2 client status in LimeSurvey
+     */
+    public function actionCheckStatus()
+    {
+        $status = [
+            'timestamp' => date('Y-m-d H:i:s'),
+            'suitecrm_http' => ['status' => 'unknown', 'message' => ''],
+            'suitecrm_database' => ['status' => 'unknown', 'message' => ''],
+            'oauth2_table' => ['status' => 'unknown', 'message' => ''],
+            'oauth2_client' => ['status' => 'unknown', 'message' => ''],
+            'overall' => 'unknown'
+        ];
+
+        $suitecrmUrl = $this->get('suitecrm_url');
+
+        // Check 1: SuiteCRM HTTP endpoint
+        if (!empty($suitecrmUrl)) {
+            try {
+                $ch = curl_init(rtrim($suitecrmUrl, '/') . '/');
+                curl_setopt_array($ch, [
+                    CURLOPT_RETURNTRANSFER => true,
+                    CURLOPT_TIMEOUT => 10,
+                    CURLOPT_FOLLOWLOCATION => true,
+                    CURLOPT_NOBODY => true  // HEAD request
+                ]);
+                curl_exec($ch);
+                $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                $error = curl_error($ch);
+                curl_close($ch);
+
+                if ($error) {
+                    $status['suitecrm_http'] = [
+                        'status' => 'error',
+                        'message' => "Connection failed: {$error}"
+                    ];
+                } elseif ($httpCode >= 200 && $httpCode < 400) {
+                    $status['suitecrm_http'] = [
+                        'status' => 'ok',
+                        'message' => "SuiteCRM is reachable (HTTP {$httpCode})"
+                    ];
+                } else {
+                    $status['suitecrm_http'] = [
+                        'status' => 'warning',
+                        'message' => "SuiteCRM returned HTTP {$httpCode}"
+                    ];
+                }
+            } catch (Exception $e) {
+                $status['suitecrm_http'] = [
+                    'status' => 'error',
+                    'message' => $e->getMessage()
+                ];
+            }
+        } else {
+            $status['suitecrm_http'] = [
+                'status' => 'error',
+                'message' => 'SuiteCRM URL not configured'
+            ];
+        }
+
+        // Check 2: SuiteCRM Database connectivity
+        try {
+            $pdo = $this->getSuiteCRMDatabaseConnection();
+            $status['suitecrm_database'] = [
+                'status' => 'ok',
+                'message' => 'Database connection successful'
+            ];
+
+            // Check 3: oauth2clients table exists
+            try {
+                $stmt = $pdo->query("SHOW TABLES LIKE 'oauth2clients'");
+                if ($stmt->rowCount() > 0) {
+                    $status['oauth2_table'] = [
+                        'status' => 'ok',
+                        'message' => 'oauth2clients table exists - SuiteCRM is fully initialized'
+                    ];
+                } else {
+                    $status['oauth2_table'] = [
+                        'status' => 'warning',
+                        'message' => 'oauth2clients table not found - SuiteCRM may still be initializing'
+                    ];
+                }
+            } catch (Exception $e) {
+                $status['oauth2_table'] = [
+                    'status' => 'error',
+                    'message' => 'Cannot check oauth2clients table: ' . $e->getMessage()
+                ];
+            }
+        } catch (Exception $e) {
+            $status['suitecrm_database'] = [
+                'status' => 'error',
+                'message' => 'Database connection failed: ' . $e->getMessage()
+            ];
+            $status['oauth2_table'] = [
+                'status' => 'unknown',
+                'message' => 'Cannot check - database not accessible'
+            ];
+        }
+
+        // Check 4: OAuth2 client status
+        $oauthInitialized = $this->get('oauth_initialized') === '1';
+        $oauthClientId = $this->get('oauth_client_id');
+        $oauthError = $this->get('oauth_init_error');
+
+        if ($oauthInitialized && !empty($oauthClientId)) {
+            $status['oauth2_client'] = [
+                'status' => 'ok',
+                'message' => "OAuth2 client initialized: {$oauthClientId}",
+                'client_id' => $oauthClientId
+            ];
+        } elseif (!empty($oauthError)) {
+            $status['oauth2_client'] = [
+                'status' => 'error',
+                'message' => "OAuth2 initialization failed: {$oauthError}",
+                'last_error' => $oauthError
+            ];
+        } else {
+            $status['oauth2_client'] = [
+                'status' => 'pending',
+                'message' => 'OAuth2 client not yet initialized (will be created on first use)'
+            ];
+        }
+
+        // Determine overall status
+        $hasErrors = false;
+        $allOk = true;
+        foreach (['suitecrm_http', 'suitecrm_database', 'oauth2_table', 'oauth2_client'] as $check) {
+            if ($status[$check]['status'] === 'error') {
+                $hasErrors = true;
+                $allOk = false;
+            } elseif ($status[$check]['status'] !== 'ok') {
+                $allOk = false;
+            }
+        }
+
+        if ($allOk) {
+            $status['overall'] = 'ready';
+        } elseif ($hasErrors) {
+            $status['overall'] = 'error';
+        } else {
+            $status['overall'] = 'pending';
+        }
+
+        $this->sendJsonResponse($status);
+    }
+
+    /**
+     * AJAX: Manually initialize OAuth2 client
+     *
+     * This endpoint allows administrators to manually trigger OAuth2 initialization
+     * from the plugin settings page.
+     */
+    public function actionInitializeOAuth2()
+    {
+        $this->debugLog("actionInitializeOAuth2() called - manual OAuth2 initialization");
+
+        $result = $this->initializeOAuth2Client();
+
+        if ($result['success']) {
+            $this->sendJsonResponse([
+                'success' => true,
+                'message' => $result['message'],
+                'client_id' => $result['client_id'] ?? null
+            ]);
+        } else {
+            $this->sendJsonResponse([
+                'success' => false,
+                'message' => $result['message'],
+                'error' => $result['error'] ?? 'Unknown error',
+                'retry_suggested' => $result['retry_suggested'] ?? false
+            ], 500);
         }
     }
 
