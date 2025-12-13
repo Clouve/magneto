@@ -44,6 +44,7 @@ services:
       appVersion: 6.16.1
       appTitle: LimeSurvey
       appDescription: LimeSurvey is a powerful, open-source survey platform that enables businesses and organizations to create, distribute, and analyze professional surveys with ease. Renowned for its flexibility and comprehensive feature set, LimeSurvey supports unlimited surveys, questions, and responses, making it ideal for market research, customer feedback, employee engagement, and academic studies. With an intuitive interface, advanced question types, multilingual support, and robust data analysis tools, LimeSurvey empowers users to gather actionable insights and make data-driven decisions. Its self-hosted nature ensures complete data privacy and control, while extensive customization options allow organizations to tailor surveys to their specific needs and brand identity.
+      adminPath: /admin
     x-clouve-healthcheck:
       enabled: true
       type: HTTP

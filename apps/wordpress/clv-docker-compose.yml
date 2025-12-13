@@ -41,6 +41,7 @@ services:
       appVersion: 6.8.3
       appTitle: WordPress
       appDescription: WordPress is a versatile, open-source content management system that empowers businesses to create professional, dynamic websites with ease. Renowned for its user-friendly interface and extensive library of themes and plugins, WordPress allows businesses to customize their sites to reflect their unique brand identity and meet specific functional needs. Its built-in SEO tools, responsive design capabilities, and robust security features ensure optimal performance and visibility on search engines. Whether for blogging, e-commerce, or corporate websites, WordPress enhances online presence, drives engagement, and supports business growth by providing a scalable and adaptable platform for all digital content needs.
+      adminPath: /wp-admin
     x-clouve-healthcheck:
       enabled: true
       type: HTTP
