@@ -22,6 +22,19 @@ ORIGINAL_ENTRYPOINT="/usr/local/bin/docker-entrypoint.sh"
 # WordPress installation directory
 WP_DIR="/var/www/html"
 
+# ----------------------------------------------------------------------------
+# Helper: fix uploads directory permissions
+# Called right before starting Apache so that it runs AFTER wp-cli / the
+# original entrypoint have finished creating files (which run as root).
+# ----------------------------------------------------------------------------
+fix_uploads_permissions() {
+    echo -e "${YELLOW}[INFO]${NC} Setting up uploads directory permissions..."
+    mkdir -p "$WP_DIR/wp-content/uploads"
+    chown -R www-data:www-data "$WP_DIR/wp-content/uploads"
+    chmod -R 755 "$WP_DIR/wp-content/uploads"
+    echo -e "${GREEN}[SUCCESS]${NC} Uploads directory is ready."
+}
+
 # Set error handling - don't exit on error, just log it
 set +e
 
@@ -157,7 +170,8 @@ if [ "$WORDPRESS_INSTALLED" = true ] && [ -n "$WORDPRESS_SITE_URL" ]; then
         echo -e "${GREEN}[INFO]${NC} WordPress URL is already up to date: $WORDPRESS_SITE_URL"
     fi
 
-    # WordPress is installed and URL is updated, start Apache
+    # WordPress is installed and URL is updated, fix permissions and start Apache
+    fix_uploads_permissions
     echo -e "${GREEN}[SUCCESS]${NC} WordPress is ready to use!"
     echo -e "${GREEN}[INFO]${NC} Access WordPress at: ${WORDPRESS_SITE_URL}"
     echo -e "${GREEN}[INFO]${NC} Starting Apache..."
@@ -207,6 +221,8 @@ wp rewrite flush --hard --allow-root 2>/dev/null || true
 # ============================================================================
 # STEP 7: Start Apache
 # ============================================================================
+
+fix_uploads_permissions
 
 echo -e "${GREEN}[SUCCESS]${NC} WordPress is now ready to use!"
 echo -e "${GREEN}[INFO]${NC} Access WordPress at: ${WORDPRESS_SITE_URL}"

@@ -1,7 +1,7 @@
 # Custom WordPress Docker Image
 # Extends the official WordPress image with pre-installed wp-cli and custom initialization
 
-FROM wordpress
+FROM wordpress:6.9.0
 
 # Set labels for documentation
 LABEL maintainer="Clouve Team"
@@ -20,6 +20,13 @@ RUN curl -s -O https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-
 
 # Verify wp-cli installation (using --allow-root since we're running as root in the container)
 RUN wp --version --allow-root
+
+# Configure PHP settings for WordPress
+RUN { \
+    echo 'upload_max_filesize = 100M'; \
+    echo 'post_max_size = 100M'; \
+    echo 'memory_limit = 512M'; \
+} > /usr/local/etc/php/conf.d/wordpress.ini
 
 # Create directory for our custom entrypoint script
 RUN mkdir -p /clouve/wordpress/installer
