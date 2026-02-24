@@ -170,6 +170,10 @@ if [ "$WORDPRESS_INSTALLED" = true ] && [ -n "$WORDPRESS_SITE_URL" ]; then
         echo -e "${GREEN}[INFO]${NC} WordPress URL is already up to date: $WORDPRESS_SITE_URL"
     fi
 
+    # Ensure debug output is never displayed on the frontend
+    wp config set WP_DEBUG_DISPLAY false --raw --allow-root 2>/dev/null || true
+    echo -e "${GREEN}[INFO]${NC} WP_DEBUG_DISPLAY set to false."
+
     # WordPress is installed and URL is updated, fix permissions and start Apache
     fix_uploads_permissions
     echo -e "${GREEN}[SUCCESS]${NC} WordPress is ready to use!"
@@ -217,6 +221,10 @@ echo -e "${YELLOW}[INFO]${NC} Configuring WordPress options..."
 wp option update timezone_string "UTC" --allow-root 2>/dev/null || true
 wp rewrite structure '/%postname%/' --hard --allow-root 2>/dev/null || true
 wp rewrite flush --hard --allow-root 2>/dev/null || true
+
+# Ensure debug output is never displayed on the frontend
+wp config set WP_DEBUG_DISPLAY false --raw --allow-root 2>/dev/null || true
+echo -e "${GREEN}[INFO]${NC} WP_DEBUG_DISPLAY set to false."
 
 # ============================================================================
 # STEP 7: Start Apache
