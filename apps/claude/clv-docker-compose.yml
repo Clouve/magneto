@@ -8,7 +8,7 @@ services:
       CLAUDE_USERNAME: '{user.firstName}_{user.lastName}'
       CLAUDE_PASSWORD: claude-password
       CLAUDE_ROOT_PASSWORD: claude-root-password
-      ANTHROPIC_API_KEY: ''
+      ANTHROPIC_API_KEY: claude-api-key
     x-clouve-environment-types:
       CLAUDE_USERNAME: applicationUsername
       CLAUDE_PASSWORD: applicationPassword
@@ -22,7 +22,7 @@ services:
       - claudeaptcache:/var/cache/apt
     x-clouve-metadata:
       containerName: claude
-      purpose: Frontend
+      purpose: Database
       protocol: TCP
       isPublic: true
       memoryBase: 1
@@ -31,6 +31,7 @@ services:
       appVersion: '24.04'
       appTitle: Claude Code Server
       appDescription: A general-purpose Ubuntu 24.04 LTS Linux server environment accessible directly from your browser via a web terminal. Ideal for development, scripting, and system administration tasks in the cloud. Includes a full Bash shell, common CLI tools (curl, wget, git, vim, nano, htop, jq, and more), and a browser-based terminal powered by ttyd. User credentials are configurable at deploy time.
+      appIcon: /thermo/assets/Company/clouvecom21/attachments/6aa987b60df39cbb-logo.png
       adminPath: /chat
     x-clouve-healthcheck:
       enabled: true
@@ -45,9 +46,10 @@ services:
     healthcheck:
       test:
         - CMD
-        - curl
-        - '-f'
-        - http://localhost/chat
+        - wget
+        - '--spider'
+        - '-q'
+        - http://localhost:80/chat
       interval: 10s
       timeout: 5s
       retries: 3
@@ -55,19 +57,19 @@ services:
     x-clouve-volumes:
       - name: claudedata
         size: 10
-        description: 'Persistent volume for home directories'
+        description: Persistent volume for home directories
       - name: claudeusr
         size: 10
-        description: 'Persistent volume for system binaries and libraries (/usr)'
+        description: Persistent volume for system binaries and libraries (/usr)
       - name: claudeopt
-        size: 5
-        description: 'Persistent volume for optional software (/opt)'
+        size: 10
+        description: Persistent volume for optional software (/opt)
       - name: claudedpkg
-        size: 1
-        description: 'Persistent volume for dpkg package database (/var/lib/dpkg)'
+        size: 10
+        description: Persistent volume for dpkg package database (/var/lib/dpkg)
       - name: claudeaptcache
-        size: 2
-        description: 'Persistent volume for apt package cache (/var/cache/apt)'
+        size: 10
+        description: Persistent volume for apt package cache (/var/cache/apt)
 volumes:
   claudedata:
     driver: local
