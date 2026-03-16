@@ -14,25 +14,13 @@ services:
       # Default username: admin
       # Override with: CLAUDE_USERNAME, CLAUDE_PASSWORD, CLAUDE_ROOT_PASSWORD, ANTHROPIC_API_KEY
     volumes:
-      - claude_data:/home
-      - claude_usr:/usr
-      - claude_opt:/opt
-      - claude_dpkg:/var/lib/dpkg
-      - claude_apt_cache:/var/cache/apt
+      - ./.data/home:/home
+      - ./.data/usr:/usr
+      - ./.data/opt:/opt
+      - ./.data/dpkg:/var/lib/dpkg
+      - ./.data/apt_cache:/var/cache/apt
     networks:
       - claude_network
-
-volumes:
-  claude_data:
-    driver: local
-  claude_usr:
-    driver: local
-  claude_opt:
-    driver: local
-  claude_dpkg:
-    driver: local
-  claude_apt_cache:
-    driver: local
 
 networks:
   claude_network:
