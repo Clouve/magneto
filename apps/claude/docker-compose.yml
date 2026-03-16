@@ -1,0 +1,42 @@
+services:
+  claude:
+    image: dev.cr0.io/clouveinc8/claude
+    container_name: claude_server
+    restart: unless-stopped
+    ports:
+      - "${TEST_PORT:-7890}:7890"
+      - "${TEST_SSH_PORT:-2222}:22"
+      - "${TEST_HTTP_PORT:-8080}:80"
+      - "${TEST_HTTPS_PORT:-8443}:443"
+    environment:
+      CLAUDE_USERNAME: admin
+      CLAUDE_PASSWORD: Admin@123
+      CLAUDE_ROOT_PASSWORD: Root@123
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-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}
+      # Uses environment variable substitution for testing flexibility
+      # Default username: admin
+      # Override with: CLAUDE_USERNAME, CLAUDE_PASSWORD, CLAUDE_ROOT_PASSWORD, ANTHROPIC_API_KEY
+    volumes:
+      - claude_data:/home
+      - claude_usr:/usr
+      - claude_opt:/opt
+      - claude_dpkg:/var/lib/dpkg
+      - claude_apt_cache:/var/cache/apt
+    networks:
+      - claude_network
+
+volumes:
+  claude_data:
+    driver: local
+  claude_usr:
+    driver: local
+  claude_opt:
+    driver: local
+  claude_dpkg:
+    driver: local
+  claude_apt_cache:
+    driver: local
+
+networks:
+  claude_network:
+    driver: bridge

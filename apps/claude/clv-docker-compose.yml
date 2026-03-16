@@ -1,0 +1,85 @@
+version: '3.8'
+services:
+  claude:
+    image: claude:latest
+    ports:
+      - '7890:7890'
+      - '80:80'
+      - '443:443'
+    environment:
+      CLAUDE_USERNAME: '{user.firstName}_{user.lastName}'
+      CLAUDE_PASSWORD: claude-password
+      CLAUDE_ROOT_PASSWORD: claude-root-password
+      CLAUDE_SSH_AUTHORIZED_KEY: ''
+      ANTHROPIC_API_KEY: ''
+    x-clouve-environment-types:
+      CLAUDE_USERNAME: applicationUsername
+      CLAUDE_PASSWORD: applicationPassword
+      CLAUDE_ROOT_PASSWORD: secret
+      CLAUDE_SSH_AUTHORIZED_KEY: userConfigurable
+      ANTHROPIC_API_KEY: secret
+    volumes:
+      - claudedata:/home
+      - claudeusr:/usr
+      - claudeopt:/opt
+      - claudedpkg:/var/lib/dpkg
+      - claudeaptcache:/var/cache/apt
+    x-clouve-metadata:
+      containerName: claude
+      purpose: Frontend
+      protocol: TCP
+      isPublic: true
+      memoryBase: 1
+      cpuBase: 1
+    x-clouve-bundle-metadata:
+      appVersion: '24.04'
+      appTitle: Claude Code Server
+      appDescription: A general-purpose Ubuntu 24.04 LTS Linux server environment accessible directly from your browser via a web terminal. Ideal for development, scripting, and system administration tasks in the cloud. Includes a full Bash shell, common CLI tools (curl, wget, git, vim, nano, htop, jq, and more), SSH daemon for secure remote access, and a browser-based terminal powered by ttyd. User credentials and an optional SSH authorized key are configurable at deploy time, enabling both web and SSH-based workflows without any local client setup.
+      adminPath: /
+    x-clouve-healthcheck:
+      enabled: true
+      type: HTTP
+      path: /
+      port: 7890
+      initialDelay: 15
+      interval: 10
+      timeout: 5
+      failureThreshold: 3
+      successThreshold: 1
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - '-f'
+        - http://localhost:7890/
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    x-clouve-volumes:
+      - name: claudedata
+        size: 10
+        description: 'Persistent volume for home directories'
+      - name: claudeusr
+        size: 10
+        description: 'Persistent volume for system binaries and libraries (/usr)'
+      - name: claudeopt
+        size: 5
+        description: 'Persistent volume for optional software (/opt)'
+      - name: claudedpkg
+        size: 1
+        description: 'Persistent volume for dpkg package database (/var/lib/dpkg)'
+      - name: claudeaptcache
+        size: 2
+        description: 'Persistent volume for apt package cache (/var/cache/apt)'
+volumes:
+  claudedata:
+    driver: local
+  claudeusr:
+    driver: local
+  claudeopt:
+    driver: local
+  claudedpkg:
+    driver: local
+  claudeaptcache:
+    driver: local
