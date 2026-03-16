@@ -64,6 +64,9 @@ RUN chmod +x /clouve/linux/installer/entrypoint.sh
 # Configure nginx: proxy /chat to ttyd (127.0.0.1:7890) over HTTP
 RUN cp /clouve/linux/installer/nginx-default.conf /etc/nginx/sites-available/default
 
+# Deploy landing page to nginx web root
+RUN cp /clouve/linux/installer/index.html /var/www/html/index.html
+
 EXPOSE 80
 
 ENTRYPOINT ["/clouve/linux/installer/entrypoint.sh"]

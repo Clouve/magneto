@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Claude Code — Clouve</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --blue:        #1d4ed8;
+      --blue-hover:  #2563eb;
+      --blue-light:  #eff6ff;
+      --blue-mid:    #dbeafe;
+      --charcoal:    #212932;
+      --slate-600:   #475569;
+      --slate-500:   #64748b;
+      --slate-300:   #cbd5e1;
+      --slate-200:   #e2e8f0;
+      --slate-50:    #f8fafc;
+      --green:       #10b981;
+      --white:       #ffffff;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: "Inter", sans-serif;
+      background: var(--white);
+      color: var(--charcoal);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Nav ───────────────────────────────────────────── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(255,255,255,0.92);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--slate-200);
+    }
+
+    .nav-inner {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 32px;
+      height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+    }
+
+    .nav-badge {
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--blue);
+      background: var(--blue-light);
+      border: 1px solid var(--blue-mid);
+      padding: 3px 10px;
+      border-radius: 100px;
+    }
+
+    /* ── Hero ──────────────────────────────────────────── */
+    .hero {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 100px 32px 80px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(ellipse 900px 500px at 50% -60px, #dbeafe 0%, transparent 70%),
+        radial-gradient(ellipse 400px 300px at 80% 100%, #eff6ff 0%, transparent 60%);
+      z-index: 0;
+    }
+
+    .hero > * { position: relative; z-index: 1; }
+
+    .hero-eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--blue);
+      background: var(--blue-light);
+      border: 1px solid var(--blue-mid);
+      padding: 6px 16px;
+      border-radius: 100px;
+      margin-bottom: 32px;
+    }
+
+    .hero-eyebrow .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--green);
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%       { opacity: 0.6; transform: scale(0.85); }
+    }
+
+    h1 {
+      font-family: "Plus Jakarta Sans", sans-serif;
+      font-size: clamp(2.6rem, 6vw, 4rem);
+      font-weight: 800;
+      line-height: 1.1;
+      letter-spacing: -0.03em;
+      color: var(--charcoal);
+      margin-bottom: 24px;
+      max-width: 720px;
+    }
+
+    h1 span {
+      color: var(--blue);
+    }
+
+    .hero-sub {
+      font-size: 1.15rem;
+      font-weight: 400;
+      color: var(--slate-600);
+      line-height: 1.7;
+      max-width: 520px;
+      margin-bottom: 48px;
+    }
+
+    .cta-row {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .btn-primary {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      background: var(--blue);
+      color: white;
+      font-family: "Plus Jakarta Sans", sans-serif;
+      font-size: 1rem;
+      font-weight: 700;
+      padding: 15px 32px;
+      border-radius: 10px;
+      text-decoration: none;
+      transition: background 0.2s, transform 0.2s, box-shadow 0.2s;
+      box-shadow: 0 4px 14px rgba(29,78,216,0.25);
+    }
+
+    .btn-primary:hover {
+      background: var(--blue-hover);
+      transform: translateY(-2px);
+      box-shadow: 0 10px 24px rgba(29,78,216,0.35);
+    }
+
+    .btn-primary svg {
+      width: 17px;
+      height: 17px;
+      stroke: white;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      fill: none;
+      transition: transform 0.2s;
+    }
+
+    .btn-primary:hover svg { transform: translateX(3px); }
+
+    .hint {
+      font-size: 0.85rem;
+      color: var(--slate-500);
+    }
+
+    /* ── Terminal preview ──────────────────────────────── */
+    .terminal-wrap {
+      margin-top: 64px;
+      width: 100%;
+      max-width: 780px;
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow:
+        0 0 0 1px var(--slate-200),
+        0 24px 48px -12px rgba(0,0,0,0.12);
+    }
+
+    .term-bar {
+      background: #1e2130;
+      padding: 14px 20px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .term-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+    }
+
+    .term-dot.red   { background: #ff5f57; }
+    .term-dot.yel   { background: #ffbd2e; }
+    .term-dot.grn   { background: #28c840; }
+
+    .term-title {
+      font-size: 0.8rem;
+      color: #8892a4;
+      margin-left: 8px;
+      font-family: "Inter", monospace;
+    }
+
+    .term-body {
+      background: #0f1117;
+      padding: 28px 32px;
+      font-family: "SFMono-Regular", "Consolas", "Liberation Mono", monospace;
+      font-size: 0.9rem;
+      line-height: 1.8;
+    }
+
+    .term-line { display: flex; gap: 10px; }
+    .term-prompt { color: #4ade80; user-select: none; }
+    .term-cmd    { color: #e2e8f0; }
+    .term-out    { color: #94a3b8; padding-left: 20px; }
+    .term-cursor {
+      display: inline-block;
+      width: 8px;
+      height: 1em;
+      background: #60a5fa;
+      vertical-align: text-bottom;
+      animation: blink 1s step-end infinite;
+    }
+
+    @keyframes blink { 0%,100% { opacity:1; } 50% { opacity:0; } }
+
+    /* ── Features ──────────────────────────────────────── */
+    .features {
+      padding: 80px 32px;
+      background: var(--slate-50);
+      border-top: 1px solid var(--slate-200);
+    }
+
+    .features-inner {
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
+    .section-label {
+      font-family: "Plus Jakarta Sans", sans-serif;
+      font-size: 0.8rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--blue);
+      margin-bottom: 12px;
+    }
+
+    .section-title {
+      font-family: "Plus Jakarta Sans", sans-serif;
+      font-size: clamp(1.6rem, 3vw, 2.2rem);
+      font-weight: 800;
+      letter-spacing: -0.025em;
+      color: var(--charcoal);
+      margin-bottom: 48px;
+      max-width: 500px;
+    }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 24px;
+    }
+
+    .card {
+      background: var(--white);
+      border: 1px solid var(--slate-200);
+      border-radius: 20px;
+      padding: 36px;
+      transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .card:hover {
+      transform: translateY(-4px);
+      border-color: #bfdbfe;
+      box-shadow: 0 20px 40px -12px rgba(0,0,0,0.08);
+    }
+
+    .card-icon {
+      width: 46px;
+      height: 46px;
+      background: var(--blue-light);
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 20px;
+    }
+
+    .card-icon svg {
+      width: 22px;
+      height: 22px;
+      stroke: var(--blue);
+      stroke-width: 1.75;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      fill: none;
+    }
+
+    .card h3 {
+      font-family: "Plus Jakarta Sans", sans-serif;
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: var(--charcoal);
+      margin-bottom: 10px;
+      letter-spacing: -0.01em;
+    }
+
+    .card p {
+      font-size: 0.92rem;
+      color: var(--slate-600);
+      line-height: 1.65;
+    }
+
+    /* ── Footer ────────────────────────────────────────── */
+    footer {
+      border-top: 1px solid var(--slate-200);
+      padding: 28px 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .footer-inner {
+      max-width: 1200px;
+      width: 100%;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    footer p {
+      font-size: 0.85rem;
+      color: var(--slate-500);
+    }
+
+    footer a {
+      color: var(--blue);
+      text-decoration: none;
+      font-weight: 500;
+    }
+
+    footer a:hover { text-decoration: underline; }
+
+    /* ── Responsive ────────────────────────────────────── */
+    @media (max-width: 640px) {
+      .hero { padding: 72px 20px 60px; }
+      .term-body { padding: 20px; font-size: 0.8rem; }
+      .features { padding: 60px 20px; }
+      .card { padding: 28px; }
+      footer { padding: 24px 20px; }
+      .nav-inner { padding: 0 20px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Nav -->
+  <nav>
+    <div class="nav-inner">
+      <a href="https://www.clouve.com" target="_blank" class="logo">
+        <svg height="32" viewBox="0 0 378.53 128" width="95" xmlns="http://www.w3.org/2000/svg" style="fill-rule:nonzero;clip-rule:evenodd;stroke-linecap:round;stroke-linejoin:round;">
+          <path d="M349.952 48.5859C354.241 48.5859 357.94 49.4102 361.046 51.0547C364.147 52.7031 366.546 55.0938 368.233 58.2266C369.921 61.3516 370.765 65.1758 370.765 69.6953L370.765 75.8359L340.812 75.8359C340.944 79.4102 342.015 82.2188 344.015 84.2578C346.022 86.2891 348.819 87.3047 352.405 87.3047C355.362 87.3047 358.077 87.0039 360.546 86.3984C363.015 85.7852 365.55 84.8672 368.155 83.6484L368.155 93.4609C365.851 94.5977 363.444 95.4258 360.937 95.9453C358.425 96.4766 355.382 96.7422 351.812 96.7422C347.163 96.7422 343.046 95.8828 339.452 94.1641C335.866 92.4453 333.054 89.832 331.015 86.3203C328.983 82.8008 327.968 78.3672 327.968 73.0234C327.968 67.5859 328.882 63.0625 330.718 59.4453C332.562 55.832 335.128 53.1172 338.421 51.3047C341.722 49.4922 345.565 48.5859 349.952 48.5859ZM350.03 57.6016C347.562 57.6016 345.515 58.3945 343.89 59.9766C342.272 61.5508 341.343 64.0234 341.093 67.3984L358.874 67.3984C358.851 65.5234 358.515 63.8516 357.858 62.3828C357.21 60.9141 356.241 59.7539 354.952 58.8984C353.659 58.0352 352.019 57.6016 350.03 57.6016Z" fill="#212932" fill-rule="nonzero"/>
+          <path d="M300.243 95.9141L282.54 49.4453L295.79 49.4453L304.774 75.9297C305.274 77.4844 305.669 79.1172 305.962 80.8359C306.251 82.5469 306.45 84.082 306.556 85.4453L306.899 85.4453C306.981 83.9766 307.181 82.4141 307.493 80.7578C307.813 79.0938 308.235 77.4844 308.759 75.9297L317.696 49.4453L330.962 49.4453L313.243 95.9141L300.243 95.9141Z" fill="#212932" fill-rule="nonzero"/>
+          <path d="M282.7 49.4453L282.7 95.9141L272.982 95.9141L271.279 89.9766L270.607 89.9766C269.615 91.5508 268.372 92.8359 266.872 93.8359C265.372 94.8359 263.72 95.5703 261.919 96.0391C260.126 96.5078 258.255 96.7422 256.31 96.7422C252.986 96.7422 250.091 96.1524 247.622 94.9766C245.161 93.8008 243.247 91.9688 241.872 89.4766C240.505 86.9766 239.825 83.7344 239.825 79.7422L239.825 49.4453L252.497 49.4453L252.497 76.5859C252.497 79.9102 253.091 82.4219 254.279 84.1172C255.474 85.8047 257.376 86.6484 259.982 86.6484C262.552 86.6484 264.575 86.0625 266.044 84.8828C267.513 83.707 268.544 81.9766 269.138 79.6953C269.732 77.4063 270.029 74.6094 270.029 71.3047L270.029 49.4453L282.7 49.4453Z" fill="#212932" fill-rule="nonzero"/>
+          <path d="M236.415 72.6016C236.415 76.4766 235.891 79.9141 234.852 82.9141C233.809 85.9063 232.297 88.4297 230.321 90.4922C228.34 92.5547 225.954 94.1133 223.165 95.1641C220.383 96.2149 217.247 96.7422 213.758 96.7422C210.485 96.7422 207.485 96.2149 204.758 95.1641C202.028 94.1133 199.657 92.5547 197.649 90.4922C195.649 88.4297 194.102 85.9063 193.008 82.9141C191.915 79.9141 191.368 76.4766 191.368 72.6016C191.368 67.4453 192.278 63.082 194.102 59.5078C195.934 55.9375 198.54 53.2227 201.915 51.3672C205.297 49.5156 209.329 48.5859 214.008 48.5859C218.36 48.5859 222.219 49.5156 225.586 51.3672C228.95 53.2227 231.594 55.9375 233.524 59.5078C235.45 63.082 236.415 67.4453 236.415 72.6016ZM204.29 72.6016C204.29 75.6445 204.622 78.207 205.29 80.2891C205.954 82.3633 206.993 83.9297 208.399 84.9922C209.813 86.0469 211.657 86.5703 213.93 86.5703C216.168 86.5703 217.985 86.0469 219.383 84.9922C220.79 83.9297 221.813 82.3633 222.461 80.2891C223.118 78.207 223.446 75.6445 223.446 72.6016C223.446 69.5313 223.118 66.9766 222.461 64.9453C221.813 62.9063 220.782 61.375 219.368 60.3516C217.961 59.3203 216.122 58.8047 213.852 58.8047C210.497 58.8047 208.063 59.957 206.555 62.2578C205.043 64.5508 204.29 68 204.29 72.6016Z" fill="#212932" fill-rule="nonzero"/>
+          <path d="M187.707 95.9141L175.035 95.9141L175.035 31.2578L187.707 31.2578L187.707 95.9141Z" fill="#212932" fill-rule="nonzero"/>
+          <path d="M156.948 96.7422C152.354 96.7422 148.433 95.9063 145.183 94.2266C141.94 92.5508 139.479 89.957 137.792 86.4453C136.104 82.9258 135.261 78.4219 135.261 72.9297C135.261 67.2539 136.218 62.625 138.136 59.0391C140.062 55.4453 142.733 52.8047 146.151 51.1172C149.577 49.4297 153.55 48.5859 158.073 48.5859C161.28 48.5859 164.058 48.8984 166.401 49.5234C168.745 50.1406 170.784 50.8789 172.526 51.7422L168.792 61.5391C166.8 60.7383 164.948 60.082 163.229 59.5703C161.511 59.0625 159.792 58.8047 158.073 58.8047C155.854 58.8047 154.011 59.3281 152.542 60.3672C151.073 61.3984 149.979 62.957 149.261 65.0391C148.542 67.1133 148.183 69.7188 148.183 72.8516C148.183 75.9258 148.565 78.4727 149.339 80.4922C150.12 82.5156 151.245 84.0195 152.714 85.0078C154.183 85.9883 155.968 86.4766 158.073 86.4766C160.706 86.4766 163.046 86.1289 165.089 85.4297C167.14 84.7227 169.136 83.7266 171.073 82.4453L171.073 93.2891C169.136 94.5078 167.104 95.3906 164.979 95.9297C162.862 96.4688 160.187 96.7422 156.948 96.7422Z" fill="#212932" fill-rule="nonzero"/>
+          <path d="M121.913 66.809L92.8034 49.3402L92.7995 49.3402L88.2605 46.6176L92.4597 43.9418C93.1706 43.4887 93.5964 42.7074 93.5964 41.8676C93.5964 41.0238 93.1706 40.2426 92.4597 39.7895L65.4128 22.5785C64.6081 22.0668 63.5769 22.0668 62.7722 22.5785L35.7253 39.7895C35.0183 40.2504 34.5886 41.0316 34.5886 41.8715C34.5886 42.7113 35.0183 43.4926 35.7253 43.9457L39.9245 46.6215L35.3855 49.3481L35.3816 49.3481L6.27219 66.8129C5.53391 67.2582 5.08078 68.0551 5.07687 68.9145C5.07687 69.7738 5.51828 70.5707 6.25656 71.0238L62.8112 105.449C63.2058 105.684 63.6472 105.805 64.0886 105.805C64.5339 105.805 64.9753 105.688 65.3698 105.449L121.925 71.0238C122.659 70.5746 123.108 69.7738 123.104 68.9145C123.108 68.0473 122.651 67.2504 121.913 66.809ZM36.4128 83.6176L12.2917 68.934L36.6081 54.3441L59.5105 68.9184L36.4128 83.6176ZM64.1003 66.0043L41.3308 51.516L44.573 49.5707L62.7722 61.1605C63.1745 61.4145 63.6316 61.5434 64.0964 61.5434C64.5573 61.5434 65.0144 61.4145 65.4167 61.1605L83.6277 49.5707L86.8698 51.516L64.1003 66.0043ZM91.7722 83.6176L68.6745 68.9184L91.5769 54.3441L115.893 68.934L91.7722 83.6176Z" fill="#1d4ed8" fill-rule="nonzero"/>
+        </svg>
+      </a>
+      <span class="nav-badge">Claude Code</span>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <section class="hero">
+    <div class="hero-eyebrow">
+      <span class="dot"></span>
+      Instance ready
+    </div>
+
+    <h1>Your <span>AI coding environment</span><br/>is ready to use</h1>
+
+    <p class="hero-sub">
+      A fully configured Linux server with Claude Code pre-installed,
+      accessible right from your browser — no local setup required.
+    </p>
+
+    <div class="cta-row">
+      <a href="/chat" class="btn-primary">
+        Launch Terminal
+        <svg viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+      </a>
+      <span class="hint">Opens the web terminal at <code>/chat</code></span>
+    </div>
+
+    <!-- Terminal preview -->
+    <div class="terminal-wrap">
+      <div class="term-bar">
+        <div class="term-dot red"></div>
+        <div class="term-dot yel"></div>
+        <div class="term-dot grn"></div>
+        <span class="term-title">claude — bash</span>
+      </div>
+      <div class="term-body">
+        <div class="term-line">
+          <span class="term-prompt">$</span>
+          <span class="term-cmd">claude</span>
+        </div>
+        <div class="term-line">
+          <span class="term-out">✻ Welcome to Claude Code! How can I help?</span>
+        </div>
+        <div class="term-line">
+          <span class="term-out"></span>
+        </div>
+        <div class="term-line">
+          <span class="term-prompt">❯</span>
+          <span class="term-cmd"><span class="term-cursor"></span></span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Features -->
+  <section class="features">
+    <div class="features-inner">
+      <div class="section-label">What's included</div>
+      <h2 class="section-title">Everything you need, pre-configured</h2>
+
+      <div class="cards">
+
+        <div class="card">
+          <div class="card-icon">
+            <!-- Terminal icon -->
+            <svg viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+          </div>
+          <h3>Browser-based terminal</h3>
+          <p>Access a full Linux shell directly from your browser via ttyd — no SSH client or VPN needed.</p>
+        </div>
+
+        <div class="card">
+          <div class="card-icon">
+            <!-- Sparkle / AI icon -->
+            <svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+          </div>
+          <h3>Claude Code pre-installed</h3>
+          <p>The latest Claude Code CLI is ready to use. Bring your Anthropic API key and start building immediately.</p>
+        </div>
+
+        <div class="card">
+          <div class="card-icon">
+            <!-- Package / stack icon -->
+            <svg viewBox="0 0 24 24"><line x1="16.5" y1="9.4" x2="7.5" y2="4.21"/><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+          </div>
+          <h3>Managed by Clouve</h3>
+          <p>Deployed as a Clouve marketplace app on your own infrastructure — isolated, persistent, and under your control.</p>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer>
+    <div class="footer-inner">
+      <p>&copy; <span id="yr"></span> <a href="https://www.clouve.com" target="_blank" rel="noopener">Clouve</a>. All rights reserved.</p>
+      <p>Powered by <a href="https://www.anthropic.com" target="_blank" rel="noopener">Anthropic Claude</a></p>
+    </div>
+  </footer>
+
+  <script>document.getElementById("yr").textContent = new Date().getFullYear();</script>
+</body>
+</html>
