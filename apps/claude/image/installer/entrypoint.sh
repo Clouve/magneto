@@ -4,7 +4,7 @@
 # This script initializes the Ubuntu Linux server container:
 # 0. Re-applies apt-get service-start guards (policy-rc.d + systemctl no-op)
 # 1. Creates the admin user from environment variables
-# 2. Configures ANTHROPIC_API_KEY for all shell sessions (if provided)
+# 2. Configures Claude Code: injects API key if provided, otherwise defers to login-time prompt
 # 3. Starts the ttyd web terminal on localhost
 # 4. Starts the nginx reverse proxy (foreground)
 
@@ -64,53 +64,55 @@ echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/"$USERNAME"
 chmod 440 /etc/sudoers.d/"$USERNAME"
 
 # ============================================================================
-# STEP 2: Write ANTHROPIC_API_KEY into the shell environment (optional)
+# STEP 2: Configure Claude Code session environment
 # ============================================================================
 
-if [ -n "$ANTHROPIC_API_KEY" ]; then
-    echo -e "${YELLOW}[INFO]${NC} Configuring ANTHROPIC_API_KEY..."
+USER_HOME=$(getent passwd "$USERNAME" | cut -d: -f6)
 
-    # /etc/profile.d/ is sourced by every login shell (SSH, su -, web terminal)
-    # This is the most reliable way to inject env vars for all session types
+# If ANTHROPIC_API_KEY is provided at container startup, export it to all login
+# shells via /etc/profile.d/. This is the most reliable injection point.
+# If absent, the key will be resolved at login time via ~/.bash_profile:
+#   stored ~/.claude_api_key → or prompt the user to enter it.
+if [ -n "$ANTHROPIC_API_KEY" ]; then
+    echo -e "${YELLOW}[INFO]${NC} Exporting ANTHROPIC_API_KEY to all shell sessions..."
     cat > /etc/profile.d/clouve-env.sh <<EOF
 export ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY
 EOF
     chmod 644 /etc/profile.d/clouve-env.sh
-
-    # Pre-configure Claude Code to skip the first-run onboarding wizard.
-    # Without this, Claude Code prompts the user to select a login method even
-    # when ANTHROPIC_API_KEY is already set in the environment.
-    USER_HOME=$(getent passwd "$USERNAME" | cut -d: -f6)
-    # Only set onboarding state — do not store the key here.
-    # Claude Code reads ANTHROPIC_API_KEY from the environment (set via
-    # /etc/profile.d/clouve-env.sh above). Storing primaryApiKey in
-    # ~/.claude.json alongside ANTHROPIC_API_KEY triggers an auth conflict warning.
-    echo "{}" | jq \
-        '.hasCompletedOnboarding = true | .oauthAccount = null' \
-        > "$USER_HOME/.claude.json"
-    chown "$USERNAME:$USERNAME" "$USER_HOME/.claude.json"
-    chmod 600 "$USER_HOME/.claude.json"
-
-    # Write global Claude Code context so every session starts with server awareness.
-    # ~/.claude/CLAUDE.md is loaded automatically by Claude Code at startup.
-    mkdir -p "$USER_HOME/.claude"
-    HOSTNAME=$(hostname) envsubst '${USERNAME} ${ROOT_PASSWORD} ${HOSTNAME}' \
-        < /clouve/linux/installer/CLAUDE.md.tpl \
-        > "$USER_HOME/.claude/CLAUDE.md"
-    chown -R "$USERNAME:$USERNAME" "$USER_HOME/.claude"
-    chmod 600 "$USER_HOME/.claude/CLAUDE.md"
-
-    # Auto-launch Claude Code on login and terminate the session when it exits.
-    # ~/.bash_profile is sourced by every login shell (web terminal).
-    cp /clouve/linux/installer/.bash_profile "$USER_HOME/.bash_profile"
-    chown "$USERNAME:$USERNAME" "$USER_HOME/.bash_profile"
-    chmod 644 "$USER_HOME/.bash_profile"
-
-    echo -e "${GREEN}[SUCCESS]${NC} ANTHROPIC_API_KEY configured for all sessions."
+    echo -e "${GREEN}[SUCCESS]${NC} ANTHROPIC_API_KEY configured via /etc/profile.d/."
 else
     rm -f /etc/profile.d/clouve-env.sh
-    echo -e "${YELLOW}[INFO]${NC} ANTHROPIC_API_KEY not set — skipping. Set it to use Claude Code."
+    echo -e "${YELLOW}[INFO]${NC} ANTHROPIC_API_KEY not set — user will be prompted at login."
 fi
+
+# Pre-configure Claude Code to skip the first-run onboarding wizard.
+# Without this, Claude Code prompts the user to select a login method even
+# when ANTHROPIC_API_KEY is already set in the environment.
+# Only set onboarding state — do not store the key here.
+# Claude Code reads ANTHROPIC_API_KEY from the environment (set via
+# /etc/profile.d/clouve-env.sh above or exported from ~/.bash_profile).
+# Storing primaryApiKey in ~/.claude.json alongside ANTHROPIC_API_KEY triggers
+# an auth conflict warning.
+echo "{}" | jq \
+    '.hasCompletedOnboarding = true | .oauthAccount = null' \
+    > "$USER_HOME/.claude.json"
+chown "$USERNAME:$USERNAME" "$USER_HOME/.claude.json"
+chmod 600 "$USER_HOME/.claude.json"
+
+# Write global Claude Code context so every session starts with server awareness.
+# ~/.claude/CLAUDE.md is loaded automatically by Claude Code at startup.
+mkdir -p "$USER_HOME/.claude"
+HOSTNAME=$(hostname) envsubst '${USERNAME} ${ROOT_PASSWORD} ${HOSTNAME}' \
+    < /clouve/linux/installer/CLAUDE.md.tpl \
+    > "$USER_HOME/.claude/CLAUDE.md"
+chown -R "$USERNAME:$USERNAME" "$USER_HOME/.claude"
+chmod 600 "$USER_HOME/.claude/CLAUDE.md"
+
+# Install login shell profile. This auto-launches Claude Code for interactive
+# user terminal sessions and gates access on a valid ANTHROPIC_API_KEY.
+cp /clouve/linux/installer/.bash_profile "$USER_HOME/.bash_profile"
+chown "$USERNAME:$USERNAME" "$USER_HOME/.bash_profile"
+chmod 644 "$USER_HOME/.bash_profile"
 
 # ============================================================================
 # STEP 3: Start ttyd web terminal on localhost

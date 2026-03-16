@@ -9,7 +9,7 @@ services:
       CLAUDE_USERNAME: admin
       CLAUDE_PASSWORD: Admin@123
       CLAUDE_ROOT_PASSWORD: Root@123
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-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}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       # Uses environment variable substitution for testing flexibility
       # Default username: admin
       # Override with: CLAUDE_USERNAME, CLAUDE_PASSWORD, CLAUDE_ROOT_PASSWORD, ANTHROPIC_API_KEY
