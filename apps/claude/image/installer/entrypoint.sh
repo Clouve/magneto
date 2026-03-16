@@ -119,13 +119,21 @@ chmod 644 "$USER_HOME/.bash_profile"
 # ============================================================================
 
 echo -e "${YELLOW}[INFO]${NC} Starting web terminal (ttyd)..."
+
+# Create a session wrapper that ignores all arguments.
+# ttyd supports ?arg= URL query parameters which clients can use to inject extra
+# arguments to the spawned command (e.g. --noprofile to bypass .bash_profile).
+# The wrapper discards all arguments and always starts a login shell as $USERNAME.
+printf '#!/bin/bash\nexec su - %s\n' "$USERNAME" > /usr/local/bin/clv-session
+chmod 755 /usr/local/bin/clv-session
+
 ttyd \
     --port 7890 \
     --base-path /chat \
     --interface 127.0.0.1 \
     --credential "$USERNAME:$PASSWORD" \
     --writable \
-    su - "$USERNAME" &
+    /usr/local/bin/clv-session &
 TTYD_PID=$!
 
 sleep 1

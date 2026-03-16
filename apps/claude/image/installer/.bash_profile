@@ -17,6 +17,10 @@ if [[ $- == *i* ]]; then
     #   3. Prompt user to enter key, save it, then proceed
     #   4. User provides nothing or presses Ctrl+C → exit session, no shell access
 
+    # Neutralise environment variables that cause bash to source arbitrary files in
+    # non-interactive subshells. Unset early so Claude Code's child shells are also clean.
+    unset BASH_ENV ENV
+
     # Trap SIGINT and SIGTERM so Ctrl+C cannot escape the gate into a bare shell.
     # The trap is cleared before launching Claude Code so it gets normal signal handling.
     _clv_gate_exit() {
