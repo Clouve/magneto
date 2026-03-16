@@ -57,17 +57,17 @@ RUN TTYD_VERSION=1.7.7 && \
     chmod +x /usr/local/bin/ttyd
 
 # Copy entrypoint and static template files
-RUN mkdir -p /clouve/linux/installer
-COPY installer/ /clouve/linux/installer/
-RUN chmod +x /clouve/linux/installer/entrypoint.sh
+RUN mkdir -p /clouve/claude/installer
+COPY installer/ /clouve/claude/installer/
+RUN chmod +x /clouve/claude/installer/entrypoint.sh
 
 # Configure nginx: proxy /chat to ttyd (127.0.0.1:7890) over HTTP
-RUN cp /clouve/linux/installer/nginx-default.conf /etc/nginx/sites-available/default
+RUN cp /clouve/claude/installer/nginx-default.conf /etc/nginx/sites-available/default
 
 # Deploy landing page to nginx web root
-RUN cp /clouve/linux/installer/index.html /var/www/html/index.html
+RUN cp /clouve/claude/installer/index.html /var/www/html/index.html
 
 EXPOSE 80
 
-ENTRYPOINT ["/clouve/linux/installer/entrypoint.sh"]
+ENTRYPOINT ["/clouve/claude/installer/entrypoint.sh"]
 CMD []

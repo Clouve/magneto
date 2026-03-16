@@ -103,14 +103,14 @@ chmod 600 "$USER_HOME/.claude.json"
 # ~/.claude/CLAUDE.md is loaded automatically by Claude Code at startup.
 mkdir -p "$USER_HOME/.claude"
 HOSTNAME=$(hostname) envsubst '${USERNAME} ${ROOT_PASSWORD} ${HOSTNAME}' \
-    < /clouve/linux/installer/CLAUDE.md.tpl \
+    < /clouve/claude/installer/CLAUDE.md.tpl \
     > "$USER_HOME/.claude/CLAUDE.md"
 chown -R "$USERNAME:$USERNAME" "$USER_HOME/.claude"
 chmod 600 "$USER_HOME/.claude/CLAUDE.md"
 
 # Install login shell profile. This auto-launches Claude Code for interactive
 # user terminal sessions and gates access on a valid ANTHROPIC_API_KEY.
-cp /clouve/linux/installer/.bash_profile "$USER_HOME/.bash_profile"
+cp /clouve/claude/installer/.bash_profile "$USER_HOME/.bash_profile"
 chown "$USERNAME:$USERNAME" "$USER_HOME/.bash_profile"
 chmod 644 "$USER_HOME/.bash_profile"
 
