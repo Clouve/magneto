@@ -5,10 +5,8 @@
 # 0. Re-applies apt-get service-start guards (policy-rc.d + systemctl no-op)
 # 1. Creates the admin user from environment variables
 # 2. Configures ANTHROPIC_API_KEY for all shell sessions (if provided)
-# 3. Configures SSH authorized key (if provided)
-# 4. Ensures SSH host keys exist
-# 5. Starts the SSH daemon
-# 6. Starts the ttyd web terminal
+# 3. Starts the ttyd web terminal on localhost
+# 4. Starts the nginx reverse proxy (foreground)
 
 # Color codes for output
 RED='\033[0;31m'
@@ -96,52 +94,15 @@ EOF
     # Write global Claude Code context so every session starts with server awareness.
     # ~/.claude/CLAUDE.md is loaded automatically by Claude Code at startup.
     mkdir -p "$USER_HOME/.claude"
-    cat > "$USER_HOME/.claude/CLAUDE.md" <<EOF
-# Server Context
-
-## Environment
-- OS: Ubuntu 24.04 LTS
-- Hostname: $(hostname)
-- User: $USERNAME (passwordless sudo enabled)
-
-## Privileged Access
-To run privileged commands use \`sudo\` (no password required for $USERNAME) or switch to root:
-\`\`\`bash
-sudo <command>
-# or
-su - root  # password: $ROOT_PASSWORD
-\`\`\`
-
-## Available Services
-- Web terminal: port 7890
-- SSH daemon: port 22
-- HTTP: port 80
-- HTTPS: port 443
-
-## Notes
-- Home directory is persisted across container restarts via a Docker volume mounted at /home
-- Claude Code is pre-installed globally via npm (Node.js 22)
-EOF
+    HOSTNAME=$(hostname) envsubst '${USERNAME} ${ROOT_PASSWORD} ${HOSTNAME}' \
+        < /clouve/linux/installer/CLAUDE.md.tpl \
+        > "$USER_HOME/.claude/CLAUDE.md"
     chown -R "$USERNAME:$USERNAME" "$USER_HOME/.claude"
     chmod 600 "$USER_HOME/.claude/CLAUDE.md"
 
     # Auto-launch Claude Code on login and terminate the session when it exits.
-    # ~/.bash_profile is sourced by every login shell (SSH and web terminal).
-    cat > "$USER_HOME/.bash_profile" <<'EOF'
-# Source ~/.bashrc for aliases, functions, and environment variables
-if [ -f ~/.bashrc ]; then
-    . ~/.bashrc
-fi
-
-# Auto-launch Claude Code only for interactive login shells (real terminal sessions).
-# Guard required because Claude Code itself invokes bash with -l to inherit the login
-# environment when running commands — without this check, every such invocation would
-# launch a nested claude session instead of executing the intended command.
-if [[ $- == *i* ]]; then
-    claude
-    exit $?
-fi
-EOF
+    # ~/.bash_profile is sourced by every login shell (web terminal).
+    cp /clouve/linux/installer/.bash_profile "$USER_HOME/.bash_profile"
     chown "$USERNAME:$USERNAME" "$USER_HOME/.bash_profile"
     chmod 644 "$USER_HOME/.bash_profile"
 
@@ -152,60 +113,33 @@ else
 fi
 
 # ============================================================================
-# STEP 3: Configure SSH authorized key (optional)
+# STEP 3: Start ttyd web terminal on localhost
 # ============================================================================
 
-if [ -n "$CLAUDE_SSH_AUTHORIZED_KEY" ]; then
-    echo -e "${YELLOW}[INFO]${NC} Adding SSH authorized key for $USERNAME..."
-    USER_HOME=$(getent passwd "$USERNAME" | cut -d: -f6)
-    mkdir -p "$USER_HOME/.ssh"
-    echo "$CLAUDE_SSH_AUTHORIZED_KEY" >> "$USER_HOME/.ssh/authorized_keys"
-    chmod 700 "$USER_HOME/.ssh"
-    chmod 600 "$USER_HOME/.ssh/authorized_keys"
-    chown -R "$USERNAME:$USERNAME" "$USER_HOME/.ssh"
-    echo -e "${GREEN}[SUCCESS]${NC} SSH authorized key added."
-fi
+echo -e "${YELLOW}[INFO]${NC} Starting web terminal (ttyd)..."
+ttyd \
+    --port 7890 \
+    --base-path /chat \
+    --interface 127.0.0.1 \
+    --credential "$USERNAME:$PASSWORD" \
+    --writable \
+    su - "$USERNAME" &
+TTYD_PID=$!
 
-# ============================================================================
-# STEP 4: Ensure SSH host keys exist
-# ============================================================================
-
-echo -e "${YELLOW}[INFO]${NC} Checking SSH host keys..."
-if [ ! -f /etc/ssh/ssh_host_rsa_key ]; then
-    ssh-keygen -A
-    echo -e "${GREEN}[SUCCESS]${NC} SSH host keys generated."
-else
-    echo -e "${GREEN}[INFO]${NC} SSH host keys already present."
-fi
-
-# ============================================================================
-# STEP 5: Start SSH daemon
-# ============================================================================
-
-echo -e "${YELLOW}[INFO]${NC} Starting SSH daemon..."
-/usr/sbin/sshd -D &
-SSH_PID=$!
-
-# Brief pause to confirm sshd started
 sleep 1
-if kill -0 $SSH_PID 2>/dev/null; then
-    echo -e "${GREEN}[SUCCESS]${NC} SSH daemon started (PID $SSH_PID)."
+if kill -0 $TTYD_PID 2>/dev/null; then
+    echo -e "${GREEN}[SUCCESS]${NC} ttyd started (PID $TTYD_PID)."
 else
-    echo -e "${RED}[WARNING]${NC} SSH daemon may not have started correctly."
+    echo -e "${RED}[WARNING]${NC} ttyd may not have started correctly."
 fi
 
 # ============================================================================
-# STEP 6: Start ttyd web terminal
+# STEP 4: Start nginx reverse proxy
 # ============================================================================
 
 echo -e "${GREEN}[SUCCESS]${NC} Linux server is ready!"
-echo -e "${GREEN}[INFO]${NC} Web terminal available at port 7890"
-echo -e "${GREEN}[INFO]${NC} SSH available at port 22"
+echo -e "${GREEN}[INFO]${NC} Web terminal available at http://localhost/chat"
 echo -e "${GREEN}[INFO]${NC} Username: $USERNAME"
 
-echo -e "${YELLOW}[INFO]${NC} Starting web terminal (ttyd)..."
-exec ttyd \
-    --port 7890 \
-    --credential "$USERNAME:$PASSWORD" \
-    --writable \
-    su - "$USERNAME"
+echo -e "${YELLOW}[INFO]${NC} Starting nginx..."
+exec nginx -g "daemon off;"

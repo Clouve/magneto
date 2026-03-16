@@ -1,13 +1,10 @@
 services:
   claude:
-    image: dev.cr0.io/clouveinc8/claude
+    image: r.clv.zone/e2eorg/claude
     container_name: claude_server
     restart: unless-stopped
     ports:
-      - "${TEST_PORT:-7890}:7890"
-      - "${TEST_SSH_PORT:-2222}:22"
       - "${TEST_HTTP_PORT:-8080}:80"
-      - "${TEST_HTTPS_PORT:-8443}:443"
     environment:
       CLAUDE_USERNAME: admin
       CLAUDE_PASSWORD: Admin@123
