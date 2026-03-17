@@ -123,6 +123,28 @@ cd "$WORK_DIR"
 
 if [ "$REMOVE_VOLUMES" = true ]; then
     if docker-compose down -v; then
+        # Remove local path bind mounts found in docker-compose.yml.
+        # docker-compose down -v only removes named volumes, not bind mounts.
+        # On macOS Docker Desktop, bind-mount directories can be left with
+        # inaccessible permissions after chown inside a container (VirtioFS
+        # UID mapping issue), causing failures on the next start.
+        while IFS= read -r local_path; do
+            [ -z "$local_path" ] && continue
+            # Resolve relative paths against WORK_DIR
+            if [[ "$local_path" == /* ]]; then
+                abs_path="$local_path"
+            else
+                abs_path="$WORK_DIR/$local_path"
+            fi
+            if [ -e "$abs_path" ]; then
+                chmod -R u+rwX "$abs_path" 2>/dev/null || true
+                rm -rf "$abs_path"
+                echo "  Removed: $local_path"
+            fi
+        done < <(grep -E '^[[:space:]]*-[[:space:]]+[./]' docker-compose.yml | \
+                 sed -E 's/^[[:space:]]*-[[:space:]]+//' | \
+                 cut -d: -f1 | \
+                 sort -u)
         echo ""
         echo "✓ $DISPLAY_NAME stopped and volumes removed successfully"
     else

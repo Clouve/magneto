@@ -122,6 +122,23 @@ if [ "$CLEAN_MODE" = true ]; then
     echo "Stopping containers and removing volumes..."
     cd "$WORK_DIR"
     docker-compose down -v 2>/dev/null || true
+    # Remove local path bind mounts (docker-compose down -v only removes named volumes).
+    while IFS= read -r local_path; do
+        [ -z "$local_path" ] && continue
+        if [[ "$local_path" == /* ]]; then
+            abs_path="$local_path"
+        else
+            abs_path="$WORK_DIR/$local_path"
+        fi
+        if [ -e "$abs_path" ]; then
+            chmod -R u+rwX "$abs_path" 2>/dev/null || true
+            rm -rf "$abs_path"
+            echo "  Removed: $local_path"
+        fi
+    done < <(grep -E '^[[:space:]]*-[[:space:]]+[./]' docker-compose.yml | \
+             sed -E 's/^[[:space:]]*-[[:space:]]+//' | \
+             cut -d: -f1 | \
+             sort -u)
     echo "✓ Cleanup complete"
     echo ""
 fi

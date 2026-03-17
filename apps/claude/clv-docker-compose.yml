@@ -13,11 +13,10 @@ services:
       CLAUDE_PASSWORD: applicationPassword
       CLAUDE_ROOT_PASSWORD: secret
     volumes:
-      - claudedata:/home
-      - claudeusr:/usr
-      - claudeopt:/opt
-      - claudedpkg:/var/lib/dpkg
-      - claudeaptcache:/var/cache/apt
+      - .data/home:/home
+      - .data/usr:/usr
+      - .data/opt:/opt
+      - .data/var:/var
     x-clouve-metadata:
       containerName: claude
       purpose: Database
@@ -53,7 +52,7 @@ services:
       retries: 3
       start_period: 15s
     x-clouve-volumes:
-      - name: claudedata
+      - name: claudehome
         size: 10
         description: Persistent volume for home directories
       - name: claudeusr
@@ -62,20 +61,6 @@ services:
       - name: claudeopt
         size: 10
         description: Persistent volume for optional software (/opt)
-      - name: claudedpkg
+      - name: claudevar
         size: 10
-        description: Persistent volume for dpkg package database (/var/lib/dpkg)
-      - name: claudeaptcache
-        size: 10
-        description: Persistent volume for apt package cache (/var/cache/apt)
-volumes:
-  claudedata:
-    driver: local
-  claudeusr:
-    driver: local
-  claudeopt:
-    driver: local
-  claudedpkg:
-    driver: local
-  claudeaptcache:
-    driver: local
+        description: Persistent volume for /var (package db, cache, logs, web files)
