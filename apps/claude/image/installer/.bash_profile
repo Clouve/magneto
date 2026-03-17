@@ -76,9 +76,9 @@ if [[ $- == *i* ]]; then
             echo "+------------------------------------------------------------+"
             echo "|              Anthropic API Key Required                    |"
             echo "+------------------------------------------------------------+"
-            echo "|  Claude Code requires an Anthropic API key to run.        |"
+            echo "|  Claude Code requires an Anthropic API key to run.         |"
             echo "|                                                            |"
-            echo "|  Get your key at: https://console.anthropic.com/settings  |"
+            echo "|  Get your key at: https://console.anthropic.com/settings   |"
             echo "+------------------------------------------------------------+"
             echo ""
             while true; do

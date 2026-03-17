@@ -1,19 +1,17 @@
 version: '3.8'
 services:
   claude:
-    image: r.clv.zone/clouvecom21/claude:latest
+    image: r.clv.zone/e2eorg/claude:latest
     ports:
       - '80:80'
     environment:
       CLAUDE_USERNAME: '{user.firstName}_{user.lastName}'
       CLAUDE_PASSWORD: claude-password
       CLAUDE_ROOT_PASSWORD: claude-root-password
-      ANTHROPIC_API_KEY: claude-api-key
     x-clouve-environment-types:
       CLAUDE_USERNAME: applicationUsername
       CLAUDE_PASSWORD: applicationPassword
       CLAUDE_ROOT_PASSWORD: secret
-      ANTHROPIC_API_KEY: secret
     volumes:
       - claudedata:/home
       - claudeusr:/usr
