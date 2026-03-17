@@ -551,6 +551,14 @@ if ! docker buildx version &> /dev/null; then
     exit 1
 fi
 
+# Ensure a buildx builder with docker-container driver exists for multi-platform support
+BUILDX_BUILDER="multiplatform-builder"
+if ! docker buildx inspect "$BUILDX_BUILDER" &> /dev/null; then
+    echo "Creating buildx builder '$BUILDX_BUILDER' with docker-container driver..."
+    docker buildx create --name "$BUILDX_BUILDER" --driver docker-container --bootstrap
+fi
+docker buildx use "$BUILDX_BUILDER"
+
 # Navigate to the app image directory
 cd "$APP_IMAGE_DIR"
 
