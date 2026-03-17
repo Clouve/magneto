@@ -1,7 +1,7 @@
 version: '3.8'
 services:
   claude:
-    image: claude:latest
+    image: r.clv.zone/clouvecom21/claude:latest
     ports:
       - '80:80'
     environment:
@@ -36,7 +36,7 @@ services:
     x-clouve-healthcheck:
       enabled: true
       type: HTTP
-      path: /chat
+      path: /
       port: 80
       initialDelay: 15
       interval: 10
@@ -49,7 +49,7 @@ services:
         - wget
         - '--spider'
         - '-q'
-        - http://localhost:80/chat
+        - http://localhost:80/
       interval: 10s
       timeout: 5s
       retries: 3

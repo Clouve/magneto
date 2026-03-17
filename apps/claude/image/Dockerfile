@@ -38,6 +38,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     procps \
     less \
     jq \
+    busybox-static \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/* /tmp/nodesource_setup* \
@@ -55,10 +56,22 @@ RUN npm install -g @anthropic-ai/claude-code \
 RUN mkdir -p /clouve/claude/installer
 COPY installer/ /clouve/claude/installer/
 RUN chmod +x /clouve/claude/installer/entrypoint.sh \
+             /clouve/claude/installer/init.sh \
     && cp /clouve/claude/installer/nginx-default.conf /etc/nginx/sites-available/default \
     && cp /clouve/claude/installer/index.html /var/www/html/index.html
 
+# Place the static busybox binary outside /usr so the bootstrap entrypoint
+# (init.sh) remains executable even when /usr is mounted as an empty volume.
+RUN cp /usr/bin/busybox /clouve/busybox
+
+# Snapshot /usr and /var/lib/dpkg into tarballs stored in /clouve/.
+# init.sh extracts these on first start when the volumes are empty (e.g. a
+# fresh Kubernetes PVC), then skips extraction on all subsequent starts.
+# Snapshots are taken last so they capture every package installed above.
+RUN /clouve/busybox tar czf /clouve/usr-seed.tar.gz -C / usr && \
+    /clouve/busybox tar czf /clouve/dpkg-seed.tar.gz -C / var/lib/dpkg
+
 EXPOSE 80
 
-ENTRYPOINT ["/clouve/claude/installer/entrypoint.sh"]
+ENTRYPOINT ["/clouve/busybox", "sh", "/clouve/claude/installer/init.sh"]
 CMD []

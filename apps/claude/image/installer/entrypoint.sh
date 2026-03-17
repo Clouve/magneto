@@ -69,6 +69,11 @@ chmod 440 /etc/sudoers.d/"$USERNAME"
 
 USER_HOME=$(getent passwd "$USERNAME" | cut -d: -f6)
 
+# Ensure the home directory is owned by the user (handles volume remounts
+# where the directory may have been created as root or with a stale UID).
+chown "$USERNAME:$USERNAME" "$USER_HOME"
+chmod 755 "$USER_HOME"
+
 # If ANTHROPIC_API_KEY is provided at container startup, export it to all login
 # shells via /etc/profile.d/. This is the most reliable injection point.
 # If absent, the key will be resolved at login time via ~/.bash_profile:
