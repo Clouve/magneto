@@ -108,6 +108,12 @@ if [[ $- == *i* ]]; then
     trap - INT TERM
     unset -f _clv_gate_exit _clv_validate_key
 
-    claude
+    # Ask whether to skip Claude Code permission prompts.
+    # Default is yes (Enter) for convenience; answer is not persisted.
+    read -r -p "Skip Claude Code permission prompts? [Y/n]: " _clv_skip_perms
+    case "${_clv_skip_perms,,}" in
+        n|no) claude ;;
+        *)    claude --dangerously-skip-permissions ;;
+    esac
     exit $?
 fi
