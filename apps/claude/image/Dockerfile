@@ -60,16 +60,19 @@ RUN chmod +x /clouve/claude/installer/entrypoint.sh \
     && cp /clouve/claude/installer/nginx-default.conf /etc/nginx/sites-available/default \
     && cp /clouve/claude/installer/index.html /var/www/html/index.html
 
+# Remove Ubuntu's "use sudo" login hint from /etc/bash.bashrc
+RUN sed -i '/To run a command as administrator/d; /See "man sudo_root"/d' /etc/bash.bashrc
+
 # Place the static busybox binary outside /usr so the bootstrap entrypoint
 # (init.sh) remains executable even when /usr is mounted as an empty volume.
 RUN cp /usr/bin/busybox /clouve/busybox
 
-# Snapshot /usr and /var/lib/dpkg into tarballs stored in /clouve/.
+# Snapshot /usr and /var into tarballs stored in /clouve/.
 # init.sh extracts these on first start when the volumes are empty (e.g. a
 # fresh Kubernetes PVC), then skips extraction on all subsequent starts.
 # Snapshots are taken last so they capture every package installed above.
 RUN /clouve/busybox tar czf /clouve/usr-seed.tar.gz -C / usr && \
-    /clouve/busybox tar czf /clouve/dpkg-seed.tar.gz -C / var/lib/dpkg
+    /clouve/busybox tar czf /clouve/var-seed.tar.gz -C / var
 
 EXPOSE 80
 

@@ -12,7 +12,7 @@ seed() {
     fi
 }
 
-seed /usr          /clouve/usr-seed.tar.gz
-seed /var/lib/dpkg /clouve/dpkg-seed.tar.gz
+seed /usr /clouve/usr-seed.tar.gz
+seed /var /clouve/var-seed.tar.gz
 
 exec /clouve/claude/installer/entrypoint.sh

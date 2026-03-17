@@ -73,13 +73,14 @@ if [[ $- == *i* ]]; then
         # No key available (never stored, or stored key was invalid) — prompt.
         if [ -z "$ANTHROPIC_API_KEY" ]; then
             echo ""
-            echo "+------------------------------------------------------------+"
-            echo "|              Anthropic API Key Required                    |"
-            echo "+------------------------------------------------------------+"
-            echo "|  Claude Code requires an Anthropic API key to run.         |"
-            echo "|                                                            |"
-            echo "|  Get your key at: https://console.anthropic.com/settings   |"
-            echo "+------------------------------------------------------------+"
+            echo "+-----------------------------------------------------------+"
+            echo "|              Anthropic API Key Required                   |"
+            echo "+-----------------------------------------------------------+"
+            echo "|  Claude Code requires an Anthropic API key to run.        |"
+            echo "|                                                           |"
+            echo "|  Get your key at: https://console.anthropic.com/settings  |"
+            echo "+-----------------------------------------------------------+"
+            echo ""
             echo ""
             while true; do
                 read -r -p "Enter your Anthropic API key (sk-ant-...): " user_key
