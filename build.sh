@@ -453,6 +453,7 @@ IMAGE_REGISTRY="${REGISTRY:-r.clv.zone/e2eorg}"
 
 DATE_TAG=$(date +%Y.%m.%d)
 PLATFORMS="linux/amd64,linux/arm64"
+LOCAL_PLATFORM="linux/$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"
 
 # ============================================================================
 # Determine target image directory
@@ -632,16 +633,16 @@ if [ "$PUSH_IMAGES" = true ]; then
         exit 1
     fi
 else
-    echo "Building multi-platform image (not pushing to registry)..."
+    echo "Building image for local platform ($LOCAL_PLATFORM) and loading into Docker..."
     if docker buildx build \
-        --platform "$PLATFORMS" \
+        --platform "$LOCAL_PLATFORM" \
         --tag "$IMAGE_REGISTRY/$APP_IMAGE:$DATE_TAG" \
         --tag "$IMAGE_REGISTRY/$APP_IMAGE:latest" \
         --provenance=false \
+        --load \
         .; then
-        echo "✓ $DISPLAY_NAME multi-platform image built successfully!"
-        echo "  Note: Images built for both amd64 and arm64 platforms (stored in build cache)."
-        echo "  Use --push to push images to registry."
+        echo "✓ $DISPLAY_NAME image built and loaded into Docker successfully!"
+        echo "  Note: Built for local platform ($LOCAL_PLATFORM) only. Use --push for multi-platform (amd64 + arm64)."
     else
         echo "✗ Failed to build $DISPLAY_NAME Docker image"
         exit 1
@@ -675,16 +676,16 @@ if [ ${#CONTAINER_CONFIGS[@]} -gt 0 ]; then
                 exit 1
             fi
         else
-            echo "Building multi-platform $display_name image (not pushing to registry)..."
+            echo "Building $display_name image for local platform ($LOCAL_PLATFORM) and loading into Docker..."
             if docker buildx build \
-                --platform "$PLATFORMS" \
+                --platform "$LOCAL_PLATFORM" \
                 --tag "$IMAGE_REGISTRY/$image_name:$DATE_TAG" \
                 --tag "$IMAGE_REGISTRY/$image_name:latest" \
                 --provenance=false \
+                --load \
                 "$container_dir/"; then
-                echo "✓ $display_name multi-platform image built successfully!"
-                echo "  Note: Images built for both amd64 and arm64 platforms (stored in build cache)."
-                echo "  Use --push to push images to registry."
+                echo "✓ $display_name image built and loaded into Docker successfully!"
+                echo "  Note: Built for local platform ($LOCAL_PLATFORM) only. Use --push for multi-platform (amd64 + arm64)."
             else
                 echo "✗ Failed to build $display_name Docker image"
                 exit 1
@@ -703,11 +704,15 @@ echo "==========================================================================
 if [ "$PUSH_IMAGES" = true ]; then
     echo "✓ All multi-platform images built and pushed successfully!"
 else
-    echo "✓ All multi-platform images built successfully!"
+    echo "✓ All images built and loaded into Docker successfully!"
 fi
 echo "============================================================================"
 echo ""
-echo "$DISPLAY_NAME Image Tags (Platforms: $PLATFORMS):"
+if [ "$PUSH_IMAGES" = true ]; then
+    echo "$DISPLAY_NAME Image Tags (Platforms: $PLATFORMS):"
+else
+    echo "$DISPLAY_NAME Image Tags (Platform: $LOCAL_PLATFORM):"
+fi
 echo "  - $IMAGE_REGISTRY/$APP_IMAGE:$DATE_TAG"
 echo "  - $IMAGE_REGISTRY/$APP_IMAGE:latest"
 echo ""
@@ -716,7 +721,11 @@ echo ""
 for config in "${CONTAINER_CONFIGS[@]}"; do
     IFS=':' read -r container_dir image_name display_name <<< "$config"
 
-    echo "$display_name Image Tags (Platforms: $PLATFORMS):"
+    if [ "$PUSH_IMAGES" = true ]; then
+        echo "$display_name Image Tags (Platforms: $PLATFORMS):"
+    else
+        echo "$display_name Image Tags (Platform: $LOCAL_PLATFORM):"
+    fi
     echo "  - $IMAGE_REGISTRY/$image_name:$DATE_TAG"
     echo "  - $IMAGE_REGISTRY/$image_name:latest"
     echo ""
@@ -728,9 +737,6 @@ done
 if [ "$PUSH_IMAGES" = false ]; then
     echo "To push multi-platform images to registry, run:"
     echo "  $0 $DISPLAY_NAME --push"
-    echo ""
-    echo "Note: Multi-platform images (amd64 + arm64) are stored in build cache."
-    echo "      Use --push to push them to the registry."
     echo ""
 fi
 
