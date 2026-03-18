@@ -8,12 +8,12 @@
 seed() {
     SENTINEL="$1/.clouve-seeded"
     if [ ! -f "$SENTINEL" ]; then
-        printf '[init] Seeding %s ...\n' "$1"
+        /clouve/busybox printf '[init] Seeding %s ...\n' "$1"
         if /clouve/busybox tar xzf "$2" -C /; then
             /clouve/busybox touch "$SENTINEL"
-            printf '[init] %s ready.\n' "$1"
+            /clouve/busybox printf '[init] %s ready.\n' "$1"
         else
-            printf '[init] ERROR: failed to seed %s — will retry on next start.\n' "$1"
+            /clouve/busybox printf '[init] ERROR: failed to seed %s — will retry on next start.\n' "$1"
         fi
     fi
 }

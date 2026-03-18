@@ -20,13 +20,18 @@ docker compose down
 
 ## Access
 
-### Web Terminal
+### Landing Page
 Open your browser and navigate to:
+- **URL**: http://localhost:8080/
+
+The landing page links to the web terminal.
+
+### Web Terminal
 - **URL**: http://localhost:8080/chat
 - **Username**: `admin`
 - **Password**: `Admin@123`
 
-All other paths redirect to `/chat`.
+Only `/chat` and `/` are handled by nginx. All other paths return 404.
 
 ## Configuration
 
@@ -49,13 +54,21 @@ TEST_HTTP_PORT=9090 docker compose up -d
 
 ## Using Claude Code
 
-Claude Code is pre-installed and pre-configured. When `ANTHROPIC_API_KEY` is set, the container automatically:
+Claude Code is pre-installed and pre-configured. When the web terminal opens, the following happens automatically:
 
-- Exports the key into every shell session via `/etc/profile.d/`
-- Writes `~/.claude.json` with completed onboarding state so the first-run wizard is skipped
-- Auto-launches `claude` when a login shell is opened in the web terminal
+1. **Onboarding skipped** — `~/.claude.json` is pre-written with `hasCompletedOnboarding: true` so the first-run wizard never appears.
+2. **API key resolution** — the login shell resolves the key in this order:
+   - `ANTHROPIC_API_KEY` env var injected at container startup via `/etc/profile.d/clouve-env.sh` (set when `ANTHROPIC_API_KEY` is provided in `docker-compose.yml`)
+   - Stored key from `~/.claude_api_key` (saved from a previous session) — validated against the Anthropic API before use; cleared and re-prompted if revoked
+   - Interactive prompt — user enters a key, it is validated live, saved to `~/.claude_api_key`, and the session proceeds; Ctrl+C exits without granting shell access
+3. **Permission prompts** — user is asked whether to run `claude --dangerously-skip-permissions` (default: yes, press Enter).
+4. **Claude Code launches** automatically.
 
-No login prompt, no manual setup.
+### Security notes
+
+- The `clv-session` wrapper discards all ttyd URL query parameters (`?arg=`) to prevent bypassing `.bash_profile` from the browser.
+- `BASH_ENV` and `ENV` are unset in `.bash_profile` so Claude Code's own `bash -l` subshells cannot source arbitrary files.
+- `SIGINT`/`SIGTERM` are trapped until the API key gate is passed, preventing Ctrl+C escape to a bare shell.
 
 ### Updating the API Key
 
@@ -65,25 +78,68 @@ Update `ANTHROPIC_API_KEY` in `docker-compose.yml` and restart the container —
 docker compose down && docker compose up -d
 ```
 
+To change a stored key without restarting the container, delete the saved key file from inside the terminal:
+
+```bash
+rm ~/.claude_api_key
+```
+
+The next login will prompt for a new key.
+
+## Deploying Services
+
+**Only port 80 is open externally.** Any service you run on a non-standard port must be proxied through nginx using a path-based location block to be reachable from the outside. For example, to expose a React app on port 3000:
+
+```nginx
+location /app {
+    proxy_pass http://127.0.0.1:3000;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+}
+```
+
+After editing the nginx config, reload it:
+
+```bash
+sudo nginx -s reload
+```
+
+The service is then accessible at `https://<your-domain>/app`.
+
+## Volumes
+
+Four persistent volumes are used. On first start, `/usr` and `/var` are seeded from image snapshots bundled in the image (`/clouve/usr-seed.tar.gz`, `/clouve/var-seed.tar.gz`). A sentinel file (`.clouve-seeded`) is written inside each volume after successful seeding; subsequent starts skip extraction to preserve any changes made at runtime.
+
+| Volume | Mount | Default size | Contents |
+|--------|-------|-------------|----------|
+| `claudehome` | `/home` | 10 Gi | User home directories |
+| `claudeusr` | `/usr` | 10 Gi | System binaries and libraries |
+| `claudeopt` | `/opt` | 10 Gi | Optional / third-party software |
+| `claudevar` | `/var` | 10 Gi | Package DB, cache, logs, web files |
+
 ## Features
 
 - Ubuntu 24.04 LTS base image
 - Multi-platform support (amd64 and arm64)
 - [Claude Code](https://claude.ai/code) pre-installed and pre-configured via the official install script
 - Browser-based terminal via [ttyd](https://github.com/tsl0922/ttyd) served at `/chat` (HTTP basic auth)
-- nginx reverse proxy routing `/chat` to ttyd on localhost; all other paths redirect to `/chat`
-- Common CLI tools: `curl`, `wget`, `git`, `vim`, `nano`, `htop`, `jq`, `tree`, `unzip`
-- Admin user created from environment variables at startup
-- Passwordless `sudo` for the admin user
-- Persistent home directory volume across container restarts
+- Landing page at `/` with a direct link to the web terminal
+- nginx reverse proxy routing `/chat` to ttyd on localhost:7890
+- API key gating: requires a valid Anthropic API key before granting shell access
+- Admin user created from environment variables at startup with passwordless `sudo`
+- Four persistent volumes for `/home`, `/usr`, `/opt`, `/var` — seeded from image snapshots on first start
 
 ## Files
 
 - `image/Dockerfile` — Ubuntu 24.04 image with Claude Code, nginx, ttyd, and CLI tools
+- `image/installer/init.sh` — Bootstrap script (seeds `/usr` and `/var` from image snapshots into Kubernetes PVCs on first start)
 - `image/installer/entrypoint.sh` — Startup script (user creation, Claude Code config, ttyd, nginx)
-- `image/installer/nginx-default.conf` — nginx site config proxying `/chat` to ttyd
-- `image/installer/CLAUDE.md.tpl` — Claude Code context template (rendered at startup via `envsubst`)
-- `image/installer/.bash_profile` — Login shell profile (auto-launches `claude` in interactive sessions)
+- `image/installer/nginx-default.conf` — nginx site config proxying `/chat` to ttyd; serves landing page at `/`
+- `image/installer/index.html` — Landing page served at `/` with a "Launch Terminal" button
+- `image/installer/CLAUDE.md.tpl` — Claude Code context template rendered at startup via `envsubst` into `~/.claude/CLAUDE.md`
+- `image/installer/.bash_profile` — Login shell profile: API key resolution, validation, and auto-launch of `claude`
 - `image/build.config` — Build configuration for the centralized build script
 - `docker-compose.yml` — Container orchestration for local development/testing
 - `clv-docker-compose.yml` — Clouve marketplace manifest
@@ -109,6 +165,13 @@ For more information about the build system, see the [Build Script Documentation
 docker compose logs claude
 ```
 
+### Volume seeding failure on first start
+If you see `[init] ERROR: failed to seed /usr` or `[init] ERROR: failed to seed /var` in the logs, the seeding failed (e.g. due to a conflict with directories pre-created by the container runtime). The sentinel file was not written, so seeding will be retried automatically on the next start:
+
+```bash
+docker compose restart claude
+```
+
 ### Web terminal not loading
 ```bash
 # Confirm nginx is serving /chat
@@ -124,6 +187,12 @@ Ensure `ANTHROPIC_API_KEY` is set in `docker-compose.yml` and the container has 
 docker compose down && docker compose up -d
 # Verify the key is present inside the container
 docker compose exec claude cat /etc/profile.d/clouve-env.sh
+```
+
+### Stored API key rejected at login
+A previously saved key may have been revoked. The login shell validates stored keys automatically and clears them if rejected. You can also clear it manually:
+```bash
+docker compose exec -u admin claude rm /home/admin/.claude_api_key
 ```
 
 ### Reset credentials

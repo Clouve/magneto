@@ -1,5 +1,7 @@
 FROM ubuntu:24.04
 
+USER root
+
 LABEL maintainer="Clouve Team"
 LABEL description="Custom Ubuntu Linux server image with web terminal and Claude Code"
 
@@ -67,8 +69,11 @@ RUN cp /usr/bin/busybox /clouve/busybox
 # init.sh extracts these on first start when the volumes are empty (e.g. a
 # fresh Kubernetes PVC), then skips extraction on all subsequent starts.
 # Snapshots are taken last so they capture every package installed above.
-RUN /clouve/busybox tar czf /clouve/usr-seed.tar.gz -C / usr && \
-    /clouve/busybox tar czf /clouve/var-seed.tar.gz -C / var
+RUN tar czf /clouve/usr-seed.tar.gz -C / usr && \
+    tar czf /clouve/var-seed.tar.gz -C / \
+        --exclude=var/run \
+        --exclude=var/lock \
+        var
 
 EXPOSE 80
 
