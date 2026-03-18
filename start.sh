@@ -132,8 +132,16 @@ if [ "$CLEAN_MODE" = true ]; then
         fi
         if [ -e "$abs_path" ]; then
             chmod -R u+rwX "$abs_path" 2>/dev/null || true
-            rm -rf "$abs_path"
-            echo "  Removed: $local_path"
+            # Preserve directories that contain a .keep or .gitkeep file
+            # (recursively), so tracked empty-directory markers survive cleanup.
+            if find "$abs_path" -name ".keep" -o -name ".gitkeep" 2>/dev/null | grep -q .; then
+                find "$abs_path" -not \( -name ".keep" -o -name ".gitkeep" \) \
+                     -not -path "$abs_path" -delete 2>/dev/null || true
+                echo "  Preserved (keep file found): $local_path"
+            else
+                rm -rf "$abs_path"
+                echo "  Removed: $local_path"
+            fi
         fi
     done < <(grep -E '^[[:space:]]*-[[:space:]]+[./]' docker-compose.yml | \
              sed -E 's/^[[:space:]]*-[[:space:]]+//' | \
