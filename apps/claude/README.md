@@ -69,7 +69,7 @@ docker compose down && docker compose up -d
 
 - Ubuntu 24.04 LTS base image
 - Multi-platform support (amd64 and arm64)
-- [Claude Code](https://claude.ai/code) pre-installed and pre-configured (`claude` CLI, Node.js 22)
+- [Claude Code](https://claude.ai/code) pre-installed and pre-configured via the official install script
 - Browser-based terminal via [ttyd](https://github.com/tsl0922/ttyd) served at `/chat` (HTTP basic auth)
 - nginx reverse proxy routing `/chat` to ttyd on localhost; all other paths redirect to `/chat`
 - Common CLI tools: `curl`, `wget`, `git`, `vim`, `nano`, `htop`, `jq`, `tree`, `unzip`
@@ -79,7 +79,7 @@ docker compose down && docker compose up -d
 
 ## Files
 
-- `image/Dockerfile` — Ubuntu 24.04 image with Node.js 22, Claude Code, nginx, ttyd, and CLI tools
+- `image/Dockerfile` — Ubuntu 24.04 image with Claude Code, nginx, ttyd, and CLI tools
 - `image/installer/entrypoint.sh` — Startup script (user creation, Claude Code config, ttyd, nginx)
 - `image/installer/nginx-default.conf` — nginx site config proxying `/chat` to ttyd
 - `image/installer/CLAUDE.md.tpl` — Claude Code context template (rendered at startup via `envsubst`)

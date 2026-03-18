@@ -23,7 +23,7 @@ su - root  # password: ${ROOT_PASSWORD}
 
 ## Notes
 - Home directory is persisted across container restarts via a Docker volume mounted at /home
-- Claude Code is pre-installed globally via npm (Node.js 22)
+- Claude Code is pre-installed via the official install script (https://claude.ai/install.sh)
 
 ## Responsibilities
 You have full root access to this machine and are responsible for managing it entirely.

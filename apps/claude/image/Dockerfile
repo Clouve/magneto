@@ -17,9 +17,7 @@ RUN printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d && \
     printf '#!/bin/sh\nexit 0\n' > /usr/bin/systemctl && \
     chmod +x /usr/bin/systemctl
 
-# Install system packages, Node.js 22, and ttyd in a single layer to minimise image size.
-# apt lists and the NodeSource setup script are removed in the same RUN step so they
-# never land in a committed layer.
+# Install system packages and ttyd in a single layer to minimise image size.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     nginx \
     gettext-base \
@@ -39,18 +37,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     less \
     jq \
     busybox-static \
-    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
-    && rm -rf /var/lib/apt/lists/* /tmp/nodesource_setup* \
+    && rm -rf /var/lib/apt/lists/* \
     && TTYD_VERSION=1.7.7 \
     && if [ "$TARGETARCH" = "arm64" ]; then TTYD_ARCH="aarch64"; else TTYD_ARCH="x86_64"; fi \
     && curl -fsSL "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.${TTYD_ARCH}" \
         -o /usr/local/bin/ttyd \
     && chmod +x /usr/local/bin/ttyd
 
-# Install Claude Code globally and immediately purge the npm cache
-RUN npm install -g @anthropic-ai/claude-code \
-    && npm cache clean --force
+# Install Claude Code via the official install script
+RUN curl -fsSL https://claude.ai/install.sh | bash \
+    && ln -sf /root/.claude/local/claude /usr/local/bin/claude
 
 # Copy entrypoint and static template files
 RUN mkdir -p /clouve/claude/installer
