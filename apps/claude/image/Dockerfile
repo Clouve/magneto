@@ -19,24 +19,17 @@ RUN printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d && \
     printf '#!/bin/sh\nexit 0\n' > /usr/bin/systemctl && \
     chmod +x /usr/bin/systemctl
 
-# Install system packages and ttyd in a single layer to minimise image size.
+# Install core system packages and ttyd.
+# Developer tools (git, vim, nano, etc.) and Claude Code are deferred to
+# entrypoint.sh so they are installed lazily on first container start,
+# keeping this image lean and the seed tarballs small.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     nginx \
     gettext-base \
     curl \
-    wget \
-    git \
-    vim \
-    nano \
-    htop \
-    unzip \
     sudo \
     bash \
     ca-certificates \
-    net-tools \
-    iputils-ping \
-    procps \
-    less \
     jq \
     busybox-static \
     && rm -rf /var/lib/apt/lists/* \
@@ -45,13 +38,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && curl -fsSL "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.${TTYD_ARCH}" \
         -o /usr/local/bin/ttyd \
     && chmod +x /usr/local/bin/ttyd
-
-# Install Claude Code via the official install script (installs to ~/.local/bin/claude).
-# Copy the resolved binary to a world-accessible path — a symlink into /root won't work
-# for non-root users because /root is mode 700.
-RUN curl -fsSL https://claude.ai/install.sh | bash \
-    && cp "$(readlink -f /root/.local/bin/claude)" /usr/local/bin/claude \
-    && chmod 755 /usr/local/bin/claude
 
 # Copy entrypoint and static template files
 RUN mkdir -p /clouve/claude/installer

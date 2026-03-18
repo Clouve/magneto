@@ -22,7 +22,7 @@ services:
       purpose: Database
       protocol: TCP
       isPublic: true
-      memoryBase: 1
+      memoryBase: 4
       cpuBase: 1
     x-clouve-bundle-metadata:
       appVersion: '24.04'
@@ -35,10 +35,10 @@ services:
       type: HTTP
       path: /
       port: 80
-      initialDelay: 30
-      interval: 30
-      timeout: 30
-      failureThreshold: 5
+      initialDelay: 120
+      interval: 60
+      timeout: 60
+      failureThreshold: 15
       successThreshold: 1
     healthcheck:
       test:
@@ -47,10 +47,10 @@ services:
         - '--spider'
         - '-q'
         - http://localhost:80/
-      interval: 30s
-      timeout: 30s
-      retries: 5
-      start_period: 30s
+      interval: 60s
+      timeout: 60s
+      retries: 15
+      start_period: 120s
     x-clouve-volumes:
       - name: claudehome
         size: 10
