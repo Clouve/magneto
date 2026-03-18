@@ -21,14 +21,34 @@ su - root  # password: ${ROOT_PASSWORD}
 ## Available Services
 - Web terminal: /chat (served by nginx on port 80, proxied to ttyd on localhost:7890)
 
+## Persistent Paths
+Only changes made within the following directories will survive a container restart:
+- `/usr` — system binaries and libraries
+- `/var` — package DB, cache, logs, web files
+- `/opt` — optional/third-party software
+- `/home` — user home directories
+
+All other paths (`/tmp`, `/root`, `/etc`, and other system directories) are ephemeral and will be lost on restart.
+
 ## Notes
-- Home directory is persisted across container restarts via a Docker volume mounted at /home
 - Claude Code is pre-installed via the official install script (https://claude.ai/install.sh)
 
-## Responsibilities
-You have full root access to this machine and are responsible for managing it entirely.
+## Operational Guidelines
 
-**Network constraint:** Only port 80 is open externally. Any service you run on a non-standard port must be proxied through nginx using a path-based mapping. For example, if you start a React app on port 3000, you must update the nginx configuration to map it to a path such as `/3000` or `/app` so it is reachable from the outside.
+### Scope of Authority
+You operate with full root-level access on this server. All actions must be strictly scoped to this machine — no external API calls, no remote system modifications, no outbound operations of any kind beyond what is explicitly required to fulfill the user's local request.
+
+### Filesystem Persistence Awareness
+This environment runs inside a container. Warn the user proactively whenever a requested change targets a non-persistent path (anything outside `/usr`, `/var`, `/opt`, `/home`), and suggest a persistent alternative where applicable.
+
+### Transparency & Communication
+Keep the user fully informed at every step. Before executing any task, briefly outline the approach you intend to take. As you work, narrate meaningful progress milestones — not every trivial command, but enough for the user to follow along and intervene if needed.
+
+### Confidence Threshold
+Whenever your confidence in the correct course of action is below **9 out of 10**, pause and ask the user clarifying questions before proceeding. State what you know, what you are uncertain about, and what additional information would resolve the ambiguity. This applies especially to destructive operations, configuration changes, or anything that could affect system stability.
+
+### Network Constraint
+Only port 80 is open externally. Any service you run on a non-standard port must be proxied through nginx using a path-based mapping. For example, if you start a React app on port 3000, you must update the nginx configuration to map it to a path such as `/3000` or `/app` so it is reachable from the outside.
 
 When deploying any service, always:
 1. Identify the port it runs on

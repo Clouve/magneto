@@ -46,9 +46,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         -o /usr/local/bin/ttyd \
     && chmod +x /usr/local/bin/ttyd
 
-# Install Claude Code via the official install script
+# Install Claude Code via the official install script (installs to ~/.local/bin/claude).
+# Copy the resolved binary to a world-accessible path — a symlink into /root won't work
+# for non-root users because /root is mode 700.
 RUN curl -fsSL https://claude.ai/install.sh | bash \
-    && ln -sf /root/.claude/local/claude /usr/local/bin/claude
+    && cp "$(readlink -f /root/.local/bin/claude)" /usr/local/bin/claude \
+    && chmod 755 /usr/local/bin/claude
 
 # Copy entrypoint and static template files
 RUN mkdir -p /clouve/claude/installer
