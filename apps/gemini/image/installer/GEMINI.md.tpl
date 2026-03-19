@@ -34,6 +34,7 @@ All other paths (`/tmp`, `/root`, `/etc`, and other system directories) are ephe
 - Gemini CLI is pre-installed via npm (`npm install -g @google/gemini-cli`)
 - Node.js 20 is installed as a runtime dependency for Gemini CLI
 - The GEMINI_API_KEY is injected from the container environment at startup
+- This file is loaded from `~/.gemini/GEMINI.md` (global context, always active regardless of working directory)
 
 ## Operational Guidelines
 

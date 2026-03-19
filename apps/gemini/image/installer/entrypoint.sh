@@ -132,16 +132,16 @@ else
 fi
 
 # Create the Gemini CLI config directory and write the server context file.
-# GEMINI.md is read by Gemini CLI from the current directory hierarchy,
-# so placing it in the home directory ensures it is loaded for every session.
+# ~/.gemini/GEMINI.md is the global context file — Gemini CLI always loads it
+# regardless of the current working directory, making it the correct location
+# for persistent server context that should apply to every session.
 mkdir -p "$USER_HOME/.gemini"
 HOSTNAME=$(hostname) USERNAME="$USERNAME" ROOT_PASSWORD="$ROOT_PASSWORD" \
     envsubst '${USERNAME} ${ROOT_PASSWORD} ${HOSTNAME}' \
     < /clouve/gemini/installer/GEMINI.md.tpl \
-    > "$USER_HOME/GEMINI.md"
+    > "$USER_HOME/.gemini/GEMINI.md"
+chmod 600 "$USER_HOME/.gemini/GEMINI.md"
 chown -R "$USERNAME:$USERNAME" "$USER_HOME/.gemini"
-chown "$USERNAME:$USERNAME" "$USER_HOME/GEMINI.md"
-chmod 600 "$USER_HOME/GEMINI.md"
 
 # Install login shell profile. This auto-launches Gemini CLI for interactive
 # user terminal sessions and gates access on a valid GEMINI_API_KEY.
