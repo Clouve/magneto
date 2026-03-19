@@ -28,14 +28,14 @@ services:
       appVersion: '24.04'
       appTitle: Gemini CLI Server
       appDescription: A cloud-hosted Gemini CLI environment accessible directly from your browser — no local setup required. Powered by Google's Gemini AI, it lets technical and non-technical users alike build software, automate tasks, analyze data, and solve problems through natural conversation. Includes a full Ubuntu 24.04 LTS environment with Gemini CLI pre-installed, a browser-based terminal via ttyd, and persistent storage for your work across sessions.
-      appIcon: /thermo/assets/Company/clouvecom21/attachments/6aa987b60df39cbb-logo.png
+      appIcon: /thermo/assets/Company/e2eorg/attachments/d8f1a26d5efd451a-logo.png
       adminPath: /chat
     x-clouve-healthcheck:
       enabled: true
       type: HTTP
       path: /
       port: 80
-      initialDelay: 120
+      initialDelay: 60
       interval: 60
       timeout: 60
       failureThreshold: 15
@@ -50,7 +50,7 @@ services:
       interval: 60s
       timeout: 60s
       retries: 15
-      start_period: 120s
+      start_period: 60s
     x-clouve-volumes:
       - name: geminihome
         size: 10
