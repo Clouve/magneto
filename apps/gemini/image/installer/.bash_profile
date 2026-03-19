@@ -108,6 +108,12 @@ if [[ $- == *i* ]]; then
     trap - INT TERM
     unset -f _clv_gate_exit _clv_validate_key
 
-    gemini
+    # Ask whether to enable yolo mode (auto-approve all tool actions).
+    # Default is yes (Enter) for convenience; answer is not persisted.
+    read -r -p "Enable yolo mode (auto-approve all actions)? [Y/n]: " _clv_yolo
+    case "${_clv_yolo,,}" in
+        n|no) gemini ;;
+        *)    gemini --yolo ;;
+    esac
     exit $?
 fi
