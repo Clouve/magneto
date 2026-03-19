@@ -91,6 +91,10 @@ fi
 if [ ! -x "$USER_HOME/.local/bin/claude" ]; then
     echo -e "${YELLOW}[INFO]${NC} Installing Claude Code for $USERNAME..."
     su - "$USERNAME" -c "curl -fsSL https://claude.ai/install.sh | bash"
+    if [ ! -x "$USER_HOME/.local/bin/claude" ]; then
+        echo -e "${RED}[ERROR]${NC} Claude Code installation failed — binary not found at $USER_HOME/.local/bin/claude."
+        exit 1
+    fi
     echo -e "${GREEN}[SUCCESS]${NC} Claude Code installed."
 else
     echo -e "${GREEN}[INFO]${NC} Claude Code already installed."
