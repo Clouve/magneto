@@ -4,10 +4,9 @@
 # This script initializes the Ubuntu Linux server container:
 # 0. Re-applies apt-get service-start guards (policy-rc.d + systemctl no-op)
 # 1. Creates the admin user from environment variables
-# 2. Installs developer tools (root) and Claude Code (as admin user, first-run only)
-# 3. Configures Claude Code: injects API key if provided, otherwise defers to login-time prompt
-# 4. Starts the ttyd web terminal on localhost
-# 5. Starts the nginx reverse proxy (foreground)
+# 2. Configures Claude Code: injects API key if provided, otherwise defers to login-time prompt
+# 3. Starts the ttyd web terminal on localhost
+# 4. Starts the nginx reverse proxy (foreground)
 
 # Color codes for output
 RED='\033[0;31m'
@@ -23,7 +22,7 @@ set +e
 # ============================================================================
 # These files live under /usr which is a named volume. Writing them here
 # ensures they are always present regardless of when the volume was created,
-# so apt-get never hangs waiting for systemd during runtime package installs.
+# so apt-get never hangs waiting for systemd (e.g. during user-initiated installs).
 
 # Prevents invoke-rc.d from starting services after package installation
 printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d
@@ -67,37 +66,7 @@ chmod 440 /etc/sudoers.d/"$USERNAME"
 USER_HOME=$(getent passwd "$USERNAME" | cut -d: -f6)
 
 # ============================================================================
-# STEP 2: Install developer tools and Claude Code (first-run only)
-# ============================================================================
-# Developer tools are not baked into the image to keep it lean. They are
-# installed on the first container start and persist in the /usr volume,
-# so subsequent starts skip this block entirely.
-#
-# Claude Code is installed as $USERNAME so the binary lands in that user's
-# ~/.local/bin/, which is automatically added to PATH by the default .bashrc.
-
-if ! command -v git &>/dev/null; then
-    echo -e "${YELLOW}[INFO]${NC} Installing developer tools..."
-    DEBIAN_FRONTEND=noninteractive apt-get update -qq && \
-        apt-get install -y --no-install-recommends \
-            wget git vim nano htop unzip \
-            net-tools iputils-ping procps less \
-        && rm -rf /var/lib/apt/lists/*
-    echo -e "${GREEN}[SUCCESS]${NC} Developer tools installed."
-else
-    echo -e "${GREEN}[INFO]${NC} Developer tools already present."
-fi
-
-if [ ! -x "$USER_HOME/.local/bin/claude" ]; then
-    echo -e "${YELLOW}[INFO]${NC} Installing Claude Code for $USERNAME..."
-    su - "$USERNAME" -c "curl -fsSL https://claude.ai/install.sh | bash"
-    echo -e "${GREEN}[SUCCESS]${NC} Claude Code installed."
-else
-    echo -e "${GREEN}[INFO]${NC} Claude Code already installed."
-fi
-
-# ============================================================================
-# STEP 3: Configure Claude Code session environment
+# STEP 2: Configure Claude Code session environment
 # ============================================================================
 
 # Ensure the home directory is owned by the user (handles volume remounts
@@ -151,7 +120,7 @@ chown "$USERNAME:$USERNAME" "$USER_HOME/.bash_profile"
 chmod 644 "$USER_HOME/.bash_profile"
 
 # ============================================================================
-# STEP 4: Start ttyd web terminal on localhost
+# STEP 3: Start ttyd web terminal on localhost
 # ============================================================================
 
 echo -e "${YELLOW}[INFO]${NC} Starting web terminal (ttyd)..."
@@ -180,7 +149,7 @@ else
 fi
 
 # ============================================================================
-# STEP 5: Start nginx reverse proxy
+# STEP 4: Start nginx reverse proxy
 # ============================================================================
 
 echo -e "${GREEN}[SUCCESS]${NC} Linux server is ready!"
