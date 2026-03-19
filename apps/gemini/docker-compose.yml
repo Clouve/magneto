@@ -14,12 +14,22 @@ services:
       # Default username: admin
       # Override with: GEMINI_USERNAME, GEMINI_PASSWORD, GEMINI_ROOT_PASSWORD, GEMINI_API_KEY
     volumes:
-      - .data/home:/home
-      - .data/usr:/usr
-      - .data/opt:/opt
-      - .data/var:/var
+      - geminihome:/home
+      - geminiusr:/usr
+      - geminiopt:/opt
+      - geminivar:/var
     networks:
       - gemini_network
+
+volumes:
+  geminihome:
+    driver: local
+  geminiusr:
+    driver: local
+  geminiopt:
+    driver: local
+  geminivar:
+    driver: local
 
 networks:
   gemini_network:

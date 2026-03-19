@@ -135,7 +135,8 @@ fi
 # GEMINI.md is read by Gemini CLI from the current directory hierarchy,
 # so placing it in the home directory ensures it is loaded for every session.
 mkdir -p "$USER_HOME/.gemini"
-HOSTNAME=$(hostname) envsubst '${USERNAME} ${ROOT_PASSWORD} ${HOSTNAME}' \
+HOSTNAME=$(hostname) USERNAME="$USERNAME" ROOT_PASSWORD="$ROOT_PASSWORD" \
+    envsubst '${USERNAME} ${ROOT_PASSWORD} ${HOSTNAME}' \
     < /clouve/gemini/installer/GEMINI.md.tpl \
     > "$USER_HOME/GEMINI.md"
 chown -R "$USERNAME:$USERNAME" "$USER_HOME/.gemini"
