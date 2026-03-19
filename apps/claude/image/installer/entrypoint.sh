@@ -138,7 +138,8 @@ chmod 600 "$USER_HOME/.claude.json"
 # Write global Claude Code context so every session starts with server awareness.
 # ~/.claude/CLAUDE.md is loaded automatically by Claude Code at startup.
 mkdir -p "$USER_HOME/.claude"
-HOSTNAME=$(hostname) envsubst '${USERNAME} ${ROOT_PASSWORD} ${HOSTNAME}' \
+HOSTNAME=$(hostname) USERNAME="$USERNAME" ROOT_PASSWORD="$ROOT_PASSWORD" \
+    envsubst '${USERNAME} ${ROOT_PASSWORD} ${HOSTNAME}' \
     < /clouve/claude/installer/CLAUDE.md.tpl \
     > "$USER_HOME/.claude/CLAUDE.md"
 chown -R "$USERNAME:$USERNAME" "$USER_HOME/.claude"

@@ -1,7 +1,5 @@
 FROM ubuntu:24.04
 
-USER root
-
 LABEL maintainer="Clouve Team"
 LABEL description="Custom Ubuntu Linux server image with web terminal and Claude Code"
 
