@@ -19,7 +19,10 @@ RUN printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d && \
     printf '#!/bin/sh\nexit 0\n' > /usr/bin/systemctl && \
     chmod +x /usr/bin/systemctl
 
-# Install core system packages, developer tools, and ttyd.
+# Install core system packages and ttyd.
+# Developer tools (git, vim, nano, etc.) and Claude Code are deferred to
+# entrypoint.sh so they are installed lazily on first container start,
+# keeping this image lean and the seed tarballs small.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     nginx \
     gettext-base \
@@ -29,22 +32,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     jq \
     busybox-static \
-    wget git vim nano htop unzip \
-    net-tools iputils-ping procps less \
     && rm -rf /var/lib/apt/lists/* \
     && TTYD_VERSION=1.7.7 \
     && if [ "$TARGETARCH" = "arm64" ]; then TTYD_ARCH="aarch64"; else TTYD_ARCH="x86_64"; fi \
     && curl -fsSL "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.${TTYD_ARCH}" \
         -o /usr/local/bin/ttyd \
     && chmod +x /usr/local/bin/ttyd
-
-# Install Node.js 22 and Claude Code globally.
-# The binary lands in /usr/local/bin/claude, which is captured by the
-# usr-seed.tar.gz snapshot below and seeded into empty K8s PVCs on first start.
-RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
-    && rm -rf /var/lib/apt/lists/* \
-    && npm install -g @anthropic-ai/claude-code
 
 # Copy entrypoint and static template files
 RUN mkdir -p /clouve/claude/installer
