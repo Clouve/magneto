@@ -85,6 +85,11 @@ CLV_KEY_LABELS=(
     "Google Gemini API key (AIza...)"
     "OpenAI API key (sk-...)"
 )
+CLV_KEY_URLS=(
+    "https://console.anthropic.com/settings/keys"
+    "https://aistudio.google.com/apikey"
+    "https://platform.openai.com/api-keys"
+)
 # Context file template paths (empty string = no context file for this client)
 CLV_CONTEXT_TPLS=(
     "/clouve/ai-studio/installer/chat/claude/CLAUDE.md.tpl"
@@ -253,6 +258,7 @@ _clv_resolve_key() {
     local key_var="${CLV_KEY_VARS[$idx]}"
     local key_file="$HOME/${CLV_KEY_FILES[$idx]}"
     local key_label="${CLV_KEY_LABELS[$idx]}"
+    local key_url="${CLV_KEY_URLS[$idx]}"
 
     # 1. Already set via environment (injected at container start via /etc/profile.d/)
     if [ -n "${!key_var}" ]; then
@@ -279,6 +285,7 @@ _clv_resolve_key() {
     echo "  |              API Key Required                             |"
     echo "  +-----------------------------------------------------------+"
     printf "  |  %-57s|\n" "$key_label"
+    printf "  |  %-57s|\n" "Get one at: $key_url"
     echo "  +-----------------------------------------------------------+"
     echo ""
     while true; do
