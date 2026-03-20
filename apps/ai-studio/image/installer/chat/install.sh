@@ -33,9 +33,10 @@ chmod 755 "$USER_HOME"
 # Export all provided API keys and the root password to all login shells via
 # /etc/profile.d/ so the interactive session selector can access them.
 {
-    [ -n "$ANTHROPIC_API_KEY" ] && echo "export ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY"
-    [ -n "$GEMINI_API_KEY" ]    && echo "export GEMINI_API_KEY=$GEMINI_API_KEY"
-    [ -n "$OPENAI_API_KEY" ]    && echo "export OPENAI_API_KEY=$OPENAI_API_KEY"
+    [ -n "$ANTHROPIC_API_KEY" ]  && echo "export ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY"
+    [ -n "$GEMINI_API_KEY" ]     && echo "export GEMINI_API_KEY=$GEMINI_API_KEY"
+    [ -n "$OPENAI_API_KEY" ]     && echo "export OPENAI_API_KEY=$OPENAI_API_KEY"
+    [ -n "$AI_STUDIO_CLIENT" ]   && echo "export AI_STUDIO_CLIENT=$AI_STUDIO_CLIENT"
     echo "export ROOT_PASSWORD=$ROOT_PASSWORD"
 } > /etc/profile.d/clouve-env.sh
 chmod 644 /etc/profile.d/clouve-env.sh

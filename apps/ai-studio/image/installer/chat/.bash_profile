@@ -29,6 +29,21 @@ if [ "${AI_STUDIO_MAINTENANCE_MODE:-}" = "true" ]; then
     return 0
 fi
 
+# ─── Forced client assignment (AI_STUDIO_CLIENT) ─────────────────────────────
+# When AI_STUDIO_CLIENT is set at container start, the selection menu is skipped
+# entirely and the user is locked into the specified client for the lifetime of
+# the session. The variable and the resolved index are marked readonly so they
+# cannot be changed or unset from within the shell.
+#
+# Accepted values match the CLV_IDS registry below (e.g. claude-code, gemini-cli,
+# codex-cli). An unrecognised value prints an error and falls back to the
+# interactive menu.
+#
+# Resolution happens here — before the registry arrays are defined — so we
+# defer the actual lookup to a post-registry block further below.
+# We capture the raw value now and will validate it once CLV_IDS is available.
+_CLV_FORCED_RAW="${AI_STUDIO_CLIENT:-}"
+
 # ─── Client Registry ─────────────────────────────────────────────────────────
 # To add a new AI client: append one entry to each array below and create the
 # corresponding install script at the path listed in CLV_INSTALLS.
@@ -38,6 +53,12 @@ CLV_NAMES=(
     "Claude Code"
     "Gemini CLI"
     "OpenAI Codex CLI"
+)
+# Canonical identifiers accepted by AI_STUDIO_CLIENT (one per client, same order)
+CLV_IDS=(
+    "claude-code"
+    "gemini-cli"
+    "codex-cli"
 )
 CLV_CMDS=(
     "claude"
@@ -88,6 +109,36 @@ CLV_STD_FLAGS=(
     ""
     ""
 )
+
+# ─── Resolve AI_STUDIO_CLIENT → forced index ─────────────────────────────────
+# Now that CLV_IDS is defined we can validate the raw value captured above.
+_CLV_FORCED_IDX=""
+if [ -n "$_CLV_FORCED_RAW" ]; then
+    _clv_found_forced=0
+    for _clv_i in "${!CLV_IDS[@]}"; do
+        if [ "${CLV_IDS[$_clv_i]}" = "$_CLV_FORCED_RAW" ]; then
+            _CLV_FORCED_IDX="$_clv_i"
+            _clv_found_forced=1
+            break
+        fi
+    done
+    if [ "$_clv_found_forced" -eq 0 ]; then
+        echo ""
+        echo "  [AI Studio] ERROR: Unrecognised AI_STUDIO_CLIENT value: '$_CLV_FORCED_RAW'"
+        echo "  Supported values:"
+        for _clv_i in "${!CLV_IDS[@]}"; do
+            printf "    • %s  (%s)\n" "${CLV_IDS[$_clv_i]}" "${CLV_NAMES[$_clv_i]}"
+        done
+        echo "  Falling back to the interactive selection menu."
+        echo ""
+    fi
+    unset _clv_found_forced _clv_i
+fi
+
+# Lock both variables so the user cannot change or unset them from within
+# the session. readonly fails silently if the variable is already readonly.
+readonly _CLV_FORCED_IDX 2>/dev/null || true
+readonly AI_STUDIO_CLIENT 2>/dev/null || true
 
 # ─── Per-session state ───────────────────────────────────────────────────────
 CLV_CACHE_DIR="$HOME/.ai-studio"
@@ -325,6 +376,11 @@ while true; do
 
     selected_idx=""
 
+    # ── Forced client (AI_STUDIO_CLIENT override) — skip menu entirely ────────
+    if [ -n "$_CLV_FORCED_IDX" ]; then
+        selected_idx="$_CLV_FORCED_IDX"
+    else
+
     # ── Check for a cached selection from the previous session ────────────────
     if [ -f "$CLV_CACHE_FILE" ]; then
         cached_idx=$(cat "$CLV_CACHE_FILE" 2>/dev/null)
@@ -355,6 +411,8 @@ while true; do
         echo ""
     fi
 
+    fi  # end of non-forced branch
+
     # ── AI client selected — resolve key, install, configure ─────────────────
 
     # Save the selection so next session can offer to reuse it
@@ -364,8 +422,7 @@ while true; do
     client_name="${CLV_NAMES[$selected_idx]}"
     client_cmd="${CLV_CMDS[$selected_idx]}"
 
-    echo ""
-    echo "  Selected: $client_name"
+    [ -z "$_CLV_FORCED_IDX" ] && echo "" && echo "  Selected: $client_name"
 
     # Resolve (or prompt for) the API key
     _clv_resolve_key "$selected_idx"
