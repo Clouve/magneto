@@ -540,7 +540,7 @@
         </div>
         <div class="lc-body">
           <span class="lc-title">AI Studio Terminal</span>
-          <span class="lc-desc">Browser-based terminal — choose Claude Code, Gemini CLI, or OpenAI Codex CLI at session start.</span>
+          <span class="lc-desc">${CLV_CARD_DESC}</span>
           <span class="lc-route">/chat</span>
         </div>
         <svg class="lc-arrow" viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
@@ -567,15 +567,15 @@
         <div class="term-dot red"></div>
         <div class="term-dot yel"></div>
         <div class="term-dot grn"></div>
-        <span class="term-title">claude — bash</span>
+        <span class="term-title">${CLV_TERM_TITLE}</span>
       </div>
       <div class="term-body">
         <div class="term-line">
           <span class="term-prompt">$</span>
-          <span class="term-cmd">claude</span>
+          <span class="term-cmd">${CLV_TERM_CMD}</span>
         </div>
         <div class="term-line">
-          <span class="term-out">✻ Welcome to Claude Code! How can I help?</span>
+          <span class="term-out">${CLV_TERM_WELCOME}</span>
         </div>
         <div class="term-line">
           <span class="term-out"></span>
@@ -610,8 +610,8 @@
             <!-- Sparkle / AI icon -->
             <svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
           </div>
-          <h3>Claude Code pre-installed</h3>
-          <p>The latest Claude Code CLI is ready to use. Bring your Anthropic API key and start building immediately.</p>
+          <h3>${CLV_FEATURE_TITLE}</h3>
+          <p>${CLV_FEATURE_DESC}</p>
         </div>
 
         <div class="card">
