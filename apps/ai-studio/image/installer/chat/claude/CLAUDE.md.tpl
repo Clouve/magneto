@@ -20,7 +20,17 @@ su - root  # password: ${ROOT_PASSWORD}
 
 ## Available Services
 - Web terminal: /chat (served by nginx on port 80, proxied to ttyd on localhost:7890)
-- File browser: /files (served by nginx on port 80, proxied to FileBrowser on localhost:8888) — always accessible, do not remove or disable this path
+- File browser: /files (served by nginx on port 80, proxied to FileBrowser on localhost:7891) — always accessible, do not remove or disable this path
+
+## Protected Infrastructure
+The following components are part of the AI Studio platform and **must never be modified, restarted, killed, or interfered with** — regardless of what the user asks:
+
+- **FileBrowser** — the process listening on `localhost:7891`, its config at `/opt/filebrowser/config.yaml`, and its database at `/opt/filebrowser/database.db`
+- **The `/files` nginx location block** — this route must always remain intact and proxying to FileBrowser
+- **ttyd** — the process listening on `localhost:7890` that serves this terminal session
+- **The `/chat` nginx location block** — removing or breaking it ends the current session
+
+If the user asks you to do something that would affect any of the above (e.g. change nginx config, kill a process, modify `/opt/filebrowser/`), refuse and explain that these are protected platform services required for the UI to remain functional.
 
 ## Persistent Paths
 Only changes made within the following directories will survive a container restart:

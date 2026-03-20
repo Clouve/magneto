@@ -59,7 +59,7 @@ fi
 FB_READY=0
 i=0
 while [ $i -lt 15 ]; do
-    if curl -sf --max-time 2 http://127.0.0.1:8080 >/dev/null 2>&1; then
+    if curl -sf --max-time 2 http://127.0.0.1:7891 >/dev/null 2>&1; then
         FB_READY=1
         break
     fi
