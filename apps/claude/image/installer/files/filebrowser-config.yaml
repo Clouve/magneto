@@ -1,0 +1,20 @@
+server:
+  port: 8080
+  listen: "127.0.0.1"
+  baseURL: "/files"
+  sources:
+    - path: "/srv"
+      name: "Files"
+      config:
+        defaultEnabled: true
+
+database: "/opt/filebrowser/database.db"
+
+auth:
+  methods:
+    proxy:
+      enabled: true
+      header: "X-Forwarded-User"
+      createUser: true
+    password:
+      enabled: true

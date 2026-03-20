@@ -30,6 +30,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     jq \
     busybox-static \
+    libnginx-mod-http-auth-pam \
+    libpam-runtime \
     && rm -rf /var/lib/apt/lists/* \
     && TTYD_VERSION=1.7.7 \
     && if [ "$TARGETARCH" = "arm64" ]; then TTYD_ARCH="aarch64"; else TTYD_ARCH="x86_64"; fi \
@@ -37,13 +39,31 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         -o /usr/local/bin/ttyd \
     && chmod +x /usr/local/bin/ttyd
 
+# Allow nginx PAM auth to read /etc/shadow
+RUN usermod -aG shadow www-data
+
+# Download FileBrowser Quantum binary
+RUN if [ "$TARGETARCH" = "arm64" ]; then FB_ARCH="arm64"; else FB_ARCH="amd64"; fi \
+    && FB_URL=$(curl -fsSL https://api.github.com/repos/gtsteffaniak/filebrowser/releases/latest \
+        | jq -r --arg arch "$FB_ARCH" \
+          '.assets[] | select(.name | test("linux-" + $arch + "-filebrowser$")) | .browser_download_url') \
+    && curl -fsSL "$FB_URL" -o /usr/local/bin/filebrowser \
+    && chmod +x /usr/local/bin/filebrowser
+
+# Create FileBrowser directories
+RUN mkdir -p /opt/filebrowser /srv/files
+
 # Copy entrypoint and static template files
 RUN mkdir -p /clouve/claude/installer
 COPY installer/ /clouve/claude/installer/
 RUN chmod +x /clouve/claude/installer/entrypoint.sh \
              /clouve/claude/installer/init.sh \
+             /clouve/claude/installer/chat/install.sh \
+             /clouve/claude/installer/files/install.sh \
     && cp /clouve/claude/installer/nginx-default.conf /etc/nginx/sites-available/default \
-    && cp /clouve/claude/installer/index.html /var/www/html/index.html
+    && cp /clouve/claude/installer/index.html /var/www/html/index.html \
+    && cp /clouve/claude/installer/files/filebrowser-config.yaml /opt/filebrowser/config.yaml \
+    && cp /clouve/claude/installer/files/pam-filebrowser /etc/pam.d/filebrowser
 
 # Remove Ubuntu's "use sudo" login hint from /etc/bash.bashrc
 RUN sed -i '/To run a command as administrator/d; /See "man sudo_root"/d' /etc/bash.bashrc
