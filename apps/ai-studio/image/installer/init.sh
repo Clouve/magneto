@@ -20,5 +20,6 @@ seed() {
 
 seed /usr /clouve/usr-seed.tar.gz
 seed /var /clouve/var-seed.tar.gz
+seed /opt /clouve/opt-seed.tar.gz
 
 exec /clouve/ai-studio/installer/entrypoint.sh

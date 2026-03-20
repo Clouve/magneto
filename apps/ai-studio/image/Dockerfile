@@ -89,7 +89,8 @@ RUN tar czf /clouve/usr-seed.tar.gz -C / usr && \
     tar czf /clouve/var-seed.tar.gz -C / \
         --exclude=var/run \
         --exclude=var/lock \
-        var
+        var && \
+    tar czf /clouve/opt-seed.tar.gz -C / opt
 
 EXPOSE 80
 
