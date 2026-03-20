@@ -27,7 +27,7 @@ services:
     x-clouve-bundle-metadata:
       appVersion: '24.04'
       appTitle: AI Studio
-      appDescription: A cloud-hosted AI coding workspace accessible directly from your browser — no local setup required. Includes a full Ubuntu 24.04 LTS environment with an interactive AI assistant selector (choose Claude Code, Gemini CLI, or OpenAI Codex CLI at session start) and Filebrowser Quantum (web file manager at /files/) for uploading, downloading, and editing files on your server. AI client CLIs are installed on first use and persist across sessions.
+      appDescription: A cloud-hosted AI coding workspace accessible directly from your browser — no local setup required. Includes a full Ubuntu 24.04 LTS environment with an interactive AI assistant selector (choose Claude Code, Gemini CLI, or OpenAI Codex CLI at session start) and Filebrowser Quantum (web file manager at /browser/) for uploading, downloading, and editing files on your server. AI client CLIs are installed on first use and persist across sessions.
       appIcon: /thermo/assets/Company/e2eorg/attachments/b104956a61c5528f-logo.png
       adminPath: /chat
     x-clouve-healthcheck:

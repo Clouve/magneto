@@ -82,7 +82,7 @@ USER_HOME=$(getent passwd "$USERNAME" | cut -d: -f6)
 
 echo -e "${GREEN}[SUCCESS]${NC} AI Studio is ready!"
 echo -e "${GREEN}[INFO]${NC} Web terminal available at http://localhost/chat"
-echo -e "${GREEN}[INFO]${NC} File browser available at http://localhost/files/"
+echo -e "${GREEN}[INFO]${NC} File browser available at http://localhost/browser"
 echo -e "${GREEN}[INFO]${NC} Username: $USERNAME"
 
 echo -e "${YELLOW}[INFO]${NC} Starting nginx..."

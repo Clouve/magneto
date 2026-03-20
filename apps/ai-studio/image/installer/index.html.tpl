@@ -546,7 +546,7 @@
         <svg class="lc-arrow" viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
       </a>
 
-      <a href="/files/" class="launch-card secondary">
+      <a href="/browser" class="launch-card secondary">
         <div class="lc-icon amber-icon">
           <!-- Folder icon -->
           <svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
@@ -554,7 +554,7 @@
         <div class="lc-body">
           <span class="lc-title">File Browser</span>
           <span class="lc-desc">Manage, upload, and edit files on your server with Filebrowser Quantum.</span>
-          <span class="lc-route">/files/</span>
+          <span class="lc-route">/browser</span>
         </div>
         <svg class="lc-arrow" viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
       </a>
@@ -620,7 +620,7 @@
             <svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
           </div>
           <h3>Filebrowser Quantum</h3>
-          <p>Upload, download, edit, and organise files on your server through a clean web UI at <code>/files/</code>.</p>
+          <p>Upload, download, edit, and organise files on your server through a clean web UI at <code>/browser/</code>.</p>
         </div>
 
         <div class="card">

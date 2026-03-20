@@ -1,7 +1,7 @@
 server:
   port: 7891
   listen: "127.0.0.1"
-  baseURL: "/"
+  baseURL: "/browser"
   sources:
     - path: "${HOME}"
       config:
