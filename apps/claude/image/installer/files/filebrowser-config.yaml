@@ -3,8 +3,8 @@ server:
   listen: "127.0.0.1"
   baseURL: "/files"
   sources:
-    - path: "/srv"
-      name: "Files"
+    - path: "${HOME}"
+      name: "home"
       config:
         defaultEnabled: true
 

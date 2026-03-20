@@ -69,7 +69,7 @@ USER_HOME=$(getent passwd "$USERNAME" | cut -d: -f6)
 # STEPS 2-4: Chat feature (developer tools, Claude Code, ttyd)
 # ============================================================================
 
-# . /clouve/claude/installer/chat/install.sh
+. /clouve/claude/installer/chat/install.sh
 
 # ============================================================================
 # STEP 5: Files feature (FileBrowser Quantum)

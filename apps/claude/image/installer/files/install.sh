@@ -5,6 +5,10 @@
 # ============================================================================
 
 FB_DATABASE=/opt/filebrowser/database.db
+FB_CONFIG=/opt/filebrowser/config.yaml
+
+# Expand ${HOME} in the config to the actual user home directory at runtime
+HOME="$USER_HOME" envsubst '${HOME}' < "$FB_CONFIG" > "${FB_CONFIG}.tmp" && mv "${FB_CONFIG}.tmp" "$FB_CONFIG"
 
 echo -e "${YELLOW}[INFO]${NC} Provisioning FileBrowser user '$USERNAME'..."
 
@@ -15,7 +19,7 @@ echo -e "${YELLOW}[INFO]${NC} Provisioning FileBrowser user '$USERNAME'..."
 # in the YAML config is not recognised by Quantum (it logs a warning and falls
 # back to creating 'database.db' in the working directory instead).
 FILEBROWSER_DATABASE="$FB_DATABASE" \
-    /usr/local/bin/filebrowser -c /opt/filebrowser/config.yaml users add "$USERNAME" "$PASSWORD" --admin &
+    /usr/local/bin/filebrowser -c "$FB_CONFIG" users add "$USERNAME" "$PASSWORD" --admin &
 FB_INIT_PID=$!
 
 # Poll for the database file (avoids curl hang issues on first boot).
@@ -41,7 +45,7 @@ echo -e "${GREEN}[SUCCESS]${NC} FileBrowser user '$USERNAME' provisioned."
 echo -e "${YELLOW}[INFO]${NC} Starting FileBrowser..."
 
 FILEBROWSER_DATABASE="$FB_DATABASE" \
-    /usr/local/bin/filebrowser -c /opt/filebrowser/config.yaml &
+    /usr/local/bin/filebrowser -c "$FB_CONFIG" &
 FB_PID=$!
 
 sleep 1
