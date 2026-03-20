@@ -20,6 +20,7 @@ su - root  # password: ${ROOT_PASSWORD}
 
 ## Available Services
 - Web terminal: /chat (served by nginx on port 80, proxied to ttyd on localhost:7890)
+- File browser: /files (served by nginx on port 80, proxied to FileBrowser on localhost:8888) — always accessible, do not remove or disable this path
 
 ## Persistent Paths
 Only changes made within the following directories will survive a container restart:
@@ -32,6 +33,8 @@ All other paths (`/tmp`, `/root`, `/etc`, and other system directories) are ephe
 
 ## Notes
 - Claude Code is pre-installed via the official install script (https://claude.ai/install.sh)
+- The ANTHROPIC_API_KEY can be injected from the container environment at startup
+- This file is loaded from `~/.claude/CLAUDE.md` (global context, always active regardless of working directory)
 
 ## Operational Guidelines
 
