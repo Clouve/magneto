@@ -1,7 +1,7 @@
 FROM ubuntu:24.04
 
 LABEL maintainer="Clouve Team"
-LABEL description="Custom Ubuntu Linux server image with web terminal and Claude Code"
+LABEL description="AI Studio — multi-client AI coding assistant environment with web terminal"
 
 ARG TARGETARCH
 
@@ -18,9 +18,8 @@ RUN printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d && \
     chmod +x /usr/bin/systemctl
 
 # Install core system packages and ttyd.
-# Developer tools (git, vim, nano, etc.) and Claude Code are deferred to
-# entrypoint.sh so they are installed lazily on first container start,
-# keeping this image lean and the seed tarballs small.
+# Developer tools (git, vim, nano, etc.) and AI client CLIs are deferred to
+# first container start so the image stays lean and seed tarballs stay small.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     nginx \
     gettext-base \
@@ -54,16 +53,19 @@ RUN if [ "$TARGETARCH" = "arm64" ]; then FB_ARCH="arm64"; else FB_ARCH="amd64"; 
 RUN mkdir -p /opt/filebrowser /srv/files
 
 # Copy entrypoint and static template files
-RUN mkdir -p /clouve/claude/installer
-COPY installer/ /clouve/claude/installer/
-RUN chmod +x /clouve/claude/installer/entrypoint.sh \
-             /clouve/claude/installer/init.sh \
-             /clouve/claude/installer/chat/install.sh \
-             /clouve/claude/installer/files/install.sh \
-    && cp /clouve/claude/installer/nginx-default.conf /etc/nginx/sites-available/default \
-    && cp /clouve/claude/installer/index.html /var/www/html/index.html \
-    && cp /clouve/claude/installer/files/filebrowser-config.yaml /opt/filebrowser/config.yaml \
-    && cp /clouve/claude/installer/files/pam-filebrowser /etc/pam.d/filebrowser
+RUN mkdir -p /clouve/ai-studio/installer
+COPY installer/ /clouve/ai-studio/installer/
+RUN chmod +x /clouve/ai-studio/installer/entrypoint.sh \
+             /clouve/ai-studio/installer/init.sh \
+             /clouve/ai-studio/installer/chat/install.sh \
+             /clouve/ai-studio/installer/chat/claude/install.sh \
+             /clouve/ai-studio/installer/chat/gemini/install.sh \
+             /clouve/ai-studio/installer/chat/openai/install.sh \
+             /clouve/ai-studio/installer/files/install.sh \
+    && cp /clouve/ai-studio/installer/nginx-default.conf /etc/nginx/sites-available/default \
+    && cp /clouve/ai-studio/installer/index.html /var/www/html/index.html \
+    && cp /clouve/ai-studio/installer/files/filebrowser-config.yaml /opt/filebrowser/config.yaml \
+    && cp /clouve/ai-studio/installer/files/pam-filebrowser /etc/pam.d/filebrowser
 
 # Remove Ubuntu's "use sudo" login hint from /etc/bash.bashrc
 RUN sed -i '/To run a command as administrator/d; /See "man sudo_root"/d' /etc/bash.bashrc
@@ -84,5 +86,5 @@ RUN tar czf /clouve/usr-seed.tar.gz -C / usr && \
 
 EXPOSE 80
 
-ENTRYPOINT ["/clouve/busybox", "sh", "/clouve/claude/installer/init.sh"]
+ENTRYPOINT ["/clouve/busybox", "sh", "/clouve/ai-studio/installer/init.sh"]
 CMD []

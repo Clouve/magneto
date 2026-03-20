@@ -1,0 +1,37 @@
+services:
+  ai-studio:
+    image: r.clv.zone/e2eorg/ai-studio
+    container_name: ai_studio_server
+    restart: unless-stopped
+    ports:
+      - "${TEST_HTTP_PORT:-8080}:80"
+    environment:
+      AI_STUDIO_USERNAME: admin
+      AI_STUDIO_PASSWORD: Admin@123
+      AI_STUDIO_ROOT_PASSWORD: Root@123
+      # Optionally pre-set an API key to skip the per-session key prompt.
+      # Any key provided here is injected into all login shells at startup.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    volumes:
+      - ai-studio-home:/home
+      - ai-studio-usr:/usr
+      - ai-studio-opt:/opt
+      - ai-studio-var:/var
+    networks:
+      - ai_studio_network
+
+volumes:
+  ai-studio-home:
+    driver: local
+  ai-studio-usr:
+    driver: local
+  ai-studio-opt:
+    driver: local
+  ai-studio-var:
+    driver: local
+
+networks:
+  ai_studio_network:
+    driver: bridge

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Magneto** is a Docker Compose-based system for packaging containerized applications (WordPress, Moodle, Gibbon, LimeSurvey, Odoo, OwnCloud, SuiteCRM, Bluesky PDS, Claude Code server) for deployment in Kubernetes-based marketplace environments. It provides standardized structures for single applications and multi-application bundles.
+**Magneto** is a Docker Compose-based system for packaging containerized applications (WordPress, Moodle, Gibbon, LimeSurvey, Odoo, OwnCloud, SuiteCRM, Bluesky PDS, AI Studio) for deployment in Kubernetes-based marketplace environments. It provides standardized structures for single applications and multi-application bundles.
 
 ## Common Commands
 
@@ -114,5 +114,5 @@ Bundles in `bundles/` combine multiple apps with integration:
 ### Build System
 `build.sh` reads `image/build.config` from each app directory to determine image names and registry paths. It uses Docker Buildx for multi-platform builds (`linux/amd64` + `linux/arm64`).
 
-### Claude App (`apps/claude/`)
-The Claude Code server app is notable: it runs Ubuntu 24.04 with ttyd (web terminal), Node.js 22, nginx, and Claude Code CLI pre-installed. It serves a browser-based terminal at `/chat`. Access: `http://localhost:8080/chat` (admin/Admin@123 for local dev).
+### AI Studio (`apps/ai-studio/`)
+The AI Studio app runs Ubuntu 24.04 with ttyd (web terminal), nginx, and FileBrowser Quantum. It serves a browser-based terminal at `/chat` where users interactively choose their preferred AI coding assistant (Claude Code, Gemini CLI, or OpenAI Codex CLI) on each session start; the selected client is installed on first use and persists across restarts. Access: `http://localhost:8080/chat` (admin/Admin@123 for local dev).

@@ -1,24 +1,24 @@
 version: '3.8'
 services:
-  claude:
-    image: claude:latest
+  ai-studio:
+    image: ai-studio:latest
     ports:
       - '80:80'
     environment:
-      CLAUDE_USERNAME: '{user.firstName}_{user.lastName}'
-      CLAUDE_PASSWORD: claude-password
-      CLAUDE_ROOT_PASSWORD: claude-root-password
+      AI_STUDIO_USERNAME: '{user.firstName}_{user.lastName}'
+      AI_STUDIO_PASSWORD: ai-studio-password
+      AI_STUDIO_ROOT_PASSWORD: ai-studio-root-password
     x-clouve-environment-types:
-      CLAUDE_USERNAME: applicationUsername
-      CLAUDE_PASSWORD: applicationPassword
-      CLAUDE_ROOT_PASSWORD: secret
+      AI_STUDIO_USERNAME: applicationUsername
+      AI_STUDIO_PASSWORD: applicationPassword
+      AI_STUDIO_ROOT_PASSWORD: secret
     volumes:
-      - claudehome:/home
-      - claudeusr:/usr
-      - claudeopt:/opt
-      - claudevar:/var
+      - ai-studio-home:/home
+      - ai-studio-usr:/usr
+      - ai-studio-opt:/opt
+      - ai-studio-var:/var
     x-clouve-metadata:
-      containerName: claude
+      containerName: ai-studio
       purpose: Database
       protocol: TCP
       isPublic: true
@@ -26,8 +26,8 @@ services:
       cpuBase: 1
     x-clouve-bundle-metadata:
       appVersion: '24.04'
-      appTitle: Claude Code Server
-      appDescription: A cloud-hosted AI workspace accessible directly from your browser — no local setup required. Includes a full Ubuntu 24.04 LTS environment with two built-in tools: Claude Code (browser-based terminal at /chat) powered by Anthropic's Claude AI for building software, automating tasks, and solving problems through natural conversation; and Filebrowser Quantum (web file manager at /files/) for uploading, downloading, and editing files on your server. Persistent storage keeps your work across sessions.
+      appTitle: AI Studio
+      appDescription: A cloud-hosted AI coding workspace accessible directly from your browser — no local setup required. Includes a full Ubuntu 24.04 LTS environment with an interactive AI assistant selector (choose Claude Code, Gemini CLI, or OpenAI Codex CLI at session start) and Filebrowser Quantum (web file manager at /files/) for uploading, downloading, and editing files on your server. AI client CLIs are installed on first use and persist across sessions.
       appIcon: /thermo/assets/Company/clouvecom21/attachments/6aa987b60df39cbb-logo.png
       adminPath: /chat
     x-clouve-healthcheck:
@@ -52,24 +52,24 @@ services:
       retries: 15
       start_period: 60s
     x-clouve-volumes:
-      - name: claudehome
+      - name: ai-studio-home
         size: 10
         description: Persistent volume for home directories
-      - name: claudeusr
+      - name: ai-studio-usr
         size: 10
         description: Persistent volume for system binaries and libraries (/usr)
-      - name: claudeopt
+      - name: ai-studio-opt
         size: 10
         description: Persistent volume for optional software (/opt)
-      - name: claudevar
+      - name: ai-studio-var
         size: 10
         description: Persistent volume for /var (package db, cache, logs, web files)
 volumes:
-  claudehome:
+  ai-studio-home:
     driver: local
-  claudeusr:
+  ai-studio-usr:
     driver: local
-  claudeopt:
+  ai-studio-opt:
     driver: local
-  claudevar:
+  ai-studio-var:
     driver: local

@@ -1,0 +1,79 @@
+#!/bin/bash
+
+# ============================================================================
+# STEP 2: Install developer tools (first-run only)
+# ============================================================================
+# Developer tools are not baked into the image to keep it lean. They are
+# installed on the first container start and persist in the /usr volume,
+# so subsequent starts skip this block entirely.
+# AI coding assistant CLIs are NOT installed here — the user selects and
+# installs their preferred client interactively at session start.
+
+if ! command -v git &>/dev/null; then
+    echo -e "${YELLOW}[INFO]${NC} Installing developer tools..."
+    DEBIAN_FRONTEND=noninteractive apt-get update -qq && \
+        apt-get install -y --no-install-recommends \
+            wget git vim nano htop unzip \
+            net-tools iputils-ping procps less \
+        && rm -rf /var/lib/apt/lists/*
+    echo -e "${GREEN}[SUCCESS]${NC} Developer tools installed."
+else
+    echo -e "${GREEN}[INFO]${NC} Developer tools already present."
+fi
+
+# ============================================================================
+# STEP 3: Configure session environment
+# ============================================================================
+
+# Ensure the home directory is owned by the user (handles volume remounts
+# where the directory may have been created as root or with a stale UID).
+chown "$USERNAME:$USERNAME" "$USER_HOME"
+chmod 755 "$USER_HOME"
+
+# Export all provided API keys and the root password to all login shells via
+# /etc/profile.d/ so the interactive session selector can access them.
+{
+    [ -n "$ANTHROPIC_API_KEY" ] && echo "export ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY"
+    [ -n "$GEMINI_API_KEY" ]    && echo "export GEMINI_API_KEY=$GEMINI_API_KEY"
+    [ -n "$OPENAI_API_KEY" ]    && echo "export OPENAI_API_KEY=$OPENAI_API_KEY"
+    echo "export ROOT_PASSWORD=$ROOT_PASSWORD"
+} > /etc/profile.d/clouve-env.sh
+chmod 644 /etc/profile.d/clouve-env.sh
+echo -e "${GREEN}[SUCCESS]${NC} Session environment configured via /etc/profile.d/."
+
+# Install the interactive AI client selector as the user's login shell profile.
+# On each terminal open, the user will be prompted to choose their preferred
+# AI coding assistant client (Claude Code, Gemini CLI, OpenAI Codex CLI, or none).
+cp /clouve/ai-studio/installer/chat/.bash_profile "$USER_HOME/.bash_profile"
+chown "$USERNAME:$USERNAME" "$USER_HOME/.bash_profile"
+chmod 644 "$USER_HOME/.bash_profile"
+echo -e "${GREEN}[SUCCESS]${NC} AI client selector installed as login profile."
+
+# ============================================================================
+# STEP 4: Start ttyd web terminal on localhost
+# ============================================================================
+
+echo -e "${YELLOW}[INFO]${NC} Starting web terminal (ttyd)..."
+
+# Create a session wrapper that ignores all arguments.
+# ttyd supports ?arg= URL query parameters which clients can use to inject extra
+# arguments to the spawned command (e.g. --noprofile to bypass .bash_profile).
+# The wrapper discards all arguments and always starts a login shell as $USERNAME.
+printf '#!/bin/bash\nexec su - %s\n' "$USERNAME" > /usr/local/bin/clv-session
+chmod 755 /usr/local/bin/clv-session
+
+ttyd \
+    --port 7890 \
+    --base-path /chat \
+    --interface 127.0.0.1 \
+    --credential "$USERNAME:$PASSWORD" \
+    --writable \
+    /usr/local/bin/clv-session &
+TTYD_PID=$!
+
+sleep 1
+if kill -0 $TTYD_PID 2>/dev/null; then
+    echo -e "${GREEN}[SUCCESS]${NC} ttyd started (PID $TTYD_PID)."
+else
+    echo -e "${RED}[WARNING]${NC} ttyd may not have started correctly."
+fi

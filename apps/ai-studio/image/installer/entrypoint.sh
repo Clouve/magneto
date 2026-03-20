@@ -1,10 +1,10 @@
 #!/bin/bash
 
-# Linux Server Docker Entrypoint Script
+# AI Studio Docker Entrypoint Script
 # This script initializes the Ubuntu Linux server container:
 # 0. Re-applies apt-get service-start guards (policy-rc.d + systemctl no-op)
 # 1. Creates the admin user from environment variables
-# 2-4. chat/install.sh  — developer tools, Claude Code, ttyd
+# 2-4. chat/install.sh  — developer tools, session config, ttyd
 # 5.   files/install.sh — FileBrowser Quantum
 # 6. Starts the nginx reverse proxy (foreground)
 
@@ -39,10 +39,9 @@ echo -e "${GREEN}[INFO]${NC} apt-get service-start guards applied."
 # STEP 1: Configure user account
 # ============================================================================
 
-USERNAME="${CLAUDE_USERNAME:-admin}"
-PASSWORD="${CLAUDE_PASSWORD:-changeme}"
-ROOT_PASSWORD="${CLAUDE_ROOT_PASSWORD:-${PASSWORD}}"
-ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
+USERNAME="${AI_STUDIO_USERNAME:-admin}"
+PASSWORD="${AI_STUDIO_PASSWORD:-changeme}"
+ROOT_PASSWORD="${AI_STUDIO_ROOT_PASSWORD:-${PASSWORD}}"
 
 echo -e "${YELLOW}[INFO]${NC} Configuring user: $USERNAME..."
 
@@ -66,22 +65,22 @@ chmod 440 /etc/sudoers.d/"$USERNAME"
 USER_HOME=$(getent passwd "$USERNAME" | cut -d: -f6)
 
 # ============================================================================
-# STEPS 2-4: Chat feature (developer tools, Claude Code, ttyd)
+# STEPS 2-4: Chat feature (developer tools, session setup, ttyd)
 # ============================================================================
 
-. /clouve/claude/installer/chat/install.sh
+. /clouve/ai-studio/installer/chat/install.sh
 
 # ============================================================================
 # STEP 5: Files feature (FileBrowser Quantum)
 # ============================================================================
 
-. /clouve/claude/installer/files/install.sh
+. /clouve/ai-studio/installer/files/install.sh
 
 # ============================================================================
 # STEP 6: Start nginx reverse proxy
 # ============================================================================
 
-echo -e "${GREEN}[SUCCESS]${NC} Linux server is ready!"
+echo -e "${GREEN}[SUCCESS]${NC} AI Studio is ready!"
 echo -e "${GREEN}[INFO]${NC} Web terminal available at http://localhost/chat"
 echo -e "${GREEN}[INFO]${NC} File browser available at http://localhost/files/"
 echo -e "${GREEN}[INFO]${NC} Username: $USERNAME"
