@@ -108,6 +108,55 @@ _clv_gate_exit() {
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
+# Interactive arrow-key menu selector.
+# Args: "$@" = menu item labels
+# Sets _clv_menu_result to the 0-based index of the chosen item.
+_clv_menu_select() {
+    local items=("$@")
+    local count=${#items[@]}
+    local current=0
+    local key esc seq i
+
+    tput civis 2>/dev/null   # hide cursor
+
+    # Initial draw
+    for i in "${!items[@]}"; do
+        if [ "$i" -eq "$current" ]; then
+            printf "    \033[7m  %-40s  \033[0m\n" "${items[$i]}"
+        else
+            printf "       %-40s\n" "${items[$i]}"
+        fi
+    done
+
+    while true; do
+        IFS= read -r -s -n1 key
+        if [[ "$key" == $'\x1b' ]]; then
+            IFS= read -r -s -n1 -t 0.1 esc
+            IFS= read -r -s -n1 -t 0.1 seq
+            case "$esc$seq" in
+                '[A') ((current > 0)) && ((current--)) ;;           # Up
+                '[B') ((current < count - 1)) && ((current++)) ;;   # Down
+            esac
+        elif [[ "$key" == '' || "$key" == $'\n' ]]; then
+            break   # Enter
+        fi
+
+        # Redraw in place
+        tput cuu "$count" 2>/dev/null
+        for i in "${!items[@]}"; do
+            tput el 2>/dev/null
+            if [ "$i" -eq "$current" ]; then
+                printf "    \033[7m  %-40s  \033[0m\n" "${items[$i]}"
+            else
+                printf "       %-40s\n" "${items[$i]}"
+            fi
+        done
+    done
+
+    tput cnorm 2>/dev/null   # restore cursor
+    _clv_menu_result="$current"
+}
+
 # Validate an API key against its provider's API.
 # Args: $1=client_index  $2=key
 # Returns: 0=valid  1=rejected  2=network error
@@ -248,18 +297,14 @@ _clv_ask_mode() {
     echo ""
     echo "  $name is ready."
     echo "  Would you like to run in auto-accept mode?"
+    echo "  (Use ↑ ↓ arrows to navigate, Enter to confirm)"
     echo ""
-    echo "    1)  Yes — run in auto-accept mode"
-    echo "    2)  No  — run in standard/interactive mode"
+    _clv_menu_select "Yes — run in auto-accept mode" "No  — run in standard/interactive mode"
     echo ""
-    while true; do
-        read -r -p "  Select [1-2]: " _clv_mode
-        case "$_clv_mode" in
-            1) _clv_launch_flags="$auto_flag"; break ;;
-            2) _clv_launch_flags="$std_flag";  break ;;
-            *) echo "  Enter 1 or 2." ;;
-        esac
-    done
+    case "$_clv_menu_result" in
+        0) _clv_launch_flags="$auto_flag" ;;
+        1) _clv_launch_flags="$std_flag"  ;;
+    esac
 }
 
 # ─── Main session loop ────────────────────────────────────────────────────────
@@ -303,20 +348,11 @@ while true; do
         echo "  ╚═══════════════════════════════════════════════╝"
         echo ""
         echo "  Which AI coding assistant would you like to use?"
+        echo "  (Use ↑ ↓ arrows to navigate, Enter to confirm)"
         echo ""
-        for i in "${!CLV_NAMES[@]}"; do
-            printf "    %d)  %s\n" "$((i + 1))" "${CLV_NAMES[$i]}"
-        done
+        _clv_menu_select "${CLV_NAMES[@]}"
+        selected_idx="$_clv_menu_result"
         echo ""
-        while true; do
-            read -r -p "  Select [1-${#CLV_NAMES[@]}]: " _clv_choice
-            if [[ "$_clv_choice" =~ ^[0-9]+$ ]] && \
-               [ "$_clv_choice" -ge 1 ] && [ "$_clv_choice" -le "${#CLV_NAMES[@]}" ]; then
-                selected_idx=$((_clv_choice - 1))
-                break
-            fi
-            echo "  Invalid choice. Enter a number between 1 and ${#CLV_NAMES[@]}."
-        done
     fi
 
     # ── AI client selected — resolve key, install, configure ─────────────────
