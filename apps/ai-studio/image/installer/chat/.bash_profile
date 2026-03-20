@@ -80,7 +80,7 @@ CLV_CONTEXT_FILES=( "CLAUDE.md" "GEMINI.md" "AGENTS.md" )
 CLV_AUTO_FLAGS=(
     "--dangerously-skip-permissions"
     "--yolo"
-    "--full-auto"
+    "--dangerously-bypass-approvals-and-sandbox"
 )
 # Standard/interactive mode flags (empty string = no extra flags needed)
 CLV_STD_FLAGS=(

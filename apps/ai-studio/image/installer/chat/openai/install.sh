@@ -8,6 +8,16 @@
 #
 # Node.js 22+ is required by the OpenAI Codex CLI.
 
+if ! command -v bwrap &>/dev/null; then
+    echo "  Installing bubblewrap (sandbox dependency)..."
+    DEBIAN_FRONTEND=noninteractive sudo apt-get update -qq && \
+        sudo apt-get install -y --no-install-recommends bubblewrap \
+        && sudo rm -rf /var/lib/apt/lists/*
+    echo "  bubblewrap installed."
+else
+    echo "  bubblewrap already present."
+fi
+
 _node_major() { node --version 2>/dev/null | cut -c2- | cut -d. -f1; }
 
 if ! command -v node &>/dev/null || [ "$(_node_major)" -lt 22 ]; then
