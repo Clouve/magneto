@@ -22,6 +22,9 @@
       --slate-200:   #e2e8f0;
       --slate-50:    #f8fafc;
       --green:       #10b981;
+      --amber:       #f59e0b;
+      --amber-light: #fffbeb;
+      --amber-mid:   #fde68a;
       --white:       #ffffff;
     }
 
@@ -152,60 +155,154 @@
       color: var(--slate-600);
       line-height: 1.7;
       max-width: 520px;
-      margin-bottom: 48px;
+      margin-bottom: 56px;
     }
 
-    .cta-row {
+    /* ── Launch Cards ──────────────────────────────────── */
+    .launch-cards {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      width: 100%;
+      max-width: 720px;
+      margin-bottom: 64px;
+    }
+
+    .launch-card {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 14px;
+      padding: 28px 28px 24px;
+      border-radius: 16px;
+      text-decoration: none;
+      border: 1.5px solid var(--slate-200);
+      background: var(--white);
+      transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+      text-align: left;
+    }
+
+    .launch-card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 16px 36px -8px rgba(0,0,0,0.12);
+    }
+
+    .launch-card.primary {
+      background: var(--blue);
+      border-color: var(--blue);
+      box-shadow: 0 4px 20px rgba(29,78,216,0.28);
+    }
+
+    .launch-card.primary:hover {
+      background: var(--blue-hover);
+      border-color: var(--blue-hover);
+      box-shadow: 0 16px 36px -8px rgba(29,78,216,0.4);
+    }
+
+    .launch-card.secondary {
+      background: var(--white);
+      border-color: var(--slate-200);
+    }
+
+    .launch-card.secondary:hover {
+      border-color: var(--amber-mid);
+      box-shadow: 0 16px 36px -8px rgba(245,158,11,0.15);
+    }
+
+    .lc-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 11px;
       display: flex;
       align-items: center;
-      gap: 16px;
-      flex-wrap: wrap;
       justify-content: center;
+      flex-shrink: 0;
     }
 
-    .btn-primary {
-      display: inline-flex;
-      align-items: center;
-      gap: 9px;
-      background: var(--blue);
-      color: white;
+    .launch-card.primary .lc-icon {
+      background: rgba(255,255,255,0.18);
+    }
+
+    .launch-card.secondary .lc-icon {
+      background: var(--amber-light);
+      border: 1px solid var(--amber-mid);
+    }
+
+    .lc-icon svg {
+      width: 22px;
+      height: 22px;
+      stroke-width: 1.75;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      fill: none;
+    }
+
+    .launch-card.primary .lc-icon svg { stroke: #fff; }
+    .launch-card.secondary .lc-icon svg { stroke: var(--amber); }
+
+    .lc-body { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+
+    .lc-title {
       font-family: "Plus Jakarta Sans", sans-serif;
       font-size: 1rem;
       font-weight: 700;
-      padding: 15px 32px;
-      border-radius: 10px;
-      text-decoration: none;
-      transition: background 0.2s, transform 0.2s, box-shadow 0.2s;
-      box-shadow: 0 4px 14px rgba(29,78,216,0.25);
+      letter-spacing: -0.01em;
     }
 
-    .btn-primary:hover {
-      background: var(--blue-hover);
-      transform: translateY(-2px);
-      box-shadow: 0 10px 24px rgba(29,78,216,0.35);
+    .launch-card.primary .lc-title { color: #fff; }
+    .launch-card.secondary .lc-title { color: var(--charcoal); }
+
+    .lc-desc {
+      font-size: 0.85rem;
+      line-height: 1.55;
     }
 
-    .btn-primary svg {
-      width: 17px;
-      height: 17px;
-      stroke: white;
+    .launch-card.primary .lc-desc { color: rgba(255,255,255,0.72); }
+    .launch-card.secondary .lc-desc { color: var(--slate-500); }
+
+    .lc-route {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      font-family: "SFMono-Regular", "Consolas", monospace;
+      margin-top: 6px;
+      padding: 3px 9px;
+      border-radius: 6px;
+    }
+
+    .launch-card.primary .lc-route {
+      background: rgba(255,255,255,0.15);
+      color: rgba(255,255,255,0.9);
+    }
+
+    .launch-card.secondary .lc-route {
+      background: var(--amber-light);
+      color: var(--amber);
+      border: 1px solid var(--amber-mid);
+    }
+
+    .lc-arrow {
+      width: 16px;
+      height: 16px;
       stroke-width: 2;
       stroke-linecap: round;
       stroke-linejoin: round;
       fill: none;
+      flex-shrink: 0;
+      align-self: flex-start;
+      margin-top: 4px;
       transition: transform 0.2s;
     }
 
-    .btn-primary:hover svg { transform: translateX(3px); }
-
-    .hint {
-      font-size: 0.85rem;
-      color: var(--slate-500);
-    }
+    .launch-card.primary .lc-arrow { stroke: rgba(255,255,255,0.6); }
+    .launch-card.secondary .lc-arrow { stroke: var(--slate-300); }
+    .launch-card:hover .lc-arrow { transform: translateX(3px); }
 
     /* ── Terminal preview ──────────────────────────────── */
     .terminal-wrap {
-      margin-top: 64px;
       width: 100%;
       max-width: 780px;
       border-radius: 16px;
@@ -297,7 +394,7 @@
 
     .cards {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
       gap: 24px;
     }
 
@@ -326,6 +423,11 @@
       margin-bottom: 20px;
     }
 
+    .card-icon.amber-icon {
+      background: var(--amber-light);
+      border: 1px solid var(--amber-mid);
+    }
+
     .card-icon svg {
       width: 22px;
       height: 22px;
@@ -334,6 +436,10 @@
       stroke-linecap: round;
       stroke-linejoin: round;
       fill: none;
+    }
+
+    .card-icon.amber-icon svg {
+      stroke: var(--amber);
     }
 
     .card h3 {
@@ -389,6 +495,7 @@
     /* ── Responsive ────────────────────────────────────── */
     @media (max-width: 640px) {
       .hero { padding: 72px 20px 60px; }
+      .launch-cards { grid-template-columns: 1fr; max-width: 400px; }
       .term-body { padding: 20px; font-size: 0.8rem; }
       .features { padding: 60px 20px; }
       .card { padding: 28px; }
@@ -405,7 +512,7 @@
       <a href="https://www.clouve.com" target="_blank" class="logo">
         <img alt="Clouve Logo" src="https://cdn.dev.clouve.com/assets/LogoClouve2026.svg">
       </a>
-      <span class="nav-badge">Claude Code</span>
+      <span class="nav-badge">AI Workspace</span>
     </div>
   </nav>
 
@@ -416,19 +523,42 @@
       Instance ready
     </div>
 
-    <h1>Your <span>AI coding environment</span><br/>is ready to use</h1>
+    <h1>Your <span>AI workspace</span><br/>is ready to use</h1>
 
     <p class="hero-sub">
-      A fully configured Linux server with Claude Code pre-installed,
-      accessible right from your browser — no local setup required.
+      A fully configured Linux server with Claude Code and a file manager
+      pre-installed — accessible right from your browser, no local setup required.
     </p>
 
-    <div class="cta-row">
-      <a href="/chat" class="btn-primary">
-        Launch Terminal
-        <svg viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+    <!-- Launch cards -->
+    <div class="launch-cards">
+
+      <a href="/chat" class="launch-card primary">
+        <div class="lc-icon">
+          <!-- Terminal icon -->
+          <svg viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+        </div>
+        <div class="lc-body">
+          <span class="lc-title">Claude Code</span>
+          <span class="lc-desc">Browser-based terminal with the Claude Code CLI pre-installed and ready to use.</span>
+          <span class="lc-route">/chat</span>
+        </div>
+        <svg class="lc-arrow" viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
       </a>
-      <span class="hint">Opens the web terminal at <code>/chat</code></span>
+
+      <a href="/files/" class="launch-card secondary">
+        <div class="lc-icon amber-icon">
+          <!-- Folder icon -->
+          <svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+        </div>
+        <div class="lc-body">
+          <span class="lc-title">File Browser</span>
+          <span class="lc-desc">Manage, upload, and edit files on your server with Filebrowser Quantum.</span>
+          <span class="lc-route">/files/</span>
+        </div>
+        <svg class="lc-arrow" viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+      </a>
+
     </div>
 
     <!-- Terminal preview -->
@@ -482,6 +612,15 @@
           </div>
           <h3>Claude Code pre-installed</h3>
           <p>The latest Claude Code CLI is ready to use. Bring your Anthropic API key and start building immediately.</p>
+        </div>
+
+        <div class="card">
+          <div class="card-icon amber-icon">
+            <!-- Folder icon -->
+            <svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          </div>
+          <h3>Filebrowser Quantum</h3>
+          <p>Upload, download, edit, and organise files on your server through a clean web UI at <code>/files/</code>.</p>
         </div>
 
         <div class="card">

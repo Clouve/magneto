@@ -1,6 +1,6 @@
 # Claude Code Server Docker Application
 
-Custom Ubuntu 24.04 LTS server image with a browser-based web terminal and Claude Code pre-installed and pre-configured.
+Custom Ubuntu 24.04 LTS server image with a browser-based web terminal (Claude Code) and a web-based file manager (Filebrowser Quantum) — both pre-installed and pre-configured.
 
 ## Deployment Context
 
@@ -24,14 +24,19 @@ docker compose down
 Open your browser and navigate to:
 - **URL**: http://localhost:8080/
 
-The landing page links to the web terminal.
+The landing page links to both the web terminal and the file manager.
 
-### Web Terminal
+### Web Terminal (Claude Code)
 - **URL**: http://localhost:8080/chat
 - **Username**: `admin`
 - **Password**: `Admin@123`
 
-Only `/chat` and `/` are handled by nginx. All other paths return 404.
+### File Manager (Filebrowser Quantum)
+- **URL**: http://localhost:8080/files/
+- **Username**: `admin`
+- **Password**: `Admin@123`
+
+nginx routes `/`, `/chat`, and `/files/` — all other paths return 404.
 
 ## Configuration
 
@@ -108,6 +113,8 @@ sudo nginx -s reload
 
 The service is then accessible at `https://<your-domain>/app`.
 
+Note: `/files/` is already reserved for Filebrowser Quantum — choose a different prefix for any additional services.
+
 ## Volumes
 
 Four persistent volumes are used. On first start, `/usr` and `/var` are seeded from image snapshots bundled in the image (`/clouve/usr-seed.tar.gz`, `/clouve/var-seed.tar.gz`). A sentinel file (`.clouve-seeded`) is written inside each volume after successful seeding; subsequent starts skip extraction to preserve any changes made at runtime.
@@ -125,21 +132,26 @@ Four persistent volumes are used. On first start, `/usr` and `/var` are seeded f
 - Multi-platform support (amd64 and arm64)
 - [Claude Code](https://claude.ai/code) pre-installed and pre-configured via the official install script
 - Browser-based terminal via [ttyd](https://github.com/tsl0922/ttyd) served at `/chat` (HTTP basic auth)
-- Landing page at `/` with a direct link to the web terminal
-- nginx reverse proxy routing `/chat` to ttyd on localhost:7890
+- Web-based file manager via [Filebrowser Quantum](https://github.com/gtsteffaniak/filebrowser) served at `/files/` (PAM auth)
+- Landing page at `/` with navigation links to both the web terminal and the file manager
+- nginx reverse proxy routing `/chat` → ttyd (localhost:7890) and `/files/` → Filebrowser (localhost:6070)
 - API key gating: requires a valid Anthropic API key before granting shell access
 - Admin user created from environment variables at startup with passwordless `sudo`
 - Four persistent volumes for `/home`, `/usr`, `/opt`, `/var` — seeded from image snapshots on first start
 
 ## Files
 
-- `image/Dockerfile` — Ubuntu 24.04 image with Claude Code, nginx, ttyd, and CLI tools
+- `image/Dockerfile` — Ubuntu 24.04 image with Claude Code, nginx, ttyd, Filebrowser Quantum, and CLI tools
 - `image/installer/init.sh` — Bootstrap script (seeds `/usr` and `/var` from image snapshots into Kubernetes PVCs on first start)
-- `image/installer/entrypoint.sh` — Startup script (user creation, Claude Code config, ttyd, nginx)
-- `image/installer/nginx-default.conf` — nginx site config proxying `/chat` to ttyd; serves landing page at `/`
-- `image/installer/index.html` — Landing page served at `/` with a "Launch Terminal" button
-- `image/installer/CLAUDE.md.tpl` — Claude Code context template rendered at startup via `envsubst` into `~/.claude/CLAUDE.md`
-- `image/installer/.bash_profile` — Login shell profile: API key resolution, validation, and auto-launch of `claude`
+- `image/installer/entrypoint.sh` — Startup script (user creation, Claude Code config, ttyd, Filebrowser, nginx)
+- `image/installer/nginx-default.conf` — nginx site config proxying `/chat` → ttyd and `/files/` → Filebrowser; serves landing page at `/`
+- `image/installer/index.html` — Landing page at `/` with navigation cards for Claude Code (`/chat`) and File Manager (`/files/`)
+- `image/installer/chat/install.sh` — ttyd (web terminal) install script
+- `image/installer/chat/CLAUDE.md.tpl` — Claude Code context template rendered at startup via `envsubst` into `~/.claude/CLAUDE.md`
+- `image/installer/chat/.bash_profile` — Login shell profile: API key resolution, validation, and auto-launch of `claude`
+- `image/installer/files/install.sh` — Filebrowser Quantum install script
+- `image/installer/files/filebrowser-config.yaml` — Filebrowser Quantum configuration (port, base URL, auth)
+- `image/installer/files/pam-filebrowser` — PAM service configuration for Filebrowser authentication
 - `image/build.config` — Build configuration for the centralized build script
 - `docker-compose.yml` — Container orchestration for local development/testing
 - `clv-docker-compose.yml` — Clouve marketplace manifest
@@ -181,6 +193,18 @@ docker compose exec claude curl -sf http://localhost/chat | head -5
 docker compose exec claude curl -sf http://localhost:7890/chat | head -5
 ```
 
+### File manager not loading
+```bash
+# Confirm nginx is routing /files/
+docker compose exec claude curl -sf http://localhost/files/ | head -5
+
+# Confirm Filebrowser is listening on localhost
+docker compose exec claude curl -sf http://localhost:6070 | head -5
+
+# Check Filebrowser logs
+docker compose exec claude journalctl -u filebrowser --no-pager -n 50
+```
+
 ### Claude Code still prompts for login
 Ensure `ANTHROPIC_API_KEY` is set in `docker-compose.yml` and the container has been restarted:
 ```bash
@@ -209,3 +233,4 @@ Before deploying to production:
 3. Deploy behind a Kubernetes ingress controller — the ingress handles TLS; the container only needs port 80 exposed
 4. Build and push the image: `../../build.sh apps/claude --push`
 5. Verify the web terminal is accessible at `/chat` and `claude` launches on login
+6. Verify the file manager is accessible at `/files/`
