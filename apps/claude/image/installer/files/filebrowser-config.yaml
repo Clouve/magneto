@@ -1,10 +1,9 @@
 server:
   port: 8080
   listen: "127.0.0.1"
-  baseURL: "/files"
+  baseURL: "/"
   sources:
     - path: "${HOME}"
-      name: "home"
       config:
         defaultEnabled: true
 
@@ -16,5 +15,3 @@ auth:
       enabled: true
       header: "X-Forwarded-User"
       createUser: true
-    password:
-      enabled: true
