@@ -68,11 +68,11 @@ CLV_KEY_LABELS=(
 CLV_CONTEXT_TPLS=(
     "/clouve/ai-studio/installer/chat/claude/CLAUDE.md.tpl"
     "/clouve/ai-studio/installer/chat/gemini/GEMINI.md.tpl"
-    ""
+    "/clouve/ai-studio/installer/chat/openai/AGENTS.md.tpl"
 )
 # Destination directory and filename for the context file (relative to $HOME)
-CLV_CONTEXT_DIRS=( ".claude"  ".gemini"  "" )
-CLV_CONTEXT_FILES=( "CLAUDE.md" "GEMINI.md" "" )
+CLV_CONTEXT_DIRS=( ".claude"  ".gemini"  ".codex" )
+CLV_CONTEXT_FILES=( "CLAUDE.md" "GEMINI.md" "AGENTS.md" )
 
 # Auto-accept mode flags — the flag(s) passed when the user selects auto-accept.
 # Empty string means this client has no auto-accept mode; the mode prompt is
@@ -80,7 +80,7 @@ CLV_CONTEXT_FILES=( "CLAUDE.md" "GEMINI.md" "" )
 CLV_AUTO_FLAGS=(
     "--dangerously-skip-permissions"
     "--yolo"
-    ""
+    "--full-auto"
 )
 # Standard/interactive mode flags (empty string = no extra flags needed)
 CLV_STD_FLAGS=(

@@ -11,6 +11,9 @@ database: "/opt/filebrowser/database.db"
 
 auth:
   methods:
+    noauth: true
+    password:
+      enabled: false
     proxy:
       enabled: true
       header: "X-Forwarded-User"
