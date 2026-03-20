@@ -122,7 +122,7 @@ _clv_menu_select() {
     # Initial draw
     for i in "${!items[@]}"; do
         if [ "$i" -eq "$current" ]; then
-            printf "    \033[7m  %-40s  \033[0m\n" "${items[$i]}"
+            printf "     \033[7m  %-40s  \033[0m\n" "${items[$i]}"
         else
             printf "       %-40s\n" "${items[$i]}"
         fi
@@ -146,7 +146,7 @@ _clv_menu_select() {
         for i in "${!items[@]}"; do
             tput el 2>/dev/null
             if [ "$i" -eq "$current" ]; then
-                printf "    \033[7m  %-40s  \033[0m\n" "${items[$i]}"
+                printf "     \033[7m  %-40s  \033[0m\n" "${items[$i]}"
             else
                 printf "       %-40s\n" "${items[$i]}"
             fi
