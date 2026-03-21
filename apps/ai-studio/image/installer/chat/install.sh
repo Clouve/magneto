@@ -17,6 +17,24 @@ if ! command -v git &>/dev/null; then
             net-tools iputils-ping procps less \
         && rm -rf /var/lib/apt/lists/*
     echo -e "${GREEN}[SUCCESS]${NC} Developer tools installed."
+
+    # Snapshot /etc to the persistent /var volume so all runtime-written files
+    # survive container restarts. Excludes auth files (regenerated each start
+    # from live env vars) and Docker/Kubernetes-managed networking files
+    # (injected as bind mounts that take precedence over the volume anyway).
+    echo -e "${YELLOW}[INFO]${NC} Saving /etc overlay..."
+    mkdir -p /var/lib/clouve
+    tar czf /var/lib/clouve/etc-overlay.tar.gz \
+        --exclude=etc/resolv.conf \
+        --exclude=etc/hosts \
+        --exclude=etc/hostname \
+        --exclude=etc/passwd \
+        --exclude=etc/shadow \
+        --exclude=etc/group \
+        --exclude=etc/gshadow \
+        --exclude=etc/sudoers.d \
+        -C / etc
+    echo -e "${GREEN}[SUCCESS]${NC} /etc overlay saved."
 else
     echo -e "${GREEN}[INFO]${NC} Developer tools already present."
 fi

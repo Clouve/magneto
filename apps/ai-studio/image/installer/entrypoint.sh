@@ -2,11 +2,12 @@
 
 # AI Studio Docker Entrypoint Script
 # This script initializes the Ubuntu Linux server container:
-# 0. Re-applies apt-get service-start guards (policy-rc.d + systemctl no-op)
-# 1. Creates the admin user from environment variables
+# 0.  Re-applies apt-get service-start guards (policy-rc.d + systemctl no-op)
+# 0b. Restores /etc overlay from /var volume (if present)
+# 1.  Creates the admin user from environment variables
 # 2-4. chat/install.sh  — developer tools, session config, ttyd
 # 5.   files/install.sh — FileBrowser Quantum
-# 6. Starts the nginx reverse proxy (foreground)
+# 6.  Starts the nginx reverse proxy (foreground)
 
 # Color codes for output
 RED='\033[0;31m'
@@ -34,6 +35,28 @@ printf '#!/bin/sh\nexit 0\n' > /usr/bin/systemctl
 chmod +x /usr/bin/systemctl
 
 echo -e "${GREEN}[INFO]${NC} apt-get service-start guards applied."
+
+# ============================================================================
+# STEP 0b: Restore /etc overlay
+# ============================================================================
+# /etc is NOT a persistent volume — it is rebuilt from the image layer on
+# every container start. Any files written to /etc at runtime (package configs,
+# alternatives symlinks, profile.d entries, etc.) are lost on restart.
+#
+# The /etc overlay is a tarball stored on the persistent /var volume. It is
+# created after first-run package installation (in chat/install.sh) and
+# restored here on every subsequent start, making all runtime /etc writes
+# durable across restarts without requiring a dedicated /etc PVC.
+#
+# Auth files (/etc/passwd, /etc/shadow, /etc/group, /etc/gshadow,
+# /etc/sudoers.d) and Docker/Kubernetes-managed networking files
+# (/etc/resolv.conf, /etc/hosts, /etc/hostname) are excluded from the
+# snapshot and are always derived from live state, never from the overlay.
+
+if [ -f /var/lib/clouve/etc-overlay.tar.gz ]; then
+    tar xzf /var/lib/clouve/etc-overlay.tar.gz -C / 2>/dev/null || true
+    echo -e "${GREEN}[INFO]${NC} /etc overlay restored."
+fi
 
 # ============================================================================
 # STEP 1: Configure user account
