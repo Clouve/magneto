@@ -108,5 +108,31 @@ echo -e "${GREEN}[INFO]${NC} Web terminal available at http://localhost/chat"
 echo -e "${GREEN}[INFO]${NC} File browser available at http://localhost/browser"
 echo -e "${GREEN}[INFO]${NC} Username: $USERNAME"
 
+# On SIGTERM (sent by `docker-compose down` / `kubectl delete pod`), snapshot
+# /etc before nginx exits so any runtime edits — e.g. changes to
+# /etc/nginx/sites-available/default made with vi — survive the next restart.
+# The same exclusions as the first-run snapshot apply (auth files and
+# Docker/Kubernetes-managed networking files are never saved to the overlay).
+# Note: SIGKILL bypasses this handler; only graceful stops are captured.
+_term() {
+    echo -e "${YELLOW}[INFO]${NC} Caught SIGTERM — saving /etc overlay before shutdown..."
+    mkdir -p /var/lib/clouve
+    tar czf /var/lib/clouve/etc-overlay.tar.gz \
+        --exclude=etc/resolv.conf \
+        --exclude=etc/hosts \
+        --exclude=etc/hostname \
+        --exclude=etc/passwd \
+        --exclude=etc/shadow \
+        --exclude=etc/group \
+        --exclude=etc/gshadow \
+        --exclude=etc/sudoers.d \
+        -C / etc
+    echo -e "${GREEN}[INFO]${NC} /etc overlay saved."
+    kill -TERM "$NGINX_PID" 2>/dev/null
+}
+trap _term SIGTERM SIGINT
+
 echo -e "${YELLOW}[INFO]${NC} Starting nginx..."
-exec nginx -g "daemon off;"
+nginx -g "daemon off;" &
+NGINX_PID=$!
+wait $NGINX_PID
