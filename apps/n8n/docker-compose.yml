@@ -48,6 +48,7 @@ services:
 
       # n8n URL Configuration
       # This URL is used for webhook URLs and the editor UI
+      N8N_EDITOR_BASE_URL: http://${TEST_DOMAIN:-t1.test.clv}:${TEST_PORT:-8080}
       WEBHOOK_URL: http://${TEST_DOMAIN:-t1.test.clv}:${TEST_PORT:-8080}
       N8N_HOST: 0.0.0.0
       N8N_PORT: 5678
@@ -59,6 +60,13 @@ services:
       # Encryption key for stored credentials
       # IMPORTANT: Change this to a strong key in production!
       N8N_ENCRYPTION_KEY: n8n_local_dev_encryption_key_32ch
+
+      # Reverse proxy configuration (1 hop for ingress/LB)
+      N8N_PROXY_HOPS: 1
+
+      # Disable telemetry and hiring banner for marketplace deployment
+      N8N_DIAGNOSTICS_ENABLED: false
+      N8N_HIRING_BANNER_ENABLED: false
 
       # Timezone configuration
       GENERIC_TIMEZONE: UTC

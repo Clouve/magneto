@@ -7,16 +7,20 @@ services:
     environment:
       DB_TYPE: postgresdb
       DB_POSTGRESDB_HOST: n8n-postgres
-      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_PORT: '5432'
       DB_POSTGRESDB_DATABASE: n8n
       DB_POSTGRESDB_USER: n8n
       DB_POSTGRESDB_PASSWORD: n8n-postgres-password
+      N8N_EDITOR_BASE_URL: http://localhost
       WEBHOOK_URL: http://localhost
       N8N_HOST: 0.0.0.0
-      N8N_PORT: 5678
+      N8N_PORT: '5678'
       N8N_PROTOCOL: http
       N8N_RUNNERS_MODE: internal
       N8N_ENCRYPTION_KEY: n8n-encryption-key
+      N8N_PROXY_HOPS: '1'
+      N8N_DIAGNOSTICS_ENABLED: 'false'
+      N8N_HIRING_BANNER_ENABLED: 'false'
       GENERIC_TIMEZONE: UTC
       TZ: UTC
     x-clouve-environment-types:
@@ -26,12 +30,16 @@ services:
       DB_POSTGRESDB_DATABASE: static
       DB_POSTGRESDB_USER: static
       DB_POSTGRESDB_PASSWORD: secret
+      N8N_EDITOR_BASE_URL: applicationUrl
       WEBHOOK_URL: applicationUrl
       N8N_HOST: static
       N8N_PORT: static
       N8N_PROTOCOL: static
       N8N_RUNNERS_MODE: static
       N8N_ENCRYPTION_KEY: secret
+      N8N_PROXY_HOPS: static
+      N8N_DIAGNOSTICS_ENABLED: static
+      N8N_HIRING_BANNER_ENABLED: static
       GENERIC_TIMEZONE: static
       TZ: static
     volumes:
@@ -41,21 +49,21 @@ services:
       purpose: Frontend
       protocol: TCP
       isPublic: true
-      memoryBase: 1
+      memoryBase: 2
       cpuBase: 1
     x-clouve-bundle-metadata:
-      appVersion: '2.12.3'
+      appVersion: 2.12.3
       appTitle: n8n
       appDescription: n8n is a powerful workflow automation platform that connects your apps and services to automate repetitive tasks without writing code. With over 400 native integrations, n8n enables you to build complex workflows using a visual editor, trigger automations based on events, schedules, or webhooks, and transform data between systems. Its self-hosted architecture gives you full control over your data and infrastructure. Whether you need to sync data between CRMs, automate notifications, process forms, or orchestrate complex business processes, n8n provides a flexible and extensible platform that scales with your needs.
-      adminPath: /
+      appIcon: /thermo/assets/Company/clouveinc8/attachments/fe01a28dd743eb9d-logo.png
     x-clouve-healthcheck:
       enabled: true
       type: HTTP
       path: /healthz
       port: 5678
       initialDelay: 30
-      interval: 10
-      timeout: 5
+      interval: 30
+      timeout: 30
       failureThreshold: 5
       successThreshold: 1
     healthcheck:
@@ -65,13 +73,13 @@ services:
         - '--spider'
         - '-q'
         - http://localhost:5678/healthz
-      interval: 10s
-      timeout: 5s
+      interval: 30s
+      timeout: 30s
       retries: 5
       start_period: 30s
     x-clouve-volumes:
       - name: n8n-data
-        size: 10
+        size: 20
         description: Volume for n8n workflow data and credentials
   n8n-postgres:
     image: n8n-postgres:latest
@@ -96,8 +104,8 @@ services:
       purpose: Database
       protocol: TCP
       isPublic: false
-      memoryBase: 1
-      cpuBase: 0.5
+      memoryBase: 2
+      cpuBase: 2
     x-clouve-healthcheck:
       enabled: false
       type: HTTP
@@ -110,7 +118,7 @@ services:
       successThreshold: 1
     x-clouve-volumes:
       - name: n8n-postgres-data
-        size: 10
+        size: 20
         description: Volume for PostgreSQL database files
 volumes:
   n8n-data:
