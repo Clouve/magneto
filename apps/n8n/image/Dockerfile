@@ -14,7 +14,7 @@ RUN apk add --no-cache \
     su-exec
 
 # Stage 2: Final n8n image
-FROM docker.n8n.io/n8nio/n8n:2.12.3
+FROM docker.n8n.io/n8nio/n8n:2.14.0
 
 # Set labels for documentation
 LABEL maintainer="Clouve Team"
