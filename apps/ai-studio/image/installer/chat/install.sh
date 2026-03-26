@@ -55,6 +55,7 @@ chmod 755 "$USER_HOME"
     [ -n "$GEMINI_API_KEY" ]     && echo "export GEMINI_API_KEY=$GEMINI_API_KEY"
     [ -n "$OPENAI_API_KEY" ]     && echo "export OPENAI_API_KEY=$OPENAI_API_KEY"
     [ -n "$AI_STUDIO_CLIENT" ]   && echo "export AI_STUDIO_CLIENT=$AI_STUDIO_CLIENT"
+    [ -n "$AI_STUDIO_HOST" ]     && echo "export AI_STUDIO_HOST=$AI_STUDIO_HOST"
     echo "export ROOT_PASSWORD=$ROOT_PASSWORD"
 } > /etc/profile.d/clouve-env.sh
 chmod 644 /etc/profile.d/clouve-env.sh

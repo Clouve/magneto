@@ -322,7 +322,7 @@ _clv_install() {
 
 # Write the client's context/instructions file from its template.
 # Uses envsubst so the template can reference ${USERNAME}, ${ROOT_PASSWORD},
-# and ${HOSTNAME} — all of which are available in the login environment.
+# and ${AI_STUDIO_HOST} — all available in the login environment.
 _clv_write_context() {
     local idx="$1"
     local tpl="${CLV_CONTEXT_TPLS[$idx]}"
@@ -330,8 +330,8 @@ _clv_write_context() {
     local file="${CLV_CONTEXT_FILES[$idx]}"
     [ -z "$tpl" ] && return 0
     mkdir -p "$dir"
-    HOSTNAME=$(hostname) USERNAME="$(whoami)" \
-        envsubst '${USERNAME} ${ROOT_PASSWORD} ${HOSTNAME}' \
+    USERNAME="$(whoami)" \
+        envsubst '${USERNAME} ${ROOT_PASSWORD} ${AI_STUDIO_HOST}' \
         < "$tpl" > "$dir/$file"
     chmod 600 "$dir/$file"
 }

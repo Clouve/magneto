@@ -8,10 +8,12 @@ services:
       AI_STUDIO_USERNAME: '{user.firstName}_{user.lastName}'
       AI_STUDIO_PASSWORD: ai-studio-password
       AI_STUDIO_ROOT_PASSWORD: ai-studio-root-password
+      AI_STUDIO_HOST: applicationUrl
     x-clouve-environment-types:
       AI_STUDIO_USERNAME: applicationUsername
       AI_STUDIO_PASSWORD: applicationPassword
       AI_STUDIO_ROOT_PASSWORD: secret
+      AI_STUDIO_HOST: applicationUrl
     volumes:
       - ai-studio-home:/home
       - ai-studio-usr:/usr

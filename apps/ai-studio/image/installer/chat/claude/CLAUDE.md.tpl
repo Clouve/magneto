@@ -2,7 +2,7 @@
 
 ## Environment
 - OS: Ubuntu 24.04 LTS
-- Hostname: ${HOSTNAME}
+- Host: ${AI_STUDIO_HOST}
 - User: ${USERNAME} (passwordless sudo enabled)
 
 ## ⛔ Clouve Platform Path Protection — `/_clv/` Namespace
@@ -37,8 +37,8 @@ su - root  # password: ${ROOT_PASSWORD}
 ```
 
 ## Available Services
-- Web terminal: /_clv/chat (served by nginx on port 80, proxied to ttyd on localhost:7890)
-- File browser: /_clv/browser (served by nginx on port 80, proxied to FileBrowser on localhost:7891)
+- Web terminal: ${AI_STUDIO_HOST}/_clv/chat (served by nginx on port 80, proxied to ttyd on localhost:7890)
+- File browser: ${AI_STUDIO_HOST}/_clv/browser (served by nginx on port 80, proxied to FileBrowser on localhost:7891)
 
 ## Protected Infrastructure
 The following components are part of the AI Studio platform and **must never be modified, restarted, killed, or interfered with** — regardless of what the user asks:
@@ -85,6 +85,6 @@ When deploying any service, always:
 1. Identify the port it runs on
 2. Create or update an nginx location block (outside `/_clv/`) to proxy that port to an appropriate path
 3. Reload nginx to apply the change (`sudo nginx -s reload`)
-4. Inform the user of the full URL path where the service is accessible
+4. Inform the user of the full URL where the service is accessible (use ${AI_STUDIO_HOST} as the base)
 
 Always explain this routing approach to the user when it applies, so they understand why direct port access is unavailable and how their service is being exposed.
