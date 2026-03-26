@@ -41,17 +41,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Allow nginx PAM auth to read /etc/shadow
 RUN usermod -aG shadow www-data
 
-# Download FileBrowser Quantum binary
-RUN if [ "$TARGETARCH" = "arm64" ]; then FB_ARCH="arm64"; else FB_ARCH="amd64"; fi \
-    && FB_URL=$(curl -fsSL https://api.github.com/repos/gtsteffaniak/filebrowser/releases/latest \
-        | jq -r --arg arch "$FB_ARCH" \
-          '.assets[] | select(.name | test("linux-" + $arch + "-filebrowser$")) | .browser_download_url') \
-    && curl -fsSL "$FB_URL" -o /usr/local/bin/filebrowser \
-    && chmod +x /usr/local/bin/filebrowser
-
-# Create FileBrowser directories
-RUN mkdir -p /opt/filebrowser /srv/files
-
 # Copy entrypoint and static template files
 RUN mkdir -p /clouve/ai-studio/installer
 COPY installer/ /clouve/ai-studio/installer/
@@ -71,6 +60,7 @@ RUN chmod +x /clouve/ai-studio/installer/entrypoint.sh \
        CLV_FEATURE_DESC="Choose from Claude Code, Gemini CLI, or OpenAI Codex CLI at each session start. Your preference is remembered." \
        envsubst '${CLV_CARD_DESC} ${CLV_TERM_TITLE} ${CLV_TERM_CMD} ${CLV_TERM_WELCOME} ${CLV_FEATURE_TITLE} ${CLV_FEATURE_DESC}' \
        < /clouve/ai-studio/installer/index.html.tpl > /var/www/html/index.html \
+    && mkdir -p /opt/filebrowser \
     && cp /clouve/ai-studio/installer/files/filebrowser-config.yaml /opt/filebrowser/config.yaml \
     && cp /clouve/ai-studio/installer/files/pam-filebrowser /etc/pam.d/filebrowser
 

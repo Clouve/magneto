@@ -1,11 +1,36 @@
 #!/bin/bash
 
 # ============================================================================
-# STEP 5: Start FileBrowser Quantum
+# STEP 5: Install and start FileBrowser Quantum
 # ============================================================================
+# FileBrowser Quantum is not baked into the image to keep it lean. It is
+# downloaded on first container start and persists in the /usr volume,
+# so subsequent starts skip the download entirely.
 
 FB_DATABASE=/opt/filebrowser/database.db
 FB_CONFIG=/opt/filebrowser/config.yaml
+
+if ! command -v filebrowser &>/dev/null; then
+    echo -e "${YELLOW}[INFO]${NC} Installing FileBrowser Quantum..."
+
+    # Detect architecture
+    ARCH=$(uname -m)
+    if [ "$ARCH" = "aarch64" ]; then FB_ARCH="arm64"; else FB_ARCH="amd64"; fi
+
+    FB_URL=$(curl -fsSL https://api.github.com/repos/gtsteffaniak/filebrowser/releases/latest \
+        | jq -r --arg arch "$FB_ARCH" \
+          '.assets[] | select(.name | test("linux-" + $arch + "-filebrowser$")) | .browser_download_url')
+
+    curl -fsSL "$FB_URL" -o /usr/local/bin/filebrowser \
+        && chmod +x /usr/local/bin/filebrowser
+
+    echo -e "${GREEN}[SUCCESS]${NC} FileBrowser Quantum installed."
+else
+    echo -e "${GREEN}[INFO]${NC} FileBrowser Quantum already present."
+fi
+
+# Ensure directories exist (they may not on first run since we removed them from the Dockerfile)
+mkdir -p /opt/filebrowser /srv/files
 
 # Expand ${HOME} in the config to the actual user home directory at runtime
 HOME="$USER_HOME" envsubst '${HOME}' < "$FB_CONFIG" > "${FB_CONFIG}.tmp" && mv "${FB_CONFIG}.tmp" "$FB_CONFIG"
