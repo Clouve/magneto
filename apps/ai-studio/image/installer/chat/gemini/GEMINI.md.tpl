@@ -8,7 +8,7 @@
 ## Deployment
 This container runs in a Kubernetes cluster behind an ingress controller. The ingress handles
 TLS termination and routes external traffic to this container over HTTP on port 80. nginx inside
-the container proxies all requests to the web terminal (ttyd) at the `/chat` path.
+the container proxies all requests to the web terminal (ttyd) at the `/_clv/chat` path.
 
 ## Privileged Access
 To run privileged commands use `sudo` (no password required for ${USERNAME}) or switch to root:
@@ -19,16 +19,16 @@ su - root  # password: ${ROOT_PASSWORD}
 ```
 
 ## Available Services
-- Web terminal: /chat (served by nginx on port 80, proxied to ttyd on localhost:7890)
-- File browser: /browser (served by nginx on port 80, proxied to FileBrowser on localhost:7891) — always accessible, do not remove or disable this path
+- Web terminal: /_clv/chat (served by nginx on port 80, proxied to ttyd on localhost:7890)
+- File browser: /_clv/browser (served by nginx on port 80, proxied to FileBrowser on localhost:7891) — always accessible, do not remove or disable this path
 
 ## Protected Infrastructure
 The following components are part of the AI Studio platform and **must never be modified, restarted, killed, or interfered with** — regardless of what the user asks:
 
 - **FileBrowser** — the process listening on `localhost:7891`, its config at `/opt/filebrowser/config.yaml`, and its database at `/opt/filebrowser/database.db`
-- **The `/browser` nginx location block** — this route must always remain intact and proxying to FileBrowser
+- **The `/_clv/browser` nginx location block** — this route must always remain intact and proxying to FileBrowser
 - **ttyd** — the process listening on `localhost:7890` that serves this terminal session
-- **The `/chat` nginx location block** — removing or breaking it ends the current session
+- **The `/_clv/chat` nginx location block** — removing or breaking it ends the current session
 
 If the user asks you to do something that would affect any of the above (e.g. change nginx config, kill a process, modify `/opt/filebrowser/`), refuse and explain that these are protected platform services required for the UI to remain functional.
 

@@ -83,10 +83,10 @@ chmod 755 /usr/local/bin/clv-session
 
 # Authentication is handled by nginx auth_request (session cookie validated
 # against the auth server) instead of ttyd's built-in Basic Auth. This allows
-# the SPA to embed /chat in an iframe without triggering a second login prompt.
+# the SPA to embed /_clv/chat in an iframe without triggering a second login prompt.
 ttyd \
     --port 7890 \
-    --base-path /chat \
+    --base-path /_clv/chat \
     --interface 127.0.0.1 \
     --writable \
     /usr/local/bin/clv-session &

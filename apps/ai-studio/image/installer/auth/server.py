@@ -11,9 +11,12 @@ Single entry point for authentication and page delivery:
   POST /api/login      — JSON credential validation, sets session cookie.
   POST /api/logout     — Clears session cookie.
   GET  /api/verify     — Returns 200 + X-Auth-User if session valid, else 401.
-                          Used by nginx auth_request to gate /chat and /browser.
+                          Used by nginx auth_request to gate /_clv/chat and /_clv/browser.
   GET  /auth-required  — Returns 401 with a page that redirects to login or
                           notifies the parent frame via postMessage (for iframes).
+
+Note: nginx rewrites strip the /_clv prefix before forwarding to this server,
+so all paths here remain unprefixed.
 
 Validates OS credentials against /etc/shadow using crypt (Python 3.12 stdlib).
 No external dependencies.
@@ -158,7 +161,7 @@ class AuthHandler(BaseHTTPRequestHandler):
                 if validate_credentials(qs_user, qs_pass):
                     token = create_session(qs_user)
                     self.send_response(302)
-                    self.send_header("Location", "/")
+                    self.send_header("Location", "/_clv/")
                     self.send_header(
                         "Set-Cookie",
                         f"clv_session={token}; Path=/; HttpOnly; SameSite=Strict",
@@ -169,7 +172,7 @@ class AuthHandler(BaseHTTPRequestHandler):
                     # Invalid query-string credentials — serve page with error
                     # hint via a query param the JS can read (no sensitive data)
                     self.send_response(302)
-                    self.send_header("Location", "/?error=invalid_credentials")
+                    self.send_header("Location", "/_clv/?error=invalid_credentials")
                     self.end_headers()
                     return
 
@@ -288,7 +291,7 @@ def main():
             auth_required_template = f.read()
     else:
         print(f"[WARNING] Auth-required page not found: {AUTH_REQUIRED_PATH}")
-        auth_required_template = "<html><body><p>Authentication required. <a href='/'>Sign in</a></p></body></html>"
+        auth_required_template = "<html><body><p>Authentication required. <a href='/_clv/'>Sign in</a></p></body></html>"
 
     server = ThreadedHTTPServer((LISTEN_ADDR, LISTEN_PORT), AuthHandler)
 

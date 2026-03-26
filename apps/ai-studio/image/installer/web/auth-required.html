@@ -8,11 +8,11 @@
     if (window.self !== window.top) {
       window.parent.postMessage({ type: "auth-expired" }, "*");
     } else {
-      window.location.href = "/";
+      window.location.href = "/_clv/";
     }
   </script>
   <p style="font-family:sans-serif;text-align:center;margin-top:40vh">
-    Authentication required. <a href="/">Sign in</a>
+    Authentication required. <a href="/_clv/">Sign in</a>
   </p>
 </body>
 </html>

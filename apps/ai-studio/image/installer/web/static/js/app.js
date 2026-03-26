@@ -4,7 +4,7 @@
 
    Reads server-injected session state from window.__SESSION__ and renders
    either the login form or the authenticated app shell with embedded
-   /chat (ttyd) and /browser (FileBrowser) iframes in a resizable split view.
+   /_clv/chat (ttyd) and /_clv/browser (FileBrowser) iframes in a resizable split view.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -66,7 +66,7 @@
     loginBtn.textContent = "Signing in\u2026";
     hideError();
 
-    fetch("/api/login", {
+    fetch("/_clv/api/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: username, password: password }),
@@ -94,7 +94,7 @@
   }
 
   function doLogout() {
-    fetch("/api/logout", { method: "POST", credentials: "same-origin" })
+    fetch("/_clv/api/logout", { method: "POST", credentials: "same-origin" })
       .finally(function () {
         destroyFrames();
         usernameIn.value = "";
@@ -125,7 +125,7 @@
       browserFrame = document.createElement("iframe");
       browserFrame.className = "service-frame";
       browserFrame.id = "frame-browser";
-      browserFrame.src = "/browser";
+      browserFrame.src = "/_clv/browser";
       browserFrame.addEventListener("load", function () {
         loadingBrowser.classList.add("fade-out");
       });
@@ -136,7 +136,7 @@
       chatFrame = document.createElement("iframe");
       chatFrame.className = "service-frame";
       chatFrame.id = "frame-chat";
-      chatFrame.src = "/chat";
+      chatFrame.src = "/_clv/chat";
       chatFrame.addEventListener("load", function () {
         loadingChat.classList.add("fade-out");
       });
@@ -324,7 +324,7 @@
   // Session state is injected server-side into window.__SESSION__ by the
   // Python auth server. If the user already has a valid session cookie, the
   // server sets it to {"username":"..."} so we skip straight to the app
-  // view — no client-side /api/verify fetch needed.
+  // view — no client-side /_clv/api/verify fetch needed.
   //
   // Query-string credentials (?username=X&password=Y or ?u=X&p=Y) are
   // handled entirely server-side: the server validates, sets the cookie,
@@ -341,7 +341,7 @@
     // If redirected after failed query-string authentication, show error
     var params = new URLSearchParams(window.location.search);
     if (params.get("error") === "invalid_credentials") {
-      window.history.replaceState({}, "", "/");
+      window.history.replaceState({}, "", "/_clv/");
       showError("Automatic sign-in failed. Please enter your credentials.");
     }
   }

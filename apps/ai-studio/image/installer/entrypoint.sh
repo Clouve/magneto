@@ -105,7 +105,7 @@ USER_HOME=$(getent passwd "$USERNAME" | cut -d: -f6)
 # ============================================================================
 # Lightweight Python HTTP server that validates OS credentials against
 # /etc/shadow and manages session cookies. nginx uses auth_request to gate
-# /chat and /browser behind this server, replacing per-service Basic Auth
+# /_clv/chat and /_clv/browser behind this server, replacing per-service Basic Auth
 # and PAM prompts with a unified SPA login form.
 
 echo -e "${YELLOW}[INFO]${NC} Starting auth server..."
@@ -124,8 +124,8 @@ fi
 # ============================================================================
 
 echo -e "${GREEN}[SUCCESS]${NC} AI Studio is ready!"
-echo -e "${GREEN}[INFO]${NC} Web terminal available at http://localhost/chat"
-echo -e "${GREEN}[INFO]${NC} File browser available at http://localhost/browser"
+echo -e "${GREEN}[INFO]${NC} Web terminal available at http://localhost/_clv/chat"
+echo -e "${GREEN}[INFO]${NC} File browser available at http://localhost/_clv/browser"
 echo -e "${GREEN}[INFO]${NC} Username: $USERNAME"
 
 # On SIGTERM (sent by `docker-compose down` / `kubectl delete pod`), snapshot
