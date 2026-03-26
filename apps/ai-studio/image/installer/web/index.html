@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Studio — Clouve</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/css/app.css" />
+</head>
+<body>
+
+  <!-- ═══════════════════════════════════════════════════════
+       Login View
+       ═══════════════════════════════════════════════════════ -->
+  <section id="login-view">
+    <div class="login-card">
+      <div class="login-logo">
+        <img alt="Clouve" src="https://cdn.dev.clouve.com/assets/LogoClouve2026.svg" />
+        <span class="badge">AI Studio</span>
+      </div>
+
+      <h1 class="login-heading">Sign in to your workspace</h1>
+      <p class="login-sub">Enter your credentials to access the terminal and file browser.</p>
+
+      <form id="login-form" autocomplete="on">
+        <div class="form-group">
+          <label for="username">Username</label>
+          <input type="text" id="username" name="username" autocomplete="username" required autofocus />
+        </div>
+        <div class="form-group">
+          <label for="password">Password</label>
+          <input type="password" id="password" name="password" autocomplete="current-password" required />
+        </div>
+        <button type="submit" class="login-btn" id="login-btn">Sign In</button>
+      </form>
+
+      <div class="login-error" id="login-error" role="alert"></div>
+
+      <footer class="login-footer">
+        &copy; <span id="yr"></span> <a href="https://www.clouve.com" target="_blank" rel="noopener">Clouve</a>
+      </footer>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════════
+       App View (after authentication)
+       ═══════════════════════════════════════════════════════ -->
+  <section id="app-view">
+
+    <header class="app-header">
+      <div class="header-left">
+        <a href="https://www.clouve.com" target="_blank" rel="noopener">
+          <img alt="Clouve" src="https://cdn.dev.clouve.com/assets/LogoClouve2026.svg" />
+        </a>
+        <span class="header-badge">AI Studio</span>
+      </div>
+      <div class="header-right">
+        <div class="user-info">
+          <div class="user-avatar" id="user-avatar" aria-hidden="true"></div>
+          <span class="user-name" id="user-display"></span>
+        </div>
+        <div class="header-divider" aria-hidden="true"></div>
+        <button class="logout-btn" id="logout-btn">Sign out</button>
+      </div>
+    </header>
+
+    <nav class="tab-bar" aria-label="Service navigation">
+      <button class="tab-btn active" data-tab="chat" id="tab-chat" aria-selected="true">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+        <span class="tab-label">Terminal</span>
+        <span class="tab-dot" aria-label="Active"></span>
+      </button>
+      <button class="tab-btn" data-tab="browser" id="tab-browser" aria-selected="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+        <span class="tab-label">Files</span>
+      </button>
+    </nav>
+
+    <main class="content-area">
+      <div class="frame-loading" id="loading-chat">
+        <div class="spinner"></div>
+      </div>
+      <div class="frame-loading hidden" id="loading-browser">
+        <div class="spinner"></div>
+      </div>
+      <!-- Iframes are injected by app.js after authentication -->
+    </main>
+
+  </section>
+
+  <!-- Session state injected server-side by auth/server.py.
+       If the user has a valid session cookie, the server replaces the
+       marker with {"username":"..."} so the page renders in the correct
+       state without any client-side round-trip. -->
+  <script>window.__SESSION__ = /*__SESSION_DATA__*/null;</script>
+  <script src="/static/js/app.js" defer></script>
+</body>
+</html>

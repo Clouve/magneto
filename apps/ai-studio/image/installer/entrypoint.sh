@@ -7,6 +7,7 @@
 # 1.  Creates the admin user from environment variables
 # 2-4. chat/install.sh  — developer tools, session config, ttyd
 # 5.   files/install.sh — FileBrowser Quantum
+# 5b.  auth/server.py   — session-based authentication server
 # 6.  Starts the nginx reverse proxy (foreground)
 
 # Color codes for output
@@ -98,6 +99,25 @@ USER_HOME=$(getent passwd "$USERNAME" | cut -d: -f6)
 # ============================================================================
 
 . /clouve/ai-studio/installer/files/install.sh
+
+# ============================================================================
+# STEP 5b: Start authentication server
+# ============================================================================
+# Lightweight Python HTTP server that validates OS credentials against
+# /etc/shadow and manages session cookies. nginx uses auth_request to gate
+# /chat and /browser behind this server, replacing per-service Basic Auth
+# and PAM prompts with a unified SPA login form.
+
+echo -e "${YELLOW}[INFO]${NC} Starting auth server..."
+python3 /clouve/ai-studio/installer/auth/server.py &
+AUTH_PID=$!
+sleep 0.5
+
+if kill -0 $AUTH_PID 2>/dev/null; then
+    echo -e "${GREEN}[SUCCESS]${NC} Auth server started (PID $AUTH_PID)."
+else
+    echo -e "${RED}[WARNING]${NC} Auth server may not have started correctly."
+fi
 
 # ============================================================================
 # STEP 6: Start nginx reverse proxy

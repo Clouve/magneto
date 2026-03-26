@@ -68,49 +68,6 @@ chown "$USERNAME:$USERNAME" "$USER_HOME/.bash_profile"
 chmod 644 "$USER_HOME/.bash_profile"
 echo -e "${GREEN}[SUCCESS]${NC} AI client selector installed as login profile."
 
-# ── Generate landing page from template ──────────────────────────────────────
-# Stamp client-specific content into index.html based on AI_STUDIO_CLIENT.
-# When unset the page reflects the interactive multi-client experience.
-case "${AI_STUDIO_CLIENT:-}" in
-    claude-code)
-        CLV_CARD_DESC="Browser-based terminal — Claude Code launches automatically at session start."
-        CLV_TERM_TITLE="claude — bash"
-        CLV_TERM_CMD="claude"
-        CLV_TERM_WELCOME="✻ Welcome to Claude Code! How can I help?"
-        CLV_FEATURE_TITLE="Claude Code pre-installed"
-        CLV_FEATURE_DESC="The latest Claude Code CLI is ready to use. Bring your Anthropic API key and start building immediately."
-        ;;
-    gemini-cli)
-        CLV_CARD_DESC="Browser-based terminal — Gemini CLI launches automatically at session start."
-        CLV_TERM_TITLE="gemini — bash"
-        CLV_TERM_CMD="gemini"
-        CLV_TERM_WELCOME="Hi, I'm Gemini. How can I help you today?"
-        CLV_FEATURE_TITLE="Gemini CLI pre-installed"
-        CLV_FEATURE_DESC="Google's Gemini CLI is ready to use. Bring your Gemini API key and start building immediately."
-        ;;
-    codex-cli)
-        CLV_CARD_DESC="Browser-based terminal — OpenAI Codex CLI launches automatically at session start."
-        CLV_TERM_TITLE="codex — bash"
-        CLV_TERM_CMD="codex"
-        CLV_TERM_WELCOME="Welcome to Codex! What should we build?"
-        CLV_FEATURE_TITLE="OpenAI Codex CLI pre-installed"
-        CLV_FEATURE_DESC="OpenAI's Codex CLI is ready to use. Bring your OpenAI API key and start building immediately."
-        ;;
-    *)
-        CLV_CARD_DESC="Browser-based terminal — choose Claude Code, Gemini CLI, or OpenAI Codex CLI at session start."
-        CLV_TERM_TITLE="ai-studio — bash"
-        CLV_TERM_CMD="claude"
-        CLV_TERM_WELCOME="✻ Welcome to Claude Code! How can I help?"
-        CLV_FEATURE_TITLE="Multiple AI clients"
-        CLV_FEATURE_DESC="Choose from Claude Code, Gemini CLI, or OpenAI Codex CLI at each session start. Your preference is remembered."
-        ;;
-esac
-export CLV_CARD_DESC CLV_TERM_TITLE CLV_TERM_CMD CLV_TERM_WELCOME CLV_FEATURE_TITLE CLV_FEATURE_DESC
-envsubst '${CLV_CARD_DESC} ${CLV_TERM_TITLE} ${CLV_TERM_CMD} ${CLV_TERM_WELCOME} ${CLV_FEATURE_TITLE} ${CLV_FEATURE_DESC}' \
-    < /clouve/ai-studio/installer/index.html.tpl \
-    > /var/www/html/index.html
-echo -e "${GREEN}[SUCCESS]${NC} Landing page generated for client: ${AI_STUDIO_CLIENT:-interactive}."
-
 # ============================================================================
 # STEP 4: Start ttyd web terminal on localhost
 # ============================================================================
@@ -124,11 +81,13 @@ echo -e "${YELLOW}[INFO]${NC} Starting web terminal (ttyd)..."
 printf '#!/bin/bash\nexec su - %s\n' "$USERNAME" > /usr/local/bin/clv-session
 chmod 755 /usr/local/bin/clv-session
 
+# Authentication is handled by nginx auth_request (session cookie validated
+# against the auth server) instead of ttyd's built-in Basic Auth. This allows
+# the SPA to embed /chat in an iframe without triggering a second login prompt.
 ttyd \
     --port 7890 \
     --base-path /chat \
     --interface 127.0.0.1 \
-    --credential "$USERNAME:$PASSWORD" \
     --writable \
     /usr/local/bin/clv-session &
 TTYD_PID=$!

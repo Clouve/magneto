@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Authentication Required</title>
+</head>
+<body>
+  <script>
+    if (window.self !== window.top) {
+      window.parent.postMessage({ type: "auth-expired" }, "*");
+    } else {
+      window.location.href = "/";
+    }
+  </script>
+  <p style="font-family:sans-serif;text-align:center;margin-top:40vh">
+    Authentication required. <a href="/">Sign in</a>
+  </p>
+</body>
+</html>

@@ -29,6 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     jq \
     busybox-static \
+    python3 \
     libnginx-mod-http-auth-pam \
     libpam-runtime \
     && rm -rf /var/lib/apt/lists/* \
@@ -51,15 +52,8 @@ RUN chmod +x /clouve/ai-studio/installer/entrypoint.sh \
              /clouve/ai-studio/installer/chat/gemini/install.sh \
              /clouve/ai-studio/installer/chat/openai/install.sh \
              /clouve/ai-studio/installer/files/install.sh \
+             /clouve/ai-studio/installer/auth/server.py \
     && cp /clouve/ai-studio/installer/nginx-default.conf /etc/nginx/sites-available/default \
-    && CLV_CARD_DESC="Browser-based terminal — choose Claude Code, Gemini CLI, or OpenAI Codex CLI at session start." \
-       CLV_TERM_TITLE="ai-studio — bash" \
-       CLV_TERM_CMD="claude" \
-       CLV_TERM_WELCOME="✻ Welcome to Claude Code! How can I help?" \
-       CLV_FEATURE_TITLE="Multiple AI clients" \
-       CLV_FEATURE_DESC="Choose from Claude Code, Gemini CLI, or OpenAI Codex CLI at each session start. Your preference is remembered." \
-       envsubst '${CLV_CARD_DESC} ${CLV_TERM_TITLE} ${CLV_TERM_CMD} ${CLV_TERM_WELCOME} ${CLV_FEATURE_TITLE} ${CLV_FEATURE_DESC}' \
-       < /clouve/ai-studio/installer/index.html.tpl > /var/www/html/index.html \
     && mkdir -p /opt/filebrowser \
     && cp /clouve/ai-studio/installer/files/filebrowser-config.yaml /opt/filebrowser/config.yaml \
     && cp /clouve/ai-studio/installer/files/pam-filebrowser /etc/pam.d/filebrowser
