@@ -4,7 +4,7 @@
 
    Reads server-injected session state from window.__SESSION__ and renders
    either the login form or the authenticated app shell with embedded
-   /chat (ttyd) and /browser (FileBrowser) iframes.
+   /chat (ttyd) and /browser (FileBrowser) iframes in a resizable split view.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -22,15 +22,18 @@
   var userAvatar     = document.getElementById("user-avatar");
   var userDisplay    = document.getElementById("user-display");
   var logoutBtn      = document.getElementById("logout-btn");
-  var tabChat        = document.getElementById("tab-chat");
-  var tabBrowser     = document.getElementById("tab-browser");
-  var contentArea    = document.querySelector(".content-area");
+  var panelBrowser   = document.getElementById("panel-browser");
+  var panelChat      = document.getElementById("panel-chat");
+  var divider        = document.getElementById("split-divider");
+  var splitContainer = document.querySelector(".split-container");
+  var layoutBtns     = document.querySelectorAll(".layout-btn");
   var loadingChat    = document.getElementById("loading-chat");
   var loadingBrowser = document.getElementById("loading-browser");
 
   var chatFrame      = null;
   var browserFrame   = null;
-  var activeTab      = "chat";
+  var currentLayout  = "split";
+  var savedSplitFlex = "";  // remembers divider position when leaving split mode
 
   /* ── Utilities ────────────────────────────────────────────────────────── */
 
@@ -54,7 +57,6 @@
     document.body.style.overflow = "hidden";
 
     loadFrames();
-    switchTab(activeTab);
   }
 
   /* ── Authentication API ───────────────────────────────────────────────── */
@@ -116,6 +118,20 @@
   /* ── Iframe lifecycle ─────────────────────────────────────────────────── */
 
   function loadFrames() {
+    var browserContent = panelBrowser.querySelector(".panel-content");
+    var chatContent    = panelChat.querySelector(".panel-content");
+
+    if (!browserFrame) {
+      browserFrame = document.createElement("iframe");
+      browserFrame.className = "service-frame";
+      browserFrame.id = "frame-browser";
+      browserFrame.src = "/browser";
+      browserFrame.addEventListener("load", function () {
+        loadingBrowser.classList.add("fade-out");
+      });
+      browserContent.appendChild(browserFrame);
+    }
+
     if (!chatFrame) {
       chatFrame = document.createElement("iframe");
       chatFrame.className = "service-frame";
@@ -124,17 +140,7 @@
       chatFrame.addEventListener("load", function () {
         loadingChat.classList.add("fade-out");
       });
-      contentArea.appendChild(chatFrame);
-    }
-
-    if (!browserFrame) {
-      browserFrame = document.createElement("iframe");
-      browserFrame.className = "service-frame hidden";
-      browserFrame.id = "frame-browser";
-      browserFrame.addEventListener("load", function () {
-        loadingBrowser.classList.add("fade-out");
-      });
-      contentArea.appendChild(browserFrame);
+      chatContent.appendChild(chatFrame);
     }
   }
 
@@ -143,31 +149,128 @@
     if (browserFrame) { browserFrame.remove(); browserFrame = null; }
     loadingChat.classList.remove("fade-out");
     loadingBrowser.classList.remove("fade-out");
-    loadingChat.classList.remove("hidden");
-    loadingBrowser.classList.add("hidden");
   }
 
-  /* ── Tab navigation ───────────────────────────────────────────────────── */
+  /* ── Resizable split divider ──────────────────────────────────────────── */
 
-  function switchTab(tab) {
-    activeTab = tab;
+  var MIN_PANEL_PX = 180;
+  var dragging = false;
 
-    tabChat.classList.toggle("active", tab === "chat");
-    tabBrowser.classList.toggle("active", tab === "browser");
+  function isVertical() {
+    return window.matchMedia("(max-width: 768px)").matches;
+  }
 
-    if (chatFrame)    chatFrame.classList.toggle("hidden", tab !== "chat");
-    if (browserFrame) browserFrame.classList.toggle("hidden", tab !== "browser");
+  function onDragStart(e) {
+    e.preventDefault();
+    dragging = true;
+    divider.classList.add("active");
 
-    loadingChat.classList.toggle("hidden",
-      tab !== "chat" || loadingChat.classList.contains("fade-out"));
-    loadingBrowser.classList.toggle("hidden",
-      tab !== "browser" || loadingBrowser.classList.contains("fade-out"));
+    // Prevent iframes from capturing pointer events during drag
+    if (chatFrame)    chatFrame.style.pointerEvents = "none";
+    if (browserFrame) browserFrame.style.pointerEvents = "none";
 
-    // Lazy-load Files iframe on first activation
-    if (tab === "browser" && browserFrame && !browserFrame.src) {
-      loadingBrowser.classList.remove("hidden");
-      browserFrame.src = "/browser";
+    document.addEventListener("mousemove", onDragMove);
+    document.addEventListener("mouseup", onDragEnd);
+    document.addEventListener("touchmove", onDragMove, { passive: false });
+    document.addEventListener("touchend", onDragEnd);
+  }
+
+  function onDragMove(e) {
+    if (!dragging) return;
+    if (e.cancelable) e.preventDefault();
+
+    var container = panelBrowser.parentElement;
+    var rect = container.getBoundingClientRect();
+    var clientPos, totalSize;
+
+    if (isVertical()) {
+      clientPos = (e.touches ? e.touches[0].clientY : e.clientY) - rect.top;
+      totalSize = rect.height;
+    } else {
+      clientPos = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
+      totalSize = rect.width;
     }
+
+    var dividerSize = 5;
+    var available = totalSize - dividerSize;
+    var browserSize = Math.max(MIN_PANEL_PX, Math.min(clientPos, available - MIN_PANEL_PX));
+    var pct = (browserSize / totalSize) * 100;
+
+    panelBrowser.style.flex = "0 0 " + pct + "%";
+  }
+
+  function onDragEnd() {
+    dragging = false;
+    divider.classList.remove("active");
+
+    if (chatFrame)    chatFrame.style.pointerEvents = "";
+    if (browserFrame) browserFrame.style.pointerEvents = "";
+
+    document.removeEventListener("mousemove", onDragMove);
+    document.removeEventListener("mouseup", onDragEnd);
+    document.removeEventListener("touchmove", onDragMove);
+    document.removeEventListener("touchend", onDragEnd);
+  }
+
+  // Keyboard support: arrow keys to resize
+  divider.addEventListener("keydown", function (e) {
+    var step = e.shiftKey ? 5 : 1;
+    var container = panelBrowser.parentElement;
+    var rect = container.getBoundingClientRect();
+    var vertical = isVertical();
+    var totalSize = vertical ? rect.height : rect.width;
+    var currentPct = (panelBrowser.getBoundingClientRect()[vertical ? "height" : "width"] / totalSize) * 100;
+
+    if ((vertical && e.key === "ArrowDown") || (!vertical && e.key === "ArrowRight")) {
+      e.preventDefault();
+      var newPct = Math.min(currentPct + step, ((totalSize - 5 - MIN_PANEL_PX) / totalSize) * 100);
+      panelBrowser.style.flex = "0 0 " + newPct + "%";
+    } else if ((vertical && e.key === "ArrowUp") || (!vertical && e.key === "ArrowLeft")) {
+      e.preventDefault();
+      var minPct = (MIN_PANEL_PX / totalSize) * 100;
+      var newPct2 = Math.max(currentPct - step, minPct);
+      panelBrowser.style.flex = "0 0 " + newPct2 + "%";
+    }
+  });
+
+  divider.addEventListener("mousedown", onDragStart);
+  divider.addEventListener("touchstart", onDragStart, { passive: false });
+
+  /* ── Layout mode switcher ─────────────────────────────────────────────── */
+
+  function switchLayout(mode) {
+    if (mode === currentLayout) return;
+
+    // Save divider position when leaving split mode
+    if (currentLayout === "split") {
+      savedSplitFlex = panelBrowser.style.flex || "";
+    }
+
+    currentLayout = mode;
+
+    // Clear inline flex so CSS layout-mode rules take full effect
+    panelBrowser.style.flex = "";
+
+    splitContainer.setAttribute("data-layout", mode);
+
+    // Update button states
+    for (var i = 0; i < layoutBtns.length; i++) {
+      var btn = layoutBtns[i];
+      var isActive = btn.getAttribute("data-mode") === mode;
+      btn.classList.toggle("active", isActive);
+      btn.setAttribute("aria-checked", isActive ? "true" : "false");
+    }
+
+    // Restore divider position when returning to split mode
+    if (mode === "split") {
+      panelBrowser.style.flex = savedSplitFlex;
+    }
+  }
+
+  for (var i = 0; i < layoutBtns.length; i++) {
+    layoutBtns[i].addEventListener("click", function () {
+      switchLayout(this.getAttribute("data-mode"));
+    });
   }
 
   /* ── Event binding ────────────────────────────────────────────────────── */
@@ -180,9 +283,6 @@
   });
 
   logoutBtn.addEventListener("click", doLogout);
-
-  tabChat.addEventListener("click",    function () { switchTab("chat"); });
-  tabBrowser.addEventListener("click", function () { switchTab("browser"); });
 
   // Handle session-expired notifications from embedded iframes.
   // When nginx auth_request returns 401, the @auth_required fallback page
@@ -202,9 +302,10 @@
   // server sets it to {"username":"..."} so we skip straight to the app
   // view — no client-side /api/verify fetch needed.
   //
-  // Query-string credentials (?username=X&password=Y) are handled entirely
-  // server-side: the server validates, sets the cookie, and 302-redirects
-  // to "/" (clean URL) so credentials never appear in browser history.
+  // Query-string credentials (?username=X&password=Y or ?u=X&p=Y) are
+  // handled entirely server-side: the server validates, sets the cookie,
+  // and 302-redirects to "/" (clean URL) so credentials never appear in
+  // browser history.
 
   var session = window.__SESSION__;
 
