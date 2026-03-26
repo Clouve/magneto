@@ -155,6 +155,8 @@
 
   var MIN_PANEL_PX = 180;
   var dragging = false;
+  var rafId = 0;
+  var pendingPct = 0;
 
   function isVertical() {
     return window.matchMedia("(max-width: 768px)").matches;
@@ -164,6 +166,10 @@
     e.preventDefault();
     dragging = true;
     divider.classList.add("active");
+    splitContainer.classList.add("is-dragging");
+
+    // Hint the browser to optimise repaints on the resizing panel
+    panelBrowser.style.willChange = "flex-basis";
 
     // Prevent iframes from capturing pointer events during drag
     if (chatFrame)    chatFrame.style.pointerEvents = "none";
@@ -173,6 +179,11 @@
     document.addEventListener("mouseup", onDragEnd);
     document.addEventListener("touchmove", onDragMove, { passive: false });
     document.addEventListener("touchend", onDragEnd);
+  }
+
+  function applyDragPosition() {
+    rafId = 0;
+    panelBrowser.style.flex = "0 0 " + pendingPct + "%";
   }
 
   function onDragMove(e) {
@@ -194,14 +205,27 @@
     var dividerSize = 5;
     var available = totalSize - dividerSize;
     var browserSize = Math.max(MIN_PANEL_PX, Math.min(clientPos, available - MIN_PANEL_PX));
-    var pct = (browserSize / totalSize) * 100;
+    pendingPct = (browserSize / totalSize) * 100;
 
-    panelBrowser.style.flex = "0 0 " + pct + "%";
+    // Coalesce rapid events — only apply once per animation frame
+    if (!rafId) {
+      rafId = requestAnimationFrame(applyDragPosition);
+    }
   }
 
   function onDragEnd() {
     dragging = false;
     divider.classList.remove("active");
+
+    // Flush any pending frame so the final position is applied
+    if (rafId) {
+      cancelAnimationFrame(rafId);
+      rafId = 0;
+      applyDragPosition();
+    }
+
+    panelBrowser.style.willChange = "";
+    splitContainer.classList.remove("is-dragging");
 
     if (chatFrame)    chatFrame.style.pointerEvents = "";
     if (browserFrame) browserFrame.style.pointerEvents = "";

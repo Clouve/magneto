@@ -367,7 +367,12 @@ html, body {
   flex-direction: column;
   min-width: 0;
   overflow: hidden;
-  transition: flex 0.2s ease, min-width 0.2s ease, opacity 0.2s ease;
+  transition: flex 0.25s ease, min-width 0.25s ease, opacity 0.25s ease;
+}
+
+/* Disable transitions while the user is actively dragging the divider */
+.split-container.is-dragging .panel {
+  transition: none;
 }
 
 .panel-browser { flex: 0 0 30%; min-width: 180px; }
