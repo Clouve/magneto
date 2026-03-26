@@ -4,9 +4,10 @@ AI Studio Authentication Server
 
 Single entry point for authentication and page delivery:
   GET  /               — Serves the SPA with server-side session injection.
-                          If ?username=X&password=Y query params are present,
-                          validates credentials and 302-redirects with a
-                          session cookie (credentials never reach the browser).
+                          If ?username=X&password=Y (or ?u=X&p=Y) query params
+                          are present, validates credentials and 302-redirects
+                          with a session cookie (credentials never reach the
+                          browser). Long form takes precedence over shorthand.
   POST /api/login      — JSON credential validation, sets session cookie.
   POST /api/logout     — Clears session cookie.
   GET  /api/verify     — Returns 200 + X-Auth-User if session valid, else 401.
@@ -137,8 +138,10 @@ class AuthHandler(BaseHTTPRequestHandler):
 
         If ?username=X&password=Y query params are present, validate
         credentials and 302-redirect to "/" with a session cookie set.
-        This keeps credentials out of browser history entirely — the
-        redirect happens before the page renders.
+        Shorthand aliases ?u=X&p=Y are also accepted; the long form
+        takes precedence if both are provided. This keeps credentials
+        out of browser history entirely — the redirect happens before
+        the page renders.
 
         Security note: passing credentials via query string is intended
         for controlled, internal, or automated use cases only. Credentials
@@ -147,8 +150,9 @@ class AuthHandler(BaseHTTPRequestHandler):
         # Check for query-string credentials (auto-login)
         if query_string:
             params = parse_qs(query_string)
-            qs_user = params.get("username", [None])[0]
-            qs_pass = params.get("password", [None])[0]
+            # Long form takes precedence over shorthand (?u, ?p)
+            qs_user = params.get("username", params.get("u", [None]))[0]
+            qs_pass = params.get("password", params.get("p", [None]))[0]
 
             if qs_user and qs_pass:
                 if validate_credentials(qs_user, qs_pass):
