@@ -1,4 +1,5 @@
 .idea
 .data
+# .claude
 .playwright-mcp
 !.gitkeep
