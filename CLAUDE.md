@@ -116,3 +116,21 @@ Bundles in `bundles/` combine multiple apps with integration:
 
 ### AI Studio (`apps/ai-studio/`)
 The AI Studio app runs Ubuntu 24.04 with ttyd (web terminal), nginx, and FileBrowser Quantum. It serves a browser-based terminal at `/chat` where users interactively choose their preferred AI coding assistant (Claude Code, Gemini CLI, or OpenAI Codex CLI) on each session start; the selected client is installed on first use and persists across restarts. Access: `http://localhost:8080/chat` (admin/Admin@123 for local dev).
+
+## Known Issues
+
+### Self-signed TLS certificates break WebSocket (ttyd terminal) on Kubernetes
+AI Studio's web terminal (ttyd) relies on WebSocket (`wss://`). Browsers silently reject WebSocket connections when the TLS certificate is not trusted — the page and HTTP requests work (user accepted the cert warning), but `new WebSocket("wss://...")` fails before the request ever leaves the browser. Symptoms: the terminal iframe loads but stays blank; server logs show repeated `/token` fetches with zero `/_clv/chat/ws` entries.
+
+**Root cause on the local dev cluster:** The `letsencrypt-prod` ClusterIssuer is misconfigured as `spec.selfSigned: {}` — it issues self-signed certs despite the name.
+
+**Diagnosis:**
+```bash
+# Check if the cert is self-signed (empty issuer = self-signed)
+kubectl get secret <tls-secret> -n <ns> -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -noout -issuer -subject
+
+# Verify the ClusterIssuer config (look for selfSigned: {} vs proper ACME)
+kubectl get clusterissuer letsencrypt-prod -o yaml
+```
+
+**Fix:** Reconfigure the ClusterIssuer with real ACME (HTTP-01 or DNS-01). Docker deployments are unaffected (HTTP only, no TLS).
