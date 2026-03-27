@@ -75,11 +75,14 @@
       // Load preferences to check if this is a first-login (no config yet)
       window.AIPrefs.load(function () {
         if (window.AIPrefs.isConfigured()) {
-          // Returning user with saved preferences — show terminal directly
+          // Returning user with saved preferences — load everything
           loadFrames();
         } else {
-          // First login or incomplete config — show preferences panel
-          loadFrames();
+          // First login or incomplete config — load file browser only,
+          // defer the terminal until preferences are saved. Starting
+          // the terminal now would trigger .bash_profile which attempts
+          // client installation before the user has configured anything.
+          loadBrowserFrame();
           showPreferences();
         }
       });
@@ -204,10 +207,8 @@
 
   /* ── Iframe lifecycle ─────────────────────────────────────────────────── */
 
-  function loadFrames() {
+  function loadBrowserFrame() {
     var browserContent = panelBrowser.querySelector(".panel-content");
-    var chatContent    = panelChat.querySelector(".panel-content");
-
     if (!browserFrame) {
       browserFrame = document.createElement("iframe");
       browserFrame.className = "service-frame";
@@ -218,7 +219,10 @@
       });
       browserContent.appendChild(browserFrame);
     }
+  }
 
+  function loadChatFrame() {
+    var chatContent = panelChat.querySelector(".panel-content");
     if (!chatFrame) {
       chatFrame = document.createElement("iframe");
       chatFrame.className = "service-frame";
@@ -229,6 +233,11 @@
       });
       chatContent.appendChild(chatFrame);
     }
+  }
+
+  function loadFrames() {
+    loadBrowserFrame();
+    loadChatFrame();
   }
 
   function destroyFrames() {
