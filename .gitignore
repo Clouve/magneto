@@ -1,5 +1,5 @@
 .idea
 .data
-# .claude
+.claude
 .playwright-mcp
 !.gitkeep
