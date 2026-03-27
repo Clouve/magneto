@@ -126,10 +126,24 @@
   }
 
   function reloadTerminal() {
+    // Destroy the old iframe and create a fresh one instead of reassigning
+    // src. Reassigning src triggers the beforeunload handler inside ttyd's
+    // WebSocket connection, which causes the browser's "Leave site?" prompt.
+    var chatContent = panelChat.querySelector(".panel-content");
     if (chatFrame) {
-      loadingChat.classList.remove("fade-out");
-      chatFrame.src = "/_clv/chat";
+      chatFrame.remove();
+      chatFrame = null;
     }
+    loadingChat.classList.remove("fade-out");
+
+    chatFrame = document.createElement("iframe");
+    chatFrame.className = "service-frame";
+    chatFrame.id = "frame-chat";
+    chatFrame.src = "/_clv/chat";
+    chatFrame.addEventListener("load", function () {
+      loadingChat.classList.add("fade-out");
+    });
+    chatContent.appendChild(chatFrame);
   }
 
   /* ── Authentication API ───────────────────────────────────────────────── */
