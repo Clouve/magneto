@@ -431,9 +431,6 @@ while true; do
 
     [ -z "$_CLV_FORCED_IDX" ] && echo "" && echo "  Selected: $client_name"
 
-    # Resolve (or prompt for) the API key
-    _clv_resolve_key "$selected_idx"
-
     # Install the client if not already present
     if ! command -v "$client_cmd" &>/dev/null; then
         echo ""
@@ -446,6 +443,9 @@ while true; do
         fi
         echo ""
     fi
+
+    # Resolve (or prompt for) the API key
+    _clv_resolve_key "$selected_idx"
 
     # Write the client's context/instructions file from template
     _clv_write_context "$selected_idx"
