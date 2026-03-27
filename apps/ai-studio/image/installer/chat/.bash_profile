@@ -386,10 +386,12 @@ while true; do
 
     # ── Re-read web preferences each iteration ───────────────────────────────
     # The user may have changed preferences via the web panel since the last
-    # loop iteration, so we re-parse the file on each pass.
+    # loop iteration, so we re-parse the file on each pass. This runs even
+    # when AI_STUDIO_CLIENT is set because the execution mode (autoAccept)
+    # is still user-configurable via the Preferences Panel.
     _CLV_WEB_IDX=""
     _CLV_WEB_AUTO="false"
-    if [ -z "$_CLV_FORCED_IDX" ] && [ -f "$CLV_PREFS_FILE" ]; then
+    if [ -f "$CLV_PREFS_FILE" ]; then
         if command -v jq &>/dev/null; then
             _clv_web_client=$(jq -r '.client // empty' "$CLV_PREFS_FILE" 2>/dev/null)
             _clv_web_auto=$(jq -r '.autoAccept // false' "$CLV_PREFS_FILE" 2>/dev/null)
@@ -397,7 +399,7 @@ while true; do
             _clv_web_client=$(sed -n 's/.*"client"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CLV_PREFS_FILE" 2>/dev/null)
             _clv_web_auto=$(sed -n 's/.*"autoAccept"[[:space:]]*:[[:space:]]*\(true\|false\).*/\1/p' "$CLV_PREFS_FILE" 2>/dev/null)
         fi
-        if [ -n "$_clv_web_client" ]; then
+        if [ -z "$_CLV_FORCED_IDX" ] && [ -n "$_clv_web_client" ]; then
             for _clv_i in "${!CLV_IDS[@]}"; do
                 if [ "${CLV_IDS[$_clv_i]}" = "$_clv_web_client" ]; then
                     _CLV_WEB_IDX="$_clv_i"
@@ -412,6 +414,8 @@ while true; do
     # ── Forced client (AI_STUDIO_CLIENT override) — skip menu entirely ────────
     if [ -n "$_CLV_FORCED_IDX" ]; then
         selected_idx="$_CLV_FORCED_IDX"
+        # If the Preferences Panel has saved a mode preference, use it
+        [ -f "$CLV_PREFS_FILE" ] && _clv_web_mode_applied=1
 
     # ── Web preferences (set via the Preferences Panel) ───────────────────────
     elif [ -n "$_CLV_WEB_IDX" ]; then

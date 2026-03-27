@@ -23,6 +23,7 @@
     autoAccept: false,
     apiKeySet: false,
     apiKeyMasked: null,
+    forcedClient: null,   // non-null when AI_STUDIO_CLIENT env var is set
     loaded: false,
   };
 
@@ -76,7 +77,47 @@
   /* ── Render client cards ────────────────────────────────────────────────── */
 
   function renderClientCards() {
+    var section = cardsContainer.parentElement;
+    var clientDesc = document.getElementById("prefs-client-desc");
     cardsContainer.innerHTML = "";
+
+    // Remove any previous forced-client info block
+    var existingInfo = section.querySelector(".prefs-forced-info");
+    if (existingInfo) existingInfo.remove();
+
+    // When AI_STUDIO_CLIENT is set, replace the card selector entirely
+    // with a read-only info block showing the assigned client.
+    if (state.forcedClient) {
+      clientDesc.textContent = "Your workspace is configured to use the following AI coding assistant.";
+      var forced = null;
+      for (var i = 0; i < state.clients.length; i++) {
+        if (state.clients[i].id === state.forcedClient) { forced = state.clients[i]; break; }
+      }
+      var meta = CLIENT_META[state.forcedClient] || { icon: "?", label: "", url: "" };
+      var name = forced ? forced.name : state.forcedClient;
+
+      // Hide the interactive cards container
+      cardsContainer.style.display = "none";
+
+      var info = document.createElement("div");
+      info.className = "prefs-forced-info";
+      info.innerHTML =
+        '<div class="prefs-forced-client">' +
+          '<div class="prefs-client-icon" data-client="' + state.forcedClient + '">' + meta.icon + '</div>' +
+          '<div class="prefs-client-info">' +
+            '<div class="prefs-client-name">' + name + '</div>' +
+            '<div class="prefs-client-id">' + state.forcedClient + '</div>' +
+          '</div>' +
+        '</div>' +
+        '';
+      section.appendChild(info);
+      return;
+    }
+
+    // Normal mode — render interactive selection cards
+    clientDesc.textContent = "Choose which AI coding assistant to use in your terminal session.";
+    cardsContainer.style.display = "";
+
     state.clients.forEach(function (client) {
       var meta = CLIENT_META[client.id] || { icon: "?", label: "", url: "" };
       var card = document.createElement("div");
@@ -290,6 +331,7 @@
         state.autoAccept = data.autoAccept || false;
         state.apiKeySet = data.apiKeySet || false;
         state.apiKeyMasked = data.apiKeyMasked || null;
+        state.forcedClient = data.forcedClient || null;
         state.loaded = true;
 
         renderClientCards();

@@ -104,6 +104,25 @@
   box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.08);
 }
 
+/* ── Forced client (AI_STUDIO_CLIENT set) ─────────────────────────────────── */
+
+.prefs-forced-info {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.prefs-forced-client {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--slate-50);
+  border: 1.5px solid var(--slate-200);
+  border-radius: 10px;
+}
+
+
 .prefs-client-radio {
   flex-shrink: 0;
   width: 18px;

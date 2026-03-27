@@ -466,7 +466,14 @@ class AuthHandler(BaseHTTPRequestHandler):
 
         username = session["username"]
         prefs = _read_prefs(username)
-        client_id = prefs.get("client")
+
+        # When AI_STUDIO_CLIENT is set, it overrides the user's client choice
+        forced_client = os.environ.get("AI_STUDIO_CLIENT") or None
+        if forced_client and forced_client in CLIENT_BY_ID:
+            client_id = forced_client
+        else:
+            forced_client = None  # unrecognised value — ignore
+            client_id = prefs.get("client")
 
         api_key_set = False
         api_key_masked = None
@@ -481,6 +488,7 @@ class AuthHandler(BaseHTTPRequestHandler):
             "autoAccept": prefs.get("autoAccept", False),
             "apiKeySet": api_key_set,
             "apiKeyMasked": api_key_masked,
+            "forcedClient": forced_client,
             "clients": [
                 {"id": c["id"], "name": c["name"]} for c in CLIENT_REGISTRY
             ],
@@ -504,11 +512,19 @@ class AuthHandler(BaseHTTPRequestHandler):
         username = session["username"]
         prefs = _read_prefs(username)
 
+        # When AI_STUDIO_CLIENT is set, the client selection is locked
+        forced_client = os.environ.get("AI_STUDIO_CLIENT") or None
+        if forced_client and forced_client not in CLIENT_BY_ID:
+            forced_client = None
+
         # Update client selection
         client_id = data.get("client")
         if client_id is not None:
             if client_id not in CLIENT_BY_ID:
                 self._send_json(400, {"error": f"Unknown client: {client_id}"})
+                return
+            if forced_client and client_id != forced_client:
+                self._send_json(400, {"error": f"Client is locked to {forced_client} by AI_STUDIO_CLIENT"})
                 return
             prefs["client"] = client_id
 
