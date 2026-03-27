@@ -30,10 +30,15 @@
   var loadingChat    = document.getElementById("loading-chat");
   var loadingBrowser = document.getElementById("loading-browser");
 
+  var settingsBtn    = document.getElementById("settings-btn");
+  var panelChatTitle = document.getElementById("panel-chat-title");
+  var statusDot      = document.getElementById("terminal-status-dot");
+
   var chatFrame      = null;
   var browserFrame   = null;
   var currentLayout  = "split";
   var savedSplitFlex = "";  // remembers divider position when leaving split mode
+  var prefsVisible   = false;  // whether the preferences panel is shown
 
   /* ── Utilities ────────────────────────────────────────────────────────── */
 
@@ -56,7 +61,75 @@
     appView.style.display = "flex";
     document.body.style.overflow = "hidden";
 
-    loadFrames();
+    // Initialize preferences panel
+    if (window.AIPrefs) {
+      window.AIPrefs.init();
+      window.AIPrefs.onSave = function () {
+        hidePreferences();
+        reloadTerminal();
+      };
+      window.AIPrefs.onCancel = function () {
+        hidePreferences();
+      };
+
+      // Load preferences to check if this is a first-login (no config yet)
+      window.AIPrefs.load(function () {
+        if (window.AIPrefs.isConfigured()) {
+          // Returning user with saved preferences — show terminal directly
+          loadFrames();
+        } else {
+          // First login or incomplete config — show preferences panel
+          loadFrames();
+          showPreferences();
+        }
+      });
+    } else {
+      loadFrames();
+    }
+  }
+
+  /* ── Preferences panel toggle ──────────────────────────────────────────── */
+
+  function showPreferences() {
+    prefsVisible = true;
+    if (window.AIPrefs) window.AIPrefs.show();
+    if (chatFrame) chatFrame.style.display = "none";
+    loadingChat.style.display = "none";
+    settingsBtn.classList.add("active");
+    panelChatTitle.textContent = "Preferences";
+    statusDot.style.display = "none";
+  }
+
+  function hidePreferences() {
+    prefsVisible = false;
+    if (window.AIPrefs) window.AIPrefs.hide();
+    if (chatFrame) chatFrame.style.display = "";
+    loadingChat.style.display = "";
+    settingsBtn.classList.remove("active");
+    panelChatTitle.textContent = "Terminal";
+    statusDot.style.display = "";
+  }
+
+  function togglePreferences() {
+    if (prefsVisible) {
+      hidePreferences();
+    } else {
+      // Reload preferences state when opening
+      if (window.AIPrefs) {
+        window.AIPrefs.load(function () {
+          showPreferences();
+        });
+      } else {
+        showPreferences();
+      }
+    }
+  }
+
+  function reloadTerminal() {
+    if (chatFrame) {
+      loadingChat.classList.remove("fade-out");
+      chatFrame.src = "/_clv/chat";
+    }
   }
 
   /* ── Authentication API ───────────────────────────────────────────────── */
@@ -149,6 +222,12 @@
     if (browserFrame) { browserFrame.remove(); browserFrame = null; }
     loadingChat.classList.remove("fade-out");
     loadingBrowser.classList.remove("fade-out");
+    // Reset preferences panel state
+    prefsVisible = false;
+    if (window.AIPrefs) window.AIPrefs.hide();
+    settingsBtn.classList.remove("active");
+    panelChatTitle.textContent = "Terminal";
+    statusDot.style.display = "";
   }
 
   /* ── Resizable split divider ──────────────────────────────────────────── */
@@ -296,6 +375,10 @@
       switchLayout(this.getAttribute("data-mode"));
     });
   }
+
+  /* ── Settings button ──────────────────────────────────────────────────── */
+
+  settingsBtn.addEventListener("click", togglePreferences);
 
   /* ── Event binding ────────────────────────────────────────────────────── */
 

@@ -25,8 +25,10 @@ No external dependencies.
 import crypt
 import json
 import os
+import pwd
 import secrets
 import signal
+import subprocess
 import sys
 import time
 import warnings
@@ -111,8 +113,188 @@ def create_session(username):
     return token
 
 
+# ── Client registry (mirrors CLV_IDS / CLV_KEY_VARS / CLV_KEY_FILES in .bash_profile) ──
+CLIENT_REGISTRY = [
+    {
+        "id": "claude-code",
+        "name": "Claude Code",
+        "keyVar": "ANTHROPIC_API_KEY",
+        "keyFile": ".claude_api_key",
+        "validateUrl": "https://api.anthropic.com/v1/models",
+        "validateHeaders": lambda key: {
+            "x-api-key": key,
+            "anthropic-version": "2023-06-01",
+        },
+        "validateParams": None,
+    },
+    {
+        "id": "gemini-cli",
+        "name": "Gemini CLI",
+        "keyVar": "GEMINI_API_KEY",
+        "keyFile": ".gemini_api_key",
+        "validateUrl": "https://generativelanguage.googleapis.com/v1beta/models",
+        "validateHeaders": None,
+        "validateParams": lambda key: f"key={key}",
+    },
+    {
+        "id": "codex-cli",
+        "name": "OpenAI Codex CLI",
+        "keyVar": "OPENAI_API_KEY",
+        "keyFile": ".openai_api_key",
+        "validateUrl": "https://api.openai.com/v1/models",
+        "validateHeaders": lambda key: {"Authorization": f"Bearer {key}"},
+        "validateParams": None,
+    },
+]
+
+CLIENT_BY_ID = {c["id"]: c for c in CLIENT_REGISTRY}
+
+PREFERENCES_FILE = "preferences.json"
+PREFERENCES_DIR = ".ai-studio"
+
+
+def _get_user_home(username):
+    """Return the home directory for the given OS user."""
+    try:
+        return pwd.getpwnam(username).pw_dir
+    except KeyError:
+        return f"/home/{username}"
+
+
+def _prefs_path(username):
+    """Return the full path to the user's preferences.json."""
+    home = _get_user_home(username)
+    return os.path.join(home, PREFERENCES_DIR, PREFERENCES_FILE)
+
+
+def _read_prefs(username):
+    """Read the user's preferences. Returns dict or empty dict."""
+    path = _prefs_path(username)
+    if os.path.isfile(path):
+        try:
+            with open(path, "r") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError):
+            pass
+    return {}
+
+
+def _write_prefs(username, prefs):
+    """Write the user's preferences to disk."""
+    path = _prefs_path(username)
+    os.makedirs(os.path.dirname(path), mode=0o755, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(prefs, f, indent=2)
+    # Ensure the user owns the directory and file
+    home = _get_user_home(username)
+    prefs_dir = os.path.join(home, PREFERENCES_DIR)
+    try:
+        pw = pwd.getpwnam(username)
+        os.chown(prefs_dir, pw.pw_uid, pw.pw_gid)
+        os.chown(path, pw.pw_uid, pw.pw_gid)
+    except (KeyError, OSError):
+        pass
+
+
+def _read_api_key(username, client_id):
+    """Read the stored API key for a client. Returns the key string or None."""
+    client = CLIENT_BY_ID.get(client_id)
+    if not client:
+        return None
+    home = _get_user_home(username)
+    key_path = os.path.join(home, client["keyFile"])
+    if os.path.isfile(key_path):
+        try:
+            with open(key_path, "r") as f:
+                return f.read().strip()
+        except IOError:
+            pass
+    return None
+
+
+def _write_api_key(username, client_id, api_key):
+    """Write the API key to the client's key file and update /etc/profile.d/."""
+    client = CLIENT_BY_ID.get(client_id)
+    if not client:
+        return
+    home = _get_user_home(username)
+    key_path = os.path.join(home, client["keyFile"])
+    with open(key_path, "w") as f:
+        f.write(api_key)
+    os.chmod(key_path, 0o600)
+    try:
+        pw = pwd.getpwnam(username)
+        os.chown(key_path, pw.pw_uid, pw.pw_gid)
+    except (KeyError, OSError):
+        pass
+
+    # Update /etc/profile.d/clouve-env.sh so the terminal session picks it up
+    _update_profile_env(client["keyVar"], api_key)
+
+
+def _update_profile_env(var_name, value):
+    """Add or update an environment variable in /etc/profile.d/clouve-env.sh."""
+    env_file = "/etc/profile.d/clouve-env.sh"
+    lines = []
+    found = False
+    if os.path.isfile(env_file):
+        with open(env_file, "r") as f:
+            for line in f:
+                if line.startswith(f"export {var_name}="):
+                    lines.append(f"export {var_name}={value}\n")
+                    found = True
+                else:
+                    lines.append(line)
+    if not found:
+        lines.append(f"export {var_name}={value}\n")
+    with open(env_file, "w") as f:
+        f.writelines(lines)
+
+
+def _mask_key(key):
+    """Mask an API key, showing only last 6 characters."""
+    if not key or len(key) <= 6:
+        return key
+    return "\u2022" * 8 + key[-6:]
+
+
+def _validate_api_key(client_id, api_key):
+    """Validate an API key against the provider's API.
+
+    Returns: {"valid": True/False, "error": str or None}
+    """
+    client = CLIENT_BY_ID.get(client_id)
+    if not client:
+        return {"valid": False, "error": "Unknown client"}
+
+    url = client["validateUrl"]
+    if client["validateParams"]:
+        url += "?" + client["validateParams"](api_key)
+
+    cmd = [
+        "curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+        url, "--max-time", "10", "--connect-timeout", "5",
+    ]
+    if client["validateHeaders"]:
+        for k, v in client["validateHeaders"](api_key).items():
+            cmd.extend(["-H", f"{k}: {v}"])
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        status = result.stdout.strip()
+    except (subprocess.TimeoutExpired, OSError):
+        return {"valid": False, "error": "Network error — could not reach provider API"}
+
+    if status == "200":
+        return {"valid": True, "error": None}
+    elif status == "000":
+        return {"valid": False, "error": "Network error — could not reach provider API"}
+    else:
+        return {"valid": False, "error": f"Key rejected by provider (HTTP {status})"}
+
+
 class AuthHandler(BaseHTTPRequestHandler):
-    """Handles page serving, login, logout, and session verification."""
+    """Handles page serving, login, logout, session verification, and preferences."""
 
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -122,6 +304,8 @@ class AuthHandler(BaseHTTPRequestHandler):
             self._handle_page(parsed.query)
         elif path == "/api/verify":
             self._handle_verify()
+        elif path == "/api/preferences":
+            self._handle_get_preferences()
         elif path == "/auth-required":
             self._handle_auth_required()
         else:
@@ -133,6 +317,15 @@ class AuthHandler(BaseHTTPRequestHandler):
             self._handle_login()
         elif path == "/api/logout":
             self._handle_logout()
+        elif path == "/api/preferences/validate-key":
+            self._handle_validate_key()
+        else:
+            self.send_error(404)
+
+    def do_PUT(self):
+        path = urlparse(self.path).path
+        if path == "/api/preferences":
+            self._handle_put_preferences()
         else:
             self.send_error(404)
 
@@ -254,6 +447,122 @@ class AuthHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(auth_required_template.encode("utf-8"))
+
+    # ── Preferences API ─────────────────────────────────────────────────────
+
+    def _require_session(self):
+        """Return session dict if authenticated, else send 401 and return None."""
+        session = get_session(self.headers.get("Cookie"))
+        if not session:
+            self._send_json(401, {"error": "Authentication required"})
+            return None
+        return session
+
+    def _handle_get_preferences(self):
+        """Return the user's preferences and API key status."""
+        session = self._require_session()
+        if not session:
+            return
+
+        username = session["username"]
+        prefs = _read_prefs(username)
+        client_id = prefs.get("client")
+
+        api_key_set = False
+        api_key_masked = None
+        if client_id:
+            key = _read_api_key(username, client_id)
+            if key:
+                api_key_set = True
+                api_key_masked = _mask_key(key)
+
+        self._send_json(200, {
+            "client": client_id,
+            "autoAccept": prefs.get("autoAccept", False),
+            "apiKeySet": api_key_set,
+            "apiKeyMasked": api_key_masked,
+            "clients": [
+                {"id": c["id"], "name": c["name"]} for c in CLIENT_REGISTRY
+            ],
+        })
+
+    def _handle_put_preferences(self):
+        """Update the user's preferences (client, autoAccept, apiKey)."""
+        session = self._require_session()
+        if not session:
+            return
+
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length)
+
+        try:
+            data = json.loads(body)
+        except (json.JSONDecodeError, AttributeError):
+            self._send_json(400, {"error": "Invalid request body"})
+            return
+
+        username = session["username"]
+        prefs = _read_prefs(username)
+
+        # Update client selection
+        client_id = data.get("client")
+        if client_id is not None:
+            if client_id not in CLIENT_BY_ID:
+                self._send_json(400, {"error": f"Unknown client: {client_id}"})
+                return
+            prefs["client"] = client_id
+
+        # Update auto-accept mode
+        if "autoAccept" in data:
+            prefs["autoAccept"] = bool(data["autoAccept"])
+
+        # Update API key if provided
+        api_key = data.get("apiKey")
+        if api_key and prefs.get("client"):
+            _write_api_key(username, prefs["client"], api_key)
+
+        _write_prefs(username, prefs)
+
+        # Return updated state
+        current_client = prefs.get("client")
+        key = _read_api_key(username, current_client) if current_client else None
+
+        self._send_json(200, {
+            "ok": True,
+            "client": current_client,
+            "autoAccept": prefs.get("autoAccept", False),
+            "apiKeySet": bool(key),
+            "apiKeyMasked": _mask_key(key) if key else None,
+        })
+
+    def _handle_validate_key(self):
+        """Validate an API key against the provider without saving it."""
+        session = self._require_session()
+        if not session:
+            return
+
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length)
+
+        try:
+            data = json.loads(body)
+        except (json.JSONDecodeError, AttributeError):
+            self._send_json(400, {"error": "Invalid request body"})
+            return
+
+        client_id = data.get("client")
+        api_key = data.get("apiKey")
+
+        if not client_id or not api_key:
+            self._send_json(400, {"error": "client and apiKey are required"})
+            return
+
+        if client_id not in CLIENT_BY_ID:
+            self._send_json(400, {"error": f"Unknown client: {client_id}"})
+            return
+
+        result = _validate_api_key(client_id, api_key)
+        self._send_json(200, result)
 
     def _send_json(self, code, data):
         self.send_response(code)

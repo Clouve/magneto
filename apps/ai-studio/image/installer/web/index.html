@@ -8,6 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/_clv/static/css/app.css" />
+  <link rel="stylesheet" href="/_clv/static/css/preferences.css" />
 </head>
 <body>
 
@@ -101,14 +102,88 @@
       <div class="panel panel-chat" id="panel-chat">
         <div class="panel-header">
           <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
-          <span>Terminal</span>
-          <span class="status-dot" aria-label="Active"></span>
+          <span id="panel-chat-title">Terminal</span>
+          <span class="status-dot" id="terminal-status-dot" aria-label="Active"></span>
+          <button class="panel-settings-btn" id="settings-btn" title="Preferences" aria-label="Preferences">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
         </div>
         <div class="panel-content">
           <div class="frame-loading" id="loading-chat">
             <div class="spinner"></div>
           </div>
           <!-- Chat iframe injected by app.js -->
+
+          <!-- ═══════════════════════════════════════════════════════
+               Preferences Panel (toggled via settings button)
+               ═══════════════════════════════════════════════════════ -->
+          <div id="preferences-panel" class="preferences-panel" style="display:none">
+            <div class="prefs-scroll">
+              <div class="prefs-container">
+                <div class="prefs-header">
+                  <h2 class="prefs-title">Preferences</h2>
+                  <p class="prefs-subtitle">Configure your AI coding assistant, execution mode, and API credentials.</p>
+                </div>
+
+                <!-- AI Client Selection -->
+                <section class="prefs-section">
+                  <h3 class="prefs-section-title">AI Client</h3>
+                  <p class="prefs-section-desc">Choose which AI coding assistant to use in your terminal session.</p>
+                  <div class="prefs-client-cards" id="prefs-client-cards">
+                    <!-- Cards injected by preferences.js -->
+                  </div>
+                </section>
+
+                <!-- Execution Mode -->
+                <section class="prefs-section">
+                  <h3 class="prefs-section-title">Execution Mode</h3>
+                  <p class="prefs-section-desc">Control how the AI agent handles actions during your session.</p>
+                  <div class="prefs-mode-group" id="prefs-mode-group">
+                    <label class="prefs-mode-option">
+                      <input type="radio" name="exec-mode" value="standard" checked />
+                      <div class="prefs-mode-card">
+                        <span class="prefs-mode-label">Standard / Interactive</span>
+                        <span class="prefs-mode-desc">Each action requires your explicit approval before execution.</span>
+                      </div>
+                    </label>
+                    <label class="prefs-mode-option">
+                      <input type="radio" name="exec-mode" value="auto-accept" />
+                      <div class="prefs-mode-card">
+                        <span class="prefs-mode-label">Auto-accept</span>
+                        <span class="prefs-mode-desc">The agent executes actions without per-step confirmation. Use with caution.</span>
+                      </div>
+                    </label>
+                  </div>
+                </section>
+
+                <!-- API Key -->
+                <section class="prefs-section">
+                  <h3 class="prefs-section-title">API Key</h3>
+                  <p class="prefs-section-desc" id="prefs-key-desc">Enter your API key for the selected client.</p>
+                  <div class="prefs-key-field">
+                    <div class="prefs-key-input-wrap">
+                      <input type="password" id="prefs-api-key" class="prefs-input" placeholder="Paste your API key here" autocomplete="off" spellcheck="false" />
+                      <button type="button" class="prefs-key-toggle" id="prefs-key-toggle" title="Show/hide key" aria-label="Toggle key visibility">
+                        <svg id="prefs-eye-show" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                        <svg id="prefs-eye-hide" viewBox="0 0 24 24" style="display:none"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                      </button>
+                    </div>
+                    <div class="prefs-key-status" id="prefs-key-status"></div>
+                    <div class="prefs-key-link" id="prefs-key-link"></div>
+                  </div>
+                </section>
+
+                <!-- Actions -->
+                <div class="prefs-actions">
+                  <div class="prefs-message" id="prefs-message"></div>
+                  <div class="prefs-btn-row">
+                    <button class="prefs-btn prefs-btn-secondary" id="prefs-cancel-btn">Back to Terminal</button>
+                    <button class="prefs-btn prefs-btn-primary" id="prefs-save-btn">Save & Launch Terminal</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </main>
@@ -120,6 +195,7 @@
        marker with {"username":"..."} so the page renders in the correct
        state without any client-side round-trip. -->
   <script>window.__SESSION__ = /*__SESSION_DATA__*/null;</script>
+  <script src="/_clv/static/js/preferences.js" defer></script>
   <script src="/_clv/static/js/app.js" defer></script>
 </body>
 </html>

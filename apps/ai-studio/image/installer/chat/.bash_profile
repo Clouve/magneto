@@ -148,6 +148,7 @@ readonly AI_STUDIO_CLIENT 2>/dev/null || true
 # ─── Per-session state ───────────────────────────────────────────────────────
 CLV_CACHE_DIR="$HOME/.ai-studio"
 CLV_CACHE_FILE="$CLV_CACHE_DIR/last-client"
+CLV_PREFS_FILE="$CLV_CACHE_DIR/preferences.json"
 
 # ─── Signal gate ─────────────────────────────────────────────────────────────
 # Ctrl+C / SIGTERM during the selector or key prompt exits the session cleanly
@@ -383,9 +384,41 @@ while true; do
 
     selected_idx=""
 
+    # ── Re-read web preferences each iteration ───────────────────────────────
+    # The user may have changed preferences via the web panel since the last
+    # loop iteration, so we re-parse the file on each pass.
+    _CLV_WEB_IDX=""
+    _CLV_WEB_AUTO="false"
+    if [ -z "$_CLV_FORCED_IDX" ] && [ -f "$CLV_PREFS_FILE" ]; then
+        if command -v jq &>/dev/null; then
+            _clv_web_client=$(jq -r '.client // empty' "$CLV_PREFS_FILE" 2>/dev/null)
+            _clv_web_auto=$(jq -r '.autoAccept // false' "$CLV_PREFS_FILE" 2>/dev/null)
+        else
+            _clv_web_client=$(sed -n 's/.*"client"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CLV_PREFS_FILE" 2>/dev/null)
+            _clv_web_auto=$(sed -n 's/.*"autoAccept"[[:space:]]*:[[:space:]]*\(true\|false\).*/\1/p' "$CLV_PREFS_FILE" 2>/dev/null)
+        fi
+        if [ -n "$_clv_web_client" ]; then
+            for _clv_i in "${!CLV_IDS[@]}"; do
+                if [ "${CLV_IDS[$_clv_i]}" = "$_clv_web_client" ]; then
+                    _CLV_WEB_IDX="$_clv_i"
+                    break
+                fi
+            done
+        fi
+        [ "$_clv_web_auto" = "true" ] && _CLV_WEB_AUTO="true"
+        unset _clv_web_client _clv_web_auto _clv_i
+    fi
+
     # ── Forced client (AI_STUDIO_CLIENT override) — skip menu entirely ────────
     if [ -n "$_CLV_FORCED_IDX" ]; then
         selected_idx="$_CLV_FORCED_IDX"
+
+    # ── Web preferences (set via the Preferences Panel) ───────────────────────
+    elif [ -n "$_CLV_WEB_IDX" ]; then
+        selected_idx="$_CLV_WEB_IDX"
+        # Apply auto-accept mode from web preferences
+        _clv_web_mode_applied=1
+
     else
 
     # ── Check for a cached selection from the previous session ────────────────
@@ -418,7 +451,7 @@ while true; do
         echo ""
     fi
 
-    fi  # end of non-forced branch
+    fi  # end of non-forced / non-web-prefs branch
 
     # ── AI client selected — resolve key, install, configure ─────────────────
 
@@ -429,7 +462,7 @@ while true; do
     client_name="${CLV_NAMES[$selected_idx]}"
     client_cmd="${CLV_CMDS[$selected_idx]}"
 
-    [ -z "$_CLV_FORCED_IDX" ] && echo "" && echo "  Selected: $client_name"
+    [ -z "$_CLV_FORCED_IDX" ] && [ -z "${_clv_web_mode_applied:-}" ] && echo "" && echo "  Selected: $client_name"
 
     # Install the client if not already present
     if ! command -v "$client_cmd" &>/dev/null; then
@@ -451,7 +484,17 @@ while true; do
     _clv_write_context "$selected_idx"
 
     # ── Ask for launch mode (auto-accept vs standard) ─────────────────────────
-    _clv_ask_mode "$selected_idx"
+    # If the web Preferences Panel already set the mode, apply it directly
+    # without showing the interactive prompt.
+    if [ "${_clv_web_mode_applied:-}" = "1" ]; then
+        if [ "$_CLV_WEB_AUTO" = "true" ] && [ -n "${CLV_AUTO_FLAGS[$selected_idx]}" ]; then
+            _clv_launch_flags="${CLV_AUTO_FLAGS[$selected_idx]}"
+        else
+            _clv_launch_flags="${CLV_STD_FLAGS[$selected_idx]}"
+        fi
+    else
+        _clv_ask_mode "$selected_idx"
+    fi
 
     # ── Gate passed — clear trap and launch the client ────────────────────────
     # Restore default signal handling so the client process receives and handles
@@ -477,6 +520,6 @@ while true; do
     echo ""
 
     unset selected_idx cached_idx cached_name _clv_reuse _clv_choice \
-          client_name client_cmd _clv_launch_flags _clv_mode
+          client_name client_cmd _clv_launch_flags _clv_mode _clv_web_mode_applied
 
 done
