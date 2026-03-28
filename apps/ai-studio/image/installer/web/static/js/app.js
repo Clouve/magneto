@@ -201,11 +201,11 @@
   function doLogout() {
     fetch("/_clv/api/logout", { method: "POST", credentials: "same-origin" })
       .finally(function () {
+        // Destroy iframes first to avoid ttyd's beforeunload prompt,
+        // then force a full page load so the server re-evaluates the
+        // session and injects a fresh window.__SESSION__ (null).
         destroyFrames();
-        usernameIn.value = "";
-        passwordIn.value = "";
-        showLogin();
-        usernameIn.focus();
+        window.location.replace("/_clv/");
       });
   }
 
