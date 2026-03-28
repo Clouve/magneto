@@ -9,13 +9,17 @@ services:
       AI_STUDIO_USERNAME: admin
       AI_STUDIO_PASSWORD: Admin@123
       AI_STUDIO_ROOT_PASSWORD: Root@123
+      AI_STUDIO_HOST: ${TEST_DOMAIN:-localhost:8080}
+      
+      # Optionally pre-set the default AI client for this instance. 
+      # Supported values are: claude-code | gemini-cli | codex-cli
+      AI_STUDIO_CLIENT: claude-code # claude-code | gemini-cli | codex-cli
+      
       # Optionally pre-set an API key to skip the per-session key prompt.
       # Any key provided here is injected into all login shells at startup.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      AI_STUDIO_HOST: ${TEST_DOMAIN:-localhost:8080}
-      AI_STUDIO_CLIENT: claude-code # claude-code | gemini-cli | codex-cli
     volumes:
       - ai-studio-home:/home
       - ai-studio-usr:/usr

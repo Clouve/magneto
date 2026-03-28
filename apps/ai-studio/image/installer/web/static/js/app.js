@@ -26,8 +26,10 @@
   var recoveryPassIn = document.getElementById("recovery-password");
   var newPassIn      = document.getElementById("new-password");
   var confirmPassIn  = document.getElementById("confirm-password");
-  var forgotLink     = document.getElementById("forgot-password-link");
+  var resetLink     = document.getElementById("reset-password-link");
   var backToLogin    = document.getElementById("back-to-login-link");
+  var loginHeading   = document.querySelector(".login-heading");
+  var loginSub       = document.querySelector(".login-sub");
   var userAvatar     = document.getElementById("user-avatar");
   var userDisplay    = document.getElementById("user-display");
   var logoutBtn      = document.getElementById("logout-btn");
@@ -228,6 +230,8 @@
     hideMessages();
     loginForm.style.display = "none";
     resetForm.style.display = "";
+    loginHeading.textContent = "Reset your password";
+    loginSub.textContent = "Enter the recovery password to set a new one for your account.";
     // Carry username across if already entered
     if (usernameIn.value.trim()) {
       resetUsername.value = usernameIn.value.trim();
@@ -239,10 +243,12 @@
     hideMessages();
     resetForm.style.display = "none";
     loginForm.style.display = "";
+    loginHeading.textContent = "Sign in to your workspace";
+    loginSub.textContent = "Enter your credentials to access the terminal and file browser.";
     usernameIn.focus();
   }
 
-  forgotLink.addEventListener("click", function (e) { e.preventDefault(); showResetView(); });
+  resetLink.addEventListener("click", function (e) { e.preventDefault(); showResetView(); });
   backToLogin.addEventListener("click", function (e) { e.preventDefault(); showLoginView(); });
 
   /* ── Password reset API ────────────────────────────────────────────── */
