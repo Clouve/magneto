@@ -112,6 +112,10 @@
     settingsBtn.classList.add("active");
     panelChatTitle.textContent = "Preferences";
     statusDot.style.display = "none";
+
+    // Disable "Back to Terminal" when no terminal session exists yet
+    var cancelBtnEl = document.getElementById("prefs-cancel-btn");
+    if (cancelBtnEl) cancelBtnEl.disabled = !chatFrame;
   }
 
   function hidePreferences() {
