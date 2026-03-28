@@ -330,6 +330,14 @@ _clv_write_context() {
     local dir="$HOME/${CLV_CONTEXT_DIRS[$idx]}"
     local file="${CLV_CONTEXT_FILES[$idx]}"
     [ -z "$tpl" ] && return 0
+
+    # If AI_STUDIO_HOST was not explicitly set, fall back to the host
+    # auto-detected by the auth server from the HTTP Host header.
+    if [ -z "$AI_STUDIO_HOST" ] && [ -f /run/clouve/detected_host ]; then
+        AI_STUDIO_HOST=$(cat /run/clouve/detected_host)
+        export AI_STUDIO_HOST
+    fi
+
     mkdir -p "$dir"
     USERNAME="$(whoami)" \
         envsubst '${USERNAME} ${ROOT_PASSWORD} ${AI_STUDIO_HOST}' \

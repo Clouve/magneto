@@ -43,6 +43,11 @@ LISTEN_ADDR = "127.0.0.1"
 LISTEN_PORT = 7892
 SESSION_TTL = 86400  # 24 hours
 
+# Runtime file where the auto-detected external hostname is cached.
+# Written on the first external request so shell sessions can read it
+# as a fallback when AI_STUDIO_HOST is not set via environment variable.
+DETECTED_HOST_FILE = "/run/clouve/detected_host"
+
 # Path to the SPA HTML file (read once at startup, session data injected per-request)
 HTML_PATH = "/clouve/ai-studio/installer/web/index.html"
 AUTH_REQUIRED_PATH = "/clouve/ai-studio/installer/web/auth-required.html"
@@ -55,6 +60,9 @@ FORCED_CLIENT_MARKER = "/*__FORCED_CLIENT_DATA__*/null"
 
 # In-memory session store: token -> {"username": str, "created": float}
 sessions = {}
+
+# Tracks the last detected host to avoid redundant file writes.
+_cached_detected_host = None
 
 # HTML templates loaded at startup
 html_template = ""
@@ -112,6 +120,44 @@ def create_session(username):
     token = secrets.token_urlsafe(32)
     sessions[token] = {"username": username, "created": time.time()}
     return token
+
+
+def _detect_and_cache_host(host_header):
+    """Persist the external hostname from the HTTP Host header for shell sessions.
+
+    Only acts when AI_STUDIO_HOST was not explicitly provided as an
+    environment variable.  Writes the detected value to DETECTED_HOST_FILE
+    and updates /etc/profile.d/clouve-env.sh so new login shells inherit it.
+    """
+    global _cached_detected_host
+
+    # Explicit env var takes precedence — never override it.
+    if os.environ.get("AI_STUDIO_HOST"):
+        return
+
+    if not host_header:
+        return
+
+    # Ignore direct container-internal requests (e.g. curl from inside the
+    # container to 127.0.0.1:7892).  "localhost" is kept because it is a
+    # valid external hostname in local Docker development.
+    host_name = host_header.split(":")[0]
+    if host_name in ("127.0.0.1", ""):
+        return
+
+    # Skip redundant writes when the value hasn't changed.
+    if host_header == _cached_detected_host:
+        return
+    _cached_detected_host = host_header
+
+    try:
+        os.makedirs(os.path.dirname(DETECTED_HOST_FILE), exist_ok=True)
+        with open(DETECTED_HOST_FILE, "w") as f:
+            f.write(host_header)
+        # Also update profile.d so new terminal sessions export it.
+        _update_profile_env("AI_STUDIO_HOST", host_header)
+    except OSError:
+        pass  # best-effort — don't break the request
 
 
 # ── Client registry (mirrors CLV_IDS / CLV_KEY_VARS / CLV_KEY_FILES in .bash_profile) ──
@@ -346,6 +392,10 @@ class AuthHandler(BaseHTTPRequestHandler):
         for controlled, internal, or automated use cases only. Credentials
         may appear in server access logs and HTTP Referer headers.
         """
+        # Auto-detect the external hostname from the Host header so
+        # shell sessions can reference it without a hardcoded env var.
+        _detect_and_cache_host(self.headers.get("Host"))
+
         # Check for query-string credentials (auto-login)
         if query_string:
             params = parse_qs(query_string)
