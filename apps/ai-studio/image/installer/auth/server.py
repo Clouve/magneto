@@ -26,6 +26,7 @@ import crypt
 import json
 import os
 import pwd
+import re
 import secrets
 import signal
 import subprocess
@@ -67,6 +68,13 @@ _cached_detected_host = None
 # HTML templates loaded at startup
 html_template = ""
 auth_required_template = ""
+
+
+def normalize_username(raw):
+    """Normalize a username: strip surrounding whitespace, collapse internal
+    whitespace sequences into a single underscore.  Applied on every auth
+    entry point so 'Jane  Doe' and 'Jane_Doe' resolve to the same OS user."""
+    return re.sub(r"\s+", "_", raw.strip())
 
 
 def validate_credentials(username, password):
@@ -404,6 +412,7 @@ class AuthHandler(BaseHTTPRequestHandler):
             qs_pass = params.get("password", params.get("p", [None]))[0]
 
             if qs_user and qs_pass:
+                qs_user = normalize_username(qs_user)
                 if validate_credentials(qs_user, qs_pass):
                     token = create_session(qs_user)
                     self.send_response(302)
@@ -450,7 +459,7 @@ class AuthHandler(BaseHTTPRequestHandler):
 
         try:
             data = json.loads(body)
-            username = str(data.get("username", "")).strip()
+            username = normalize_username(str(data.get("username", "")))
             password = str(data.get("password", ""))
         except (json.JSONDecodeError, AttributeError):
             self._send_json(400, {"error": "Invalid request body"})
@@ -513,7 +522,7 @@ class AuthHandler(BaseHTTPRequestHandler):
 
         try:
             data = json.loads(body)
-            username = str(data.get("username", "")).strip()
+            username = normalize_username(str(data.get("username", "")))
             recovery_password = str(data.get("recoveryPassword", ""))
             new_password = str(data.get("newPassword", ""))
         except (json.JSONDecodeError, AttributeError):

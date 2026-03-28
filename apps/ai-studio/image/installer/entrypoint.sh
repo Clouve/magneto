@@ -67,6 +67,11 @@ USERNAME="${AI_STUDIO_USERNAME:-admin}"
 PASSWORD="${AI_STUDIO_PASSWORD:-changeme}"
 ROOT_PASSWORD="${AI_STUDIO_ROOT_PASSWORD:-${PASSWORD}}"
 
+# Normalize username: trim leading/trailing whitespace, collapse internal
+# whitespace sequences into a single underscore.  This ensures the username
+# is safe for useradd, home-directory paths, sudoers entries, and PAM auth.
+USERNAME="$(printf '%s' "$USERNAME" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;s/[[:space:]]\{1,\}/_/g')"
+
 echo -e "${YELLOW}[INFO]${NC} Configuring user: $USERNAME..."
 
 if ! id "$USERNAME" &>/dev/null; then
