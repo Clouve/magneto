@@ -4,6 +4,10 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AI Studio — Clouve</title>
+  <script>
+    window.__FORCED_CLIENT__ = /*__FORCED_CLIENT_DATA__*/null;
+    if (window.__FORCED_CLIENT__) document.title = "AI Studio (" + window.__FORCED_CLIENT__ + ") \u2014 Clouve";
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
@@ -19,7 +23,7 @@
     <div class="login-card">
       <div class="login-logo">
         <img alt="Clouve" src="https://cdn.dev.clouve.com/assets/LogoClouve2026.svg" />
-        <span class="badge">AI Studio</span>
+        <span class="badge" id="login-badge">AI Studio</span>
       </div>
 
       <h1 class="login-heading">Sign in to your workspace</h1>
@@ -40,7 +44,7 @@
       <div class="login-error" id="login-error" role="alert"></div>
 
       <footer class="login-footer">
-        &copy; <span id="yr"></span> <a href="https://www.clouve.com" target="_blank" rel="noopener">Clouve</a>
+        &copy; <span id="yr"></span> <a href="https://www.clouve.com" target="_blank" rel="noopener">Clouve. All rights reserved.</a>
       </footer>
     </div>
   </section>
@@ -55,7 +59,7 @@
         <a href="https://www.clouve.com" target="_blank" rel="noopener">
           <img alt="Clouve" src="https://cdn.dev.clouve.com/assets/LogoClouve2026.svg" />
         </a>
-        <span class="header-badge">AI Studio</span>
+        <span class="header-badge" id="header-badge">AI Studio</span>
       </div>
       <div class="header-center">
         <div class="layout-switcher" id="layout-switcher" role="radiogroup" aria-label="Layout mode">

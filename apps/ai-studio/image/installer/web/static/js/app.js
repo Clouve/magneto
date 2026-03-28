@@ -437,6 +437,20 @@
   // and 302-redirects to "/" (clean URL) so credentials never appear in
   // browser history.
 
+  /* ── Forced-client badge update ────────────────────────────────────────── */
+  // Title is already set inline in <head>; update badge elements now that
+  // the DOM is parsed (this script is deferred).
+  var forcedClient = window.__FORCED_CLIENT__;
+  if (forcedClient) {
+    var loginBadge  = document.getElementById("login-badge");
+    var headerBadge = document.getElementById("header-badge");
+    var badgeText   = "AI Studio (" + forcedClient + ")";
+    if (loginBadge)  loginBadge.textContent  = badgeText;
+    if (headerBadge) headerBadge.textContent = badgeText;
+  }
+
+  /* ── Initialization ───────────────────────────────────────────────────── */
+
   var session = window.__SESSION__;
 
   if (session && session.username) {

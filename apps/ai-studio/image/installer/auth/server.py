@@ -51,6 +51,7 @@ AUTH_REQUIRED_PATH = "/clouve/ai-studio/installer/web/auth-required.html"
 # The raw HTML contains:  window.__SESSION__ = /*__SESSION_DATA__*/null;
 # For authenticated users it becomes e.g.:  window.__SESSION__ = {"username":"admin"};
 SESSION_MARKER = "/*__SESSION_DATA__*/null"
+FORCED_CLIENT_MARKER = "/*__FORCED_CLIENT_DATA__*/null"
 
 # In-memory session store: token -> {"username": str, "created": float}
 sessions = {}
@@ -376,7 +377,14 @@ class AuthHandler(BaseHTTPRequestHandler):
         else:
             session_json = "null"
 
+        # Inject forced client display name so the page title and badges
+        # are correct from first paint (even on the login screen).
+        forced_id = os.environ.get("AI_STUDIO_CLIENT") or None
+        forced_entry = CLIENT_BY_ID.get(forced_id) if forced_id else None
+        forced_client_json = json.dumps(forced_entry["name"]) if forced_entry else "null"
+
         page = html_template.replace(SESSION_MARKER, session_json)
+        page = page.replace(FORCED_CLIENT_MARKER, forced_client_json)
 
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
