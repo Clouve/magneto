@@ -17,8 +17,17 @@
   var loginForm      = document.getElementById("login-form");
   var loginBtn       = document.getElementById("login-btn");
   var loginError     = document.getElementById("login-error");
+  var loginSuccess   = document.getElementById("login-success");
   var usernameIn     = document.getElementById("username");
   var passwordIn     = document.getElementById("password");
+  var resetForm      = document.getElementById("reset-form");
+  var resetBtn       = document.getElementById("reset-btn");
+  var resetUsername   = document.getElementById("reset-username");
+  var recoveryPassIn = document.getElementById("recovery-password");
+  var newPassIn      = document.getElementById("new-password");
+  var confirmPassIn  = document.getElementById("confirm-password");
+  var forgotLink     = document.getElementById("forgot-password-link");
+  var backToLogin    = document.getElementById("back-to-login-link");
   var userAvatar     = document.getElementById("user-avatar");
   var userDisplay    = document.getElementById("user-display");
   var logoutBtn      = document.getElementById("logout-btn");
@@ -154,7 +163,7 @@
   function doLogin(username, password) {
     loginBtn.disabled = true;
     loginBtn.textContent = "Signing in\u2026";
-    hideError();
+    hideMessages();
 
     fetch("/_clv/api/login", {
       method: "POST",
@@ -194,16 +203,112 @@
       });
   }
 
-  /* ── Error display ────────────────────────────────────────────────────── */
+  /* ── Error / success display ──────────────────────────────────────────── */
 
   function showError(msg) {
     loginError.textContent = msg;
     loginError.classList.add("visible");
+    loginSuccess.classList.remove("visible");
   }
 
-  function hideError() {
+  function showSuccess(msg) {
+    loginSuccess.textContent = msg;
+    loginSuccess.classList.add("visible");
     loginError.classList.remove("visible");
   }
+
+  function hideMessages() {
+    loginError.classList.remove("visible");
+    loginSuccess.classList.remove("visible");
+  }
+
+  /* ── Password reset view toggle ────────────────────────────────────── */
+
+  function showResetView() {
+    hideMessages();
+    loginForm.style.display = "none";
+    resetForm.style.display = "";
+    // Carry username across if already entered
+    if (usernameIn.value.trim()) {
+      resetUsername.value = usernameIn.value.trim();
+    }
+    recoveryPassIn.focus();
+  }
+
+  function showLoginView() {
+    hideMessages();
+    resetForm.style.display = "none";
+    loginForm.style.display = "";
+    usernameIn.focus();
+  }
+
+  forgotLink.addEventListener("click", function (e) { e.preventDefault(); showResetView(); });
+  backToLogin.addEventListener("click", function (e) { e.preventDefault(); showLoginView(); });
+
+  /* ── Password reset API ────────────────────────────────────────────── */
+
+  function doResetPassword(username, recoveryPassword, newPassword) {
+    resetBtn.disabled = true;
+    resetBtn.textContent = "Resetting\u2026";
+    hideMessages();
+
+    fetch("/_clv/api/reset-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username: username,
+        recoveryPassword: recoveryPassword,
+        newPassword: newPassword
+      }),
+      credentials: "same-origin"
+    })
+      .then(function (res) {
+        return res.json().then(function (d) {
+          return { ok: res.ok, data: d };
+        });
+      })
+      .then(function (result) {
+        resetBtn.disabled = false;
+        resetBtn.textContent = "Reset Password";
+        if (result.ok) {
+          // Clear the reset form
+          recoveryPassIn.value = "";
+          newPassIn.value = "";
+          confirmPassIn.value = "";
+          // Switch to login view with success message
+          showLoginView();
+          usernameIn.value = username;
+          passwordIn.focus();
+          showSuccess("Password reset successfully. Sign in with your new password.");
+        } else {
+          showError(result.data.error || "Password reset failed");
+        }
+      })
+      .catch(function () {
+        resetBtn.disabled = false;
+        resetBtn.textContent = "Reset Password";
+        showError("Unable to reach the server. Please try again.");
+      });
+  }
+
+  resetForm.addEventListener("submit", function (e) {
+    e.preventDefault();
+    var u = resetUsername.value.trim();
+    var rp = recoveryPassIn.value;
+    var np = newPassIn.value;
+    var cp = confirmPassIn.value;
+
+    if (!u || !rp || !np || !cp) return;
+    if (np !== cp) {
+      showError("Passwords do not match.");
+      return;
+    }
+    if (np.length < 6) {
+      showError("New password must be at least 6 characters.");
+      return;
+    }
+    doResetPassword(u, rp, np);
+  });
 
   /* ── Iframe lifecycle ─────────────────────────────────────────────────── */
 

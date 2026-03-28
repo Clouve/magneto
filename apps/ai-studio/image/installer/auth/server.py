@@ -318,6 +318,8 @@ class AuthHandler(BaseHTTPRequestHandler):
             self._handle_login()
         elif path == "/api/logout":
             self._handle_logout()
+        elif path == "/api/reset-password":
+            self._handle_reset_password()
         elif path == "/api/preferences/validate-key":
             self._handle_validate_key()
         else:
@@ -448,6 +450,69 @@ class AuthHandler(BaseHTTPRequestHandler):
         )
         self.end_headers()
         self.wfile.write(json.dumps({"ok": True}).encode())
+
+    def _handle_reset_password(self):
+        """Reset the OS password for a user.
+
+        Requires the initial AI_STUDIO_PASSWORD (env var) as a recovery
+        password. This value is set at container startup and persists even
+        if the user later changes their password via `passwd` in the terminal.
+        """
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length)
+
+        try:
+            data = json.loads(body)
+            username = str(data.get("username", "")).strip()
+            recovery_password = str(data.get("recoveryPassword", ""))
+            new_password = str(data.get("newPassword", ""))
+        except (json.JSONDecodeError, AttributeError):
+            self._send_json(400, {"error": "Invalid request body"})
+            return
+
+        if not username or not recovery_password or not new_password:
+            self._send_json(400, {"error": "All fields are required"})
+            return
+
+        if len(new_password) < 6:
+            self._send_json(400, {"error": "New password must be at least 6 characters"})
+            return
+
+        # Verify the recovery password matches the initial AI_STUDIO_PASSWORD
+        expected = os.environ.get("AI_STUDIO_PASSWORD", "changeme")
+        if recovery_password != expected:
+            self._send_json(401, {"error": "Invalid recovery password"})
+            return
+
+        # Verify the username exists on the system
+        try:
+            pwd.getpwnam(username)
+        except KeyError:
+            self._send_json(401, {"error": "Invalid recovery password"})
+            return
+
+        # Change the OS password via chpasswd
+        try:
+            result = subprocess.run(
+                ["chpasswd"],
+                input=f"{username}:{new_password}",
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode != 0:
+                self._send_json(500, {"error": "Failed to update password"})
+                return
+        except (subprocess.TimeoutExpired, OSError):
+            self._send_json(500, {"error": "Failed to update password"})
+            return
+
+        # Invalidate all existing sessions for this user
+        expired = [t for t, s in sessions.items() if s["username"] == username]
+        for t in expired:
+            del sessions[t]
+
+        self._send_json(200, {"ok": True})
 
     def _handle_auth_required(self):
         self.send_response(401)

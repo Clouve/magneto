@@ -39,12 +39,40 @@
           <input type="password" id="password" name="password" autocomplete="current-password" required />
         </div>
         <button type="submit" class="login-btn" id="login-btn">Sign In</button>
+        <div class="login-link">
+          <a href="#" id="forgot-password-link">Forgot password?</a>
+        </div>
+      </form>
+
+      <form id="reset-form" style="display:none" autocomplete="off">
+        <div class="form-group">
+          <label for="reset-username">Username</label>
+          <input type="text" id="reset-username" name="username" autocomplete="username" required />
+        </div>
+        <div class="form-group">
+          <label for="recovery-password">Recovery Password</label>
+          <input type="password" id="recovery-password" name="recovery-password" required />
+          <span class="form-hint">The initial password set when the app was created.</span>
+        </div>
+        <div class="form-group">
+          <label for="new-password">New Password</label>
+          <input type="password" id="new-password" name="new-password" autocomplete="new-password" required minlength="6" />
+        </div>
+        <div class="form-group">
+          <label for="confirm-password">Confirm New Password</label>
+          <input type="password" id="confirm-password" name="confirm-password" autocomplete="new-password" required minlength="6" />
+        </div>
+        <button type="submit" class="login-btn" id="reset-btn">Reset Password</button>
+        <div class="login-link">
+          <a href="#" id="back-to-login-link">Back to Sign In</a>
+        </div>
       </form>
 
       <div class="login-error" id="login-error" role="alert"></div>
+      <div class="login-success" id="login-success" role="status"></div>
 
       <footer class="login-footer">
-        &copy; <span id="yr"></span> <a href="https://www.clouve.com" target="_blank" rel="noopener">Clouve. All rights reserved.</a>
+        &copy; <span id="yr"></span> <a href="https://www.clouve.com" target="_blank" rel="noopener">Clouve.</a> All rights reserved.
       </footer>
     </div>
   </section>

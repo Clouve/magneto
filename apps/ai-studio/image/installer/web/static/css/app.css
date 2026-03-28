@@ -169,20 +169,53 @@ html, body {
   transform: none;
 }
 
-.login-error {
+.login-link {
+  margin-top: 14px;
+  text-align: center;
+  font-size: 0.84rem;
+}
+
+.login-link a {
+  color: var(--blue);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.login-link a:hover { text-decoration: underline; }
+
+.form-hint {
+  display: block;
+  margin-top: 5px;
+  font-size: 0.78rem;
+  color: var(--slate-400);
+  line-height: 1.4;
+}
+
+.login-error,
+.login-success {
   display: none;
   margin-top: 16px;
   padding: 10px 14px;
   font-size: 0.84rem;
-  color: var(--red);
-  background: var(--red-light);
-  border: 1px solid var(--red-border);
   border-radius: 8px;
   text-align: center;
   line-height: 1.45;
 }
 
-.login-error.visible { display: block; }
+.login-error {
+  color: var(--red);
+  background: var(--red-light);
+  border: 1px solid var(--red-border);
+}
+
+.login-success {
+  color: var(--green);
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+}
+
+.login-error.visible,
+.login-success.visible { display: block; }
 
 .login-footer {
   margin-top: 28px;
