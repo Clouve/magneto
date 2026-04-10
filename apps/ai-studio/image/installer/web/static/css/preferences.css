@@ -461,7 +461,13 @@
   flex-shrink: 0;
 }
 
-.panel-settings-btn:hover {
+.panel-settings-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.panel-settings-btn:hover:not(:disabled) {
   color: var(--slate-600);
   background: var(--slate-200);
 }

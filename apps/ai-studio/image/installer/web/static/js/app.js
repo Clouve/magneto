@@ -114,9 +114,10 @@
     panelChatTitle.textContent = "Preferences";
     statusDot.style.display = "none";
 
-    // Disable "Back to Terminal" when no terminal session exists yet
+    // Disable "Back to Terminal" and gear icon when no terminal session exists yet
     var cancelBtnEl = document.getElementById("prefs-cancel-btn");
     if (cancelBtnEl) cancelBtnEl.disabled = !chatFrame;
+    settingsBtn.disabled = !chatFrame;
   }
 
   function hidePreferences() {
@@ -163,6 +164,7 @@
       loadingChat.classList.add("fade-out");
     });
     chatContent.appendChild(chatFrame);
+    settingsBtn.disabled = false;
   }
 
   /* ── Authentication API ───────────────────────────────────────────────── */
@@ -348,6 +350,7 @@
         loadingChat.classList.add("fade-out");
       });
       chatContent.appendChild(chatFrame);
+      settingsBtn.disabled = false;
     }
   }
 
