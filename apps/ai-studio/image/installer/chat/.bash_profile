@@ -321,6 +321,45 @@ _clv_install() {
     fi
 }
 
+# Run provider-specific post-install authentication.
+# Called once after first installation with the API key already exported.
+_clv_post_install_auth() {
+    local idx="$1"
+    local cmd="${CLV_CMDS[$idx]}"
+    local key_var="${CLV_KEY_VARS[$idx]}"
+
+    case "${CLV_IDS[$idx]}" in
+        gemini-cli)
+            # Pre-select API-key auth in Gemini CLI's user settings to skip the
+            # interactive first-run auth prompt. The actual key is read from
+            # GEMINI_API_KEY at runtime (already exported by _clv_resolve_key).
+            # Settings path: ~/.gemini/settings.json
+            # Schema: { security: { auth: { selectedType: "gemini-api-key" } } }
+            local settings_dir="$HOME/.gemini"
+            local settings_file="$settings_dir/settings.json"
+            if [ ! -f "$settings_file" ] || ! grep -q 'selectedType' "$settings_file" 2>/dev/null; then
+                echo "  Configuring Gemini CLI for API key authentication..."
+                mkdir -p "$settings_dir"
+                cat > "$settings_file" <<'GEMEOF'
+{"security":{"auth":{"selectedType":"gemini-api-key"}}}
+GEMEOF
+                chmod 600 "$settings_file"
+                echo "  Gemini CLI configured."
+            fi
+            ;;
+        codex-cli)
+            # Store the API key in Codex CLI's internal config. The key is
+            # piped through stdin to avoid shell history exposure.
+            echo "  Authenticating Codex CLI..."
+            if echo "${!key_var}" | "$cmd" login --with-api-key 2>&1; then
+                echo "  Codex CLI authenticated."
+            else
+                echo "  WARNING: Codex CLI authentication may have failed."
+            fi
+            ;;
+    esac
+}
+
 # Write the client's context/instructions file from its template.
 # Uses envsubst so the template can reference ${USERNAME}, ${ROOT_PASSWORD},
 # and ${AI_STUDIO_HOST} — all available in the login environment.
@@ -477,6 +516,7 @@ while true; do
     [ -z "$_CLV_FORCED_IDX" ] && [ -z "${_clv_web_mode_applied:-}" ] && echo "" && echo "  Selected: $client_name"
 
     # Install the client if not already present
+    _clv_just_installed=0
     if ! command -v "$client_cmd" &>/dev/null; then
         echo ""
         echo "  $client_name is not installed. Installing now..."
@@ -486,11 +526,15 @@ while true; do
             echo "  Installation failed — '$client_cmd' not found after install."
             _clv_gate_exit
         fi
+        _clv_just_installed=1
         echo ""
     fi
 
     # Resolve (or prompt for) the API key
     _clv_resolve_key "$selected_idx"
+
+    # Run provider-specific post-install authentication (first install only)
+    [ "$_clv_just_installed" -eq 1 ] && _clv_post_install_auth "$selected_idx"
 
     # Write the client's context/instructions file from template
     _clv_write_context "$selected_idx"
@@ -532,6 +576,7 @@ while true; do
     echo ""
 
     unset selected_idx cached_idx cached_name _clv_reuse _clv_choice \
-          client_name client_cmd _clv_launch_flags _clv_mode _clv_web_mode_applied
+          client_name client_cmd _clv_launch_flags _clv_mode _clv_web_mode_applied \
+          _clv_just_installed
 
 done
