@@ -37,7 +37,7 @@
   var panelChat      = document.getElementById("panel-chat");
   var divider        = document.getElementById("split-divider");
   var splitContainer = document.querySelector(".split-container");
-  var layoutBtns     = document.querySelectorAll(".layout-btn");
+  var layoutSwitcher = document.getElementById("layout-switcher");
   var loadingChat    = document.getElementById("loading-chat");
   var loadingBrowser = document.getElementById("loading-browser");
 
@@ -47,7 +47,8 @@
 
   var chatFrame      = null;
   var browserFrame   = null;
-  var currentLayout  = "split";
+  var layoutOrder    = "browser-chat";
+  var paneState      = { browser: "visible", chat: "visible" };
   var savedSplitFlex = "";  // remembers divider position when leaving split mode
   var prefsVisible   = false;  // whether the preferences panel is shown
 
@@ -366,6 +367,12 @@
     settingsBtn.classList.remove("active");
     panelChatTitle.textContent = "Terminal";
     statusDot.style.display = "";
+    // Reset pane layout state
+    paneState.browser = "visible";
+    paneState.chat = "visible";
+    layoutOrder = "browser-chat";
+    savedSplitFlex = "";
+    updatePaneUI();
   }
 
   /* ── Resizable split divider ──────────────────────────────────────────── */
@@ -421,7 +428,12 @@
 
     var dividerSize = 5;
     var available = totalSize - dividerSize;
-    var browserSize = Math.max(MIN_PANEL_PX, Math.min(clientPos, available - MIN_PANEL_PX));
+
+    // When the browser panel is on the right (or bottom in vertical mode),
+    // the cursor distance from the start edge is the sibling's size.
+    var browserFirst = (layoutOrder === "browser-chat");
+    var rawBrowserSize = browserFirst ? clientPos : (totalSize - clientPos);
+    var browserSize = Math.max(MIN_PANEL_PX, Math.min(rawBrowserSize, available - MIN_PANEL_PX));
     pendingPct = (browserSize / totalSize) * 100;
 
     // Coalesce rapid events — only apply once per animation frame
@@ -453,7 +465,9 @@
     document.removeEventListener("touchend", onDragEnd);
   }
 
-  // Keyboard support: arrow keys to resize
+  // Keyboard support: arrow keys to resize.
+  // Arrow direction always moves the divider visually; when the browser
+  // panel is on the right (or bottom) the effect on its flex-basis inverts.
   divider.addEventListener("keydown", function (e) {
     var step = e.shiftKey ? 5 : 1;
     var container = panelBrowser.parentElement;
@@ -462,11 +476,19 @@
     var totalSize = vertical ? rect.height : rect.width;
     var currentPct = (panelBrowser.getBoundingClientRect()[vertical ? "height" : "width"] / totalSize) * 100;
 
-    if ((vertical && e.key === "ArrowDown") || (!vertical && e.key === "ArrowRight")) {
+    var browserFirst = (layoutOrder === "browser-chat");
+    var grow = vertical
+      ? (browserFirst ? e.key === "ArrowDown"  : e.key === "ArrowUp")
+      : (browserFirst ? e.key === "ArrowRight" : e.key === "ArrowLeft");
+    var shrink = vertical
+      ? (browserFirst ? e.key === "ArrowUp"    : e.key === "ArrowDown")
+      : (browserFirst ? e.key === "ArrowLeft"  : e.key === "ArrowRight");
+
+    if (grow) {
       e.preventDefault();
       var newPct = Math.min(currentPct + step, ((totalSize - 5 - MIN_PANEL_PX) / totalSize) * 100);
       panelBrowser.style.flex = "0 0 " + newPct + "%";
-    } else if ((vertical && e.key === "ArrowUp") || (!vertical && e.key === "ArrowLeft")) {
+    } else if (shrink) {
       e.preventDefault();
       var minPct = (MIN_PANEL_PX / totalSize) * 100;
       var newPct2 = Math.max(currentPct - step, minPct);
@@ -477,40 +499,97 @@
   divider.addEventListener("mousedown", onDragStart);
   divider.addEventListener("touchstart", onDragStart, { passive: false });
 
-  /* ── Layout mode switcher ─────────────────────────────────────────────── */
+  /* ── Pane state management ─────────────────────────────────────────────── */
 
-  function switchLayout(mode) {
-    if (mode === currentLayout) return;
+  function isInSplitView() {
+    return paneState.browser === "visible" && paneState.chat === "visible";
+  }
 
-    // Save divider position when leaving split mode
-    if (currentLayout === "split") {
+  function saveSplitPosition() {
+    if (isInSplitView()) {
       savedSplitFlex = panelBrowser.style.flex || "";
-    }
-
-    currentLayout = mode;
-
-    // Clear inline flex so CSS layout-mode rules take full effect
-    panelBrowser.style.flex = "";
-
-    splitContainer.setAttribute("data-layout", mode);
-
-    // Update button states
-    for (var i = 0; i < layoutBtns.length; i++) {
-      var btn = layoutBtns[i];
-      var isActive = btn.getAttribute("data-mode") === mode;
-      btn.classList.toggle("active", isActive);
-      btn.setAttribute("aria-checked", isActive ? "true" : "false");
-    }
-
-    // Restore divider position when returning to split mode
-    if (mode === "split") {
-      panelBrowser.style.flex = savedSplitFlex;
     }
   }
 
-  for (var i = 0; i < layoutBtns.length; i++) {
-    layoutBtns[i].addEventListener("click", function () {
-      switchLayout(this.getAttribute("data-mode"));
+  function updateMaximizeIcon(pane, isMaximized) {
+    var panel = pane === "browser" ? panelBrowser : panelChat;
+    var maxIcon = panel.querySelector(".icon-maximize");
+    var restoreIcon = panel.querySelector(".icon-restore");
+    if (maxIcon) maxIcon.style.display = isMaximized ? "none" : "";
+    if (restoreIcon) restoreIcon.style.display = isMaximized ? "" : "none";
+    var btn = panel.querySelector(".maximize-btn");
+    if (btn) btn.title = isMaximized ? "Restore" : "Maximize";
+  }
+
+  function updatePaneUI() {
+    var bs = paneState.browser;
+    var cs = paneState.chat;
+
+    // A panel is visually collapsed when its sibling is maximized
+    var browserCollapsed = (cs === "maximized");
+    var chatCollapsed    = (bs === "maximized");
+    var bothVisible      = !browserCollapsed && !chatCollapsed;
+
+    // Panel collapse classes
+    panelBrowser.classList.toggle("pane-collapsed", browserCollapsed);
+    panelChat.classList.toggle("pane-collapsed", chatCollapsed);
+
+    // Divider only in split view
+    divider.classList.toggle("divider-hidden", !bothVisible);
+
+    // Flex management
+    if (bothVisible) {
+      panelBrowser.style.flex = savedSplitFlex || "";
+      panelBrowser.style.minWidth = "";
+      panelChat.style.flex = "";
+      panelChat.style.minWidth = "";
+    } else {
+      panelBrowser.style.flex = browserCollapsed ? "" : "1 1 0%";
+      panelBrowser.style.minWidth = browserCollapsed ? "" : "0";
+      panelChat.style.flex = chatCollapsed ? "" : "1 1 0%";
+      panelChat.style.minWidth = chatCollapsed ? "" : "0";
+    }
+
+    // Layout order
+    splitContainer.setAttribute("data-order", layoutOrder);
+
+    // Maximize icons
+    updateMaximizeIcon("browser", bs === "maximized");
+    updateMaximizeIcon("chat", cs === "maximized");
+
+    // Layout order button active states
+    var orderBtns = layoutSwitcher.querySelectorAll(".layout-btn");
+    for (var j = 0; j < orderBtns.length; j++) {
+      var active = orderBtns[j].getAttribute("data-order") === layoutOrder;
+      orderBtns[j].classList.toggle("active", active);
+      orderBtns[j].setAttribute("aria-checked", String(active));
+    }
+  }
+
+  function maximizePane(pane) {
+    saveSplitPosition();
+    paneState[pane] = (paneState[pane] === "maximized") ? "visible" : "maximized";
+    updatePaneUI();
+  }
+
+  function setLayoutOrder(order) {
+    layoutOrder = order;
+    updatePaneUI();
+  }
+
+  // Layout order buttons
+  var orderBtns = layoutSwitcher.querySelectorAll(".layout-btn");
+  for (var i = 0; i < orderBtns.length; i++) {
+    orderBtns[i].addEventListener("click", function () {
+      setLayoutOrder(this.getAttribute("data-order"));
+    });
+  }
+
+  // Per-pane maximize buttons
+  var ctrlBtns = document.querySelectorAll(".panel-ctrl-btn");
+  for (var i = 0; i < ctrlBtns.length; i++) {
+    ctrlBtns[i].addEventListener("click", function () {
+      maximizePane(this.getAttribute("data-pane"));
     });
   }
 

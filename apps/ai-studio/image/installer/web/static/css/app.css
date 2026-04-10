@@ -383,9 +383,6 @@ html, body {
   flex-shrink: 0;
 }
 
-.layout-label {
-  pointer-events: none;
-}
 
 /* ── Split Container ──────────────────────────────────────────────────────── */
 
@@ -411,28 +408,77 @@ html, body {
 .panel-browser { flex: 0 0 30%; min-width: 180px; }
 .panel-chat    { flex: 1 1 0%; min-width: 180px; }
 
-/* Layout modes — applied to .split-container via data-layout attribute */
-.split-container[data-layout="browser"] .panel-chat,
-.split-container[data-layout="chat"] .panel-browser {
-  flex: 0 0 0%;
-  min-width: 0;
+/* ── Pane visibility states ──────────────────────────────────────────────── */
+
+.panel.pane-collapsed {
+  flex: 0 0 0% !important;
+  min-width: 0 !important;
+  overflow: hidden !important;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.divider.divider-hidden {
+  flex: 0 0 0px !important;
   overflow: hidden;
   opacity: 0;
   pointer-events: none;
 }
 
-.split-container[data-layout="browser"] .panel-browser,
-.split-container[data-layout="chat"] .panel-chat {
-  flex: 1 1 0%;
-  min-width: 0;
+/* ── Panel ordering ─────────────────────────────────────────────────────── */
+
+.split-container[data-order="chat-browser"] .panel-browser { order: 3; }
+.split-container[data-order="chat-browser"] .divider       { order: 2; }
+.split-container[data-order="chat-browser"] .panel-chat    { order: 1; }
+
+/* ── Per-pane controls (maximize) ────────────────────────────────────────── */
+
+.panel-browser .panel-controls { margin-left: auto; }
+
+.panel-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
 }
 
-.split-container[data-layout="browser"] .divider,
-.split-container[data-layout="chat"] .divider {
-  flex: 0 0 0px;
-  overflow: hidden;
-  opacity: 0;
-  pointer-events: none;
+.panel-ctrl-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  color: var(--slate-400);
+  transition: color 0.15s, background 0.15s;
+  flex-shrink: 0;
+}
+
+.panel-ctrl-btn:hover {
+  color: var(--slate-700);
+  background: var(--slate-200);
+}
+
+.panel-ctrl-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.panel-ctrl-btn:disabled:hover {
+  color: var(--slate-400);
+  background: transparent;
+}
+
+.panel-ctrl-btn svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .panel-header {
@@ -567,7 +613,6 @@ html, body {
   .login-heading     { font-size: 1.2rem; }
   .user-name         { display: none; }
   .header-divider    { display: none; }
-  .layout-label      { display: none; }
   .layout-btn        { padding: 4px 8px; }
 }
 
