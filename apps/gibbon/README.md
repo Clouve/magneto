@@ -210,10 +210,6 @@ docker exec gibbon_app tail -F /var/log/gibbon-cron.log
 
 Note: `./logs.sh gibbon` surfaces only container stdout/stderr (Apache), not `/var/log/gibbon-cron.log`. Exec into the container to read it, as shown above.
 
-### Background
-
-Historically this image did not include cron — Gibbon's scheduled tasks silently never fired. See [gibbon-cron-gap-spec.md](gibbon-cron-gap-spec.md) for the original gap analysis; the bundle-level context lives in [gibbon-ai-studio-bundle-spec.md](gibbon-ai-studio-bundle-spec.md) §5.
-
 ## Common Configuration Scenarios
 
 ### Scenario 1: Change Application URL
