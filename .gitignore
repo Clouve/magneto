@@ -3,4 +3,5 @@
 .claude
 .playwright-mcp
 .vscode
+.research
 !.gitkeep
