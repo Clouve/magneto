@@ -5,7 +5,7 @@ ENV GIBBON_PATH=gibbon/gibbon-${GIBBON_VERSION}
 
 #Setup server
 RUN apt-get update && apt-get -y upgrade && \
-    apt-get install -y gettext-base locales git default-mysql-client && \
+    apt-get install -y gettext-base locales git default-mysql-client cron && \
     echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen && locale-gen
 
 ADD https://github.com/mlocati/docker-php-extension-installer/releases/latest/download/install-php-extensions /usr/local/bin/

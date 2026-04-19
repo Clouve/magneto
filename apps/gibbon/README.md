@@ -8,6 +8,7 @@ Gibbon deployment for Clouve marketplace using a custom Docker image based on PH
 - [Access Gibbon](#access-gibbon)
 - [Dynamic Configuration Updates](#dynamic-configuration-updates)
 - [Environment Variables](#environment-variables)
+- [Scheduled Tasks](#scheduled-tasks)
 - [Common Configuration Scenarios](#common-configuration-scenarios)
 - [Moodle Integration](#moodle-integration)
 - [Features](#features)
@@ -138,6 +139,9 @@ docker exec gibbon_mysql mysql -u gibbon -pgibbon_password gibbon -sN -e \
 - `DEMO_DATA` - Include demo data (Y/N)
 - `GIBBON_LOG_LEVEL` - Apache log level (debug, info, warn, error)
 
+### Scheduled Tasks Configuration
+- `GIBBON_CRON_INTERVAL` - Crontab schedule for the Gibbon scheduled-tasks runner (default: `* * * * *`). See [Scheduled Tasks](#scheduled-tasks).
+
 ### Example Configuration
 
 Edit `docker-compose.yml`:
@@ -167,6 +171,48 @@ environment:
   DEMO_DATA: "N"
   GIBBON_LOG_LEVEL: info
 ```
+
+## Scheduled Tasks
+
+Gibbon ships a set of CLI scripts under `/var/www/html/cli/` that send attendance digests, parent summaries, behaviour letters, library overdue notices, and similar notifications. Upstream prescribes one crontab entry per script at per-task cadences; this image bundles a cron daemon and a dispatcher wrapper that runs them at those cadences.
+
+### How it works
+
+- The container installs `cron` and renders `/etc/cron.d/gibbon-cron` at startup, invoking `/clouve/gibbon/installer/gibbon-cron.sh` on the `GIBBON_CRON_INTERVAL` schedule (default: every minute).
+- The wrapper guards on the Gibbon install sentinel (`/var/www/html/config.php`) — no CLI script runs until installation finishes.
+- Each tick, the wrapper iterates Gibbon's known CLI scripts and runs those whose per-task interval has elapsed, tracked via `/var/log/gibbon-cron.state/<script>.lastrun`.
+- Output (including timestamped `Started`/`Completed`/`Failed` banners) is appended to `/var/log/gibbon-cron.log` inside the container.
+
+### Configuration
+
+```yaml
+environment:
+  # Every minute (default — wrapper decides per-task cadence)
+  GIBBON_CRON_INTERVAL: "* * * * *"
+  # Every 5 minutes instead
+  # GIBBON_CRON_INTERVAL: "*/5 * * * *"
+```
+
+Malformed 5-field expressions fall back to the default with a warning at container start.
+
+### Verification
+
+```bash
+# Confirm cron daemon is running inside the container
+docker exec gibbon_app service cron status
+
+# Confirm the crontab was rendered
+docker exec gibbon_app cat /etc/cron.d/gibbon-cron
+
+# Follow the scheduler log
+docker exec gibbon_app tail -F /var/log/gibbon-cron.log
+```
+
+Note: `./logs.sh gibbon` surfaces only container stdout/stderr (Apache), not `/var/log/gibbon-cron.log`. Exec into the container to read it, as shown above.
+
+### Background
+
+Historically this image did not include cron — Gibbon's scheduled tasks silently never fired. See [gibbon-cron-gap-spec.md](gibbon-cron-gap-spec.md) for the original gap analysis; the bundle-level context lives in [gibbon-ai-studio-bundle-spec.md](gibbon-ai-studio-bundle-spec.md) §5.
 
 ## Common Configuration Scenarios
 
@@ -525,6 +571,7 @@ The `clv-docker-compose.yml` file contains Clouve-specific extensions for market
 - `clv-docker-compose.yml` - Clouve marketplace deployment configuration
 - `image/Dockerfile` - Custom Gibbon Docker image definition
 - `image/installer/entrypoint.sh` - Container entrypoint script
+- `image/installer/gibbon-cron.sh` - Scheduled-tasks dispatcher (invoked by cron)
 - `image/installer/update-config.sh` - Configuration update script
 - `image/build.config` - Build configuration for the centralized build script
 - `test-config-updates.sh` - Automated test script for configuration updates

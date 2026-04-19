@@ -46,6 +46,14 @@ services:
       GIBBON_ORGANISATION_INITIALS: MS
       DEMO_DATA: "N"
       GIBBON_LOG_LEVEL: info
+      # Cron Configuration
+      # Cron schedule in standard cron format (minute hour day month weekday)
+      # Default: * * * * * (every minute — wrapper decides per-task cadence)
+      # Examples:
+      #   */5 * * * *  - Every 5 minutes
+      #   */10 * * * * - Every 10 minutes
+      #   0 * * * *    - Every hour
+      GIBBON_CRON_INTERVAL: "* * * * *"
     volumes:
       - gibbon_data:/var/www/html
     networks:

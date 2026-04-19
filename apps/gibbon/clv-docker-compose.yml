@@ -21,6 +21,7 @@ services:
       GIBBON_AUTOINSTALL: '1'
       DEMO_DATA: 'N'
       GIBBON_LOG_LEVEL: info
+      GIBBON_CRON_INTERVAL: '* * * * *'
     x-clouve-environment-types:
       DB_HOST: containerReference
       DB_NAME: static
@@ -38,6 +39,7 @@ services:
       GIBBON_AUTOINSTALL: static
       DEMO_DATA: static
       GIBBON_LOG_LEVEL: static
+      GIBBON_CRON_INTERVAL: userConfigurable
     volumes:
       - gibbondata:/var/www/html
     x-clouve-metadata:

@@ -165,4 +165,52 @@ echo ""
 
 echo "DONE!"
 
+# ============================================================================
+# CONFIGURE AND START CRON DAEMON FOR SCHEDULED TASKS
+# ============================================================================
+# Generate /etc/cron.d/gibbon-cron dynamically from GIBBON_CRON_INTERVAL.
+# Default: * * * * * (every minute — the wrapper decides per-task cadence).
+# Logs are written to /var/log/gibbon-cron.log.
+
+echo "Configuring Gibbon cron job..."
+
+GIBBON_CRON_INTERVAL="${GIBBON_CRON_INTERVAL:-* * * * *}"
+
+echo "  Cron schedule: $GIBBON_CRON_INTERVAL"
+
+FIELD_COUNT=$(echo "$GIBBON_CRON_INTERVAL" | awk '{print NF}')
+if [ "$FIELD_COUNT" -ne 5 ]; then
+  echo "⚠ Warning: GIBBON_CRON_INTERVAL appears to have invalid format (expected 5 fields, got $FIELD_COUNT)"
+  echo "  Using default: * * * * *"
+  GIBBON_CRON_INTERVAL="* * * * *"
+fi
+
+cat > /etc/cron.d/gibbon-cron << EOF
+# Gibbon Cron Job Configuration
+# Runs Gibbon's scheduled tasks based on GIBBON_CRON_INTERVAL
+# Schedule: $GIBBON_CRON_INTERVAL
+
+$GIBBON_CRON_INTERVAL root /clouve/gibbon/installer/gibbon-cron.sh
+
+# Empty line required at end of crontab file
+EOF
+
+chmod 0644 /etc/cron.d/gibbon-cron
+
+touch /var/log/gibbon-cron.log
+chown www-data:www-data /var/log/gibbon-cron.log
+
+echo "✓ Crontab file generated successfully"
+
+echo "Starting cron daemon for Gibbon scheduled tasks..."
+service cron start
+
+if service cron status > /dev/null 2>&1; then
+  echo "✓ Cron daemon started successfully"
+  echo "  Gibbon cron schedule: $GIBBON_CRON_INTERVAL"
+  echo "  Check logs at: /var/log/gibbon-cron.log"
+else
+  echo "⚠ Warning: Cron daemon may not have started properly"
+fi
+
 exec "$@"
