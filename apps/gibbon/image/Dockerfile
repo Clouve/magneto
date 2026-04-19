@@ -1,6 +1,6 @@
 FROM php:8.3-apache
 
-ENV GIBBON_VERSION=29.0.00
+ENV GIBBON_VERSION=30.0.01
 ENV GIBBON_PATH=gibbon/gibbon-${GIBBON_VERSION}
 
 #Setup server
@@ -28,7 +28,7 @@ RUN echo 'Header set X-Frame-Options: "sameorigin"' >> /etc/apache2/conf-enabled
 RUN echo 'Header set X-XSS-Protection "1; mode=block"' >> /etc/apache2/conf-enabled/security.conf
 
 RUN mv "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini"
-RUN printf "expose_php=Off\nupload_max_filesize = 20M\npost_max_size = 20M\nmemory_limit = 512M\nmax_input_vars=4000" >> "$PHP_INI_DIR/php.ini"
+RUN printf "expose_php=Off\nupload_max_filesize = 20M\npost_max_size = 20M\nmemory_limit = 512M\nmax_input_vars=8000" >> "$PHP_INI_DIR/php.ini"
 
 WORKDIR /clouve
 COPY installer ./gibbon/installer
@@ -43,7 +43,7 @@ RUN tar -xzf ./gibbon/installer/modules.tar.gz -C ./${GIBBON_PATH}/
 
 #Gibbon Settings
 RUN echo "" >> ./${GIBBON_PATH}/.htaccess &&  \
-    echo "php_value max_input_vars 5000" >> ./${GIBBON_PATH}/.htaccess &&  \
+    echo "php_value max_input_vars 8000" >> ./${GIBBON_PATH}/.htaccess &&  \
     echo "" >> ./${GIBBON_PATH}/.htaccess
 RUN cp ./gibbon/installer/auto.php ./${GIBBON_PATH}/installer/auto.php
 
