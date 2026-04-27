@@ -38,11 +38,11 @@ Use this skill when the user is working with the Clouve Gibbon app, when they me
 
 - You are inside the AI Studio container in the app's pod.
 - Gibbon is reachable at the pod-internal hostname `gibbon` on port 80. The Gibbon MySQL is at `gibbon-mysql:3306`. Both are rendered into env vars injected by the app — use `${GIBBON_HOST}` / `${GIBBON_DB_HOST}` rather than hard-coding names.
-- You can `ssh`-in-spirit by running commands against Gibbon via the pod network — but you do NOT have a shell inside the `gibbon` container from here. All Gibbon-side commands must go through its HTTP endpoint or its MySQL port.
-- **Exception: `kubectl exec` is not available from inside the AI Studio container.** If a playbook asks you to run something "inside the Gibbon container," and you genuinely need it, ask the user to run it themselves and paste the output back, or tell them it requires a Clouve ops escalation. Do NOT fabricate output.
+- You **do** have an interactive shell in both side containers via SSH as the `clouve-ops` operator account (passwordless sudo). The identity key is at `~/.ssh/clouve-ops`; connect with `ssh -i ~/.ssh/clouve-ops clouve-ops@${GIBBON_HOST}` (or `@${GIBBON_DB_HOST}`). See [reference/shell-access.md](reference/shell-access.md) for when to use SSH vs. the TCP `mysql`/`curl` channels and the safety gates that apply over the SSH hop.
 
 ## Pointers into the deeper docs
 
+- [reference/shell-access.md](reference/shell-access.md) — how to ssh into the gibbon and gibbon-mysql containers as `clouve-ops`, when SSH is the right tool vs. the TCP channels, and the safety gates that apply over SSH.
 - [reference/stack-and-runtime.md](reference/stack-and-runtime.md) — PHP/MySQL/Apache versions, extensions, ini settings the installer enforces, filesystem layout.
 - [reference/install-and-bootstrap.md](reference/install-and-bootstrap.md) — how the container brings up a fresh instance, what `config.php` contains, install sentinel.
 - [reference/upgrade.md](reference/upgrade.md) — how Gibbon versions itself, `CHANGEDB.php` migration format (the `;end` separator gotcha), order of operations.

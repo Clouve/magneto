@@ -128,7 +128,7 @@ get_all_images() {
 
                 for container_dir in "${container_dirs[@]}"; do
                     # Convert directory name to uppercase and append _IMAGE (e.g., db -> DB_IMAGE, redis -> REDIS_IMAGE)
-                    local var_prefix=$(echo "$container_dir" | tr '[:lower:]' '[:upper:]')
+                    local var_prefix=$(echo "$container_dir" | tr '[:lower:]-' '[:upper:]_')
                     local var_name="${var_prefix}_IMAGE"
                     local image_name="${!var_name}"
 
@@ -138,8 +138,8 @@ get_all_images() {
                 done
 
                 # Reset all variables for next iteration
-                # Get all variables that end with _IMAGE or _NAME
-                for var in $(compgen -v | grep -E '_(IMAGE|NAME)$'); do
+                # Get all variables that end with _IMAGE, _NAME, or _CONTEXT
+                for var in $(compgen -v | grep -E '_(IMAGE|NAME|CONTEXT)$'); do
                     unset "$var"
                 done
                 unset APP_IMAGE
@@ -172,7 +172,7 @@ get_target_images() {
 
         for container_dir in "${container_dirs[@]}"; do
             # Convert directory name to uppercase and append _IMAGE (e.g., db -> DB_IMAGE, redis -> REDIS_IMAGE)
-            local var_prefix=$(echo "$container_dir" | tr '[:lower:]' '[:upper:]')
+            local var_prefix=$(echo "$container_dir" | tr '[:lower:]-' '[:upper:]_')
             local var_name="${var_prefix}_IMAGE"
             local image_name="${!var_name}"
 
@@ -182,7 +182,7 @@ get_target_images() {
         done
 
         # Reset all variables
-        for var in $(compgen -v | grep -E '_(IMAGE|NAME)$'); do
+        for var in $(compgen -v | grep -E '_(IMAGE|NAME|CONTEXT)$'); do
             unset "$var"
         done
         unset APP_IMAGE
@@ -504,13 +504,18 @@ CONTAINER_DIRS=($(discover_container_dirs "$APP_IMAGE_DIR"))
 CONTAINER_CONFIGS=()
 for container_dir in "${CONTAINER_DIRS[@]}"; do
     # Convert directory name to uppercase (e.g., db -> DB, redis -> REDIS)
-    var_prefix=$(echo "$container_dir" | tr '[:lower:]' '[:upper:]')
+    var_prefix=$(echo "$container_dir" | tr '[:lower:]-' '[:upper:]_')
     image_var="${var_prefix}_IMAGE"
     name_var="${var_prefix}_NAME"
+    context_var="${var_prefix}_CONTEXT"
 
     # Get the values of these variables
     image_value="${!image_var}"
     name_value="${!name_var}"
+    # Optional: per-container build context override (path relative to the
+    # app/bundle directory). If unset, the container's own subdirectory is
+    # used as the docker build context (the original default).
+    context_value="${!context_var:-}"
 
     # Check if both are provided or both are missing
     if [ -n "$image_value" ] || [ -n "$name_value" ]; then
@@ -529,7 +534,7 @@ for container_dir in "${CONTAINER_DIRS[@]}"; do
         fi
 
         # Store the configuration for this container
-        CONTAINER_CONFIGS+=("$container_dir:$image_value:$name_value")
+        CONTAINER_CONFIGS+=("$container_dir:$image_value:$name_value:$context_value")
     else
         echo "⚠ Warning: Found Dockerfile in '$container_dir/' but no ${image_var} or ${name_var} in build.config"
         echo "  Skipping build for '$container_dir/' container"
@@ -552,13 +557,37 @@ if ! docker buildx version &> /dev/null; then
     exit 1
 fi
 
-# Ensure a buildx builder with docker-container driver exists for multi-platform support
-BUILDX_BUILDER="multiplatform-builder"
-if ! docker buildx inspect "$BUILDX_BUILDER" &> /dev/null; then
-    echo "Creating buildx builder '$BUILDX_BUILDER' with docker-container driver..."
-    docker buildx create --name "$BUILDX_BUILDER" --driver docker-container --bootstrap
+# Pick the builder based on whether we're pushing.
+#
+# - Push builds need multi-platform output, so they use the docker-container
+#   driver (created on first use as "multiplatform-builder").
+# - Local builds (--load) only need the host platform, so they use the default
+#   docker driver. Crucially, the default driver shares its image cache with
+#   the host daemon, which is required when one of our Dockerfiles uses
+#   FROM <local-image> (e.g. apps/gibbon/image/ai-studio/ uses FROM
+#   r.clv.zone/e2eorg/ai-studio:latest, and that image is built locally and
+#   only exists in the host daemon's cache, not in the docker-container
+#   driver's isolated cache).
+if [ "$PUSH_IMAGES" = true ]; then
+    BUILDX_BUILDER="multiplatform-builder"
+    if ! docker buildx inspect "$BUILDX_BUILDER" &> /dev/null; then
+        echo "Creating buildx builder '$BUILDX_BUILDER' with docker-container driver..."
+        docker buildx create --name "$BUILDX_BUILDER" --driver docker-container --bootstrap
+    fi
+    docker buildx use "$BUILDX_BUILDER"
+else
+    # Local builds: pick a docker-driver builder bound to the *current*
+    # docker context. The "default" builder is hard-bound to the "default"
+    # context and errors out if the user is on Docker Desktop's
+    # "desktop-linux" context (or any other), so we resolve dynamically.
+    CURRENT_CONTEXT="$(docker context show 2>/dev/null || echo default)"
+    if docker buildx inspect "$CURRENT_CONTEXT" &> /dev/null; then
+        BUILDX_BUILDER="$CURRENT_CONTEXT"
+    else
+        BUILDX_BUILDER="default"
+    fi
+    docker buildx use "$BUILDX_BUILDER"
 fi
-docker buildx use "$BUILDX_BUILDER"
 
 # Navigate to the app image directory
 cd "$APP_IMAGE_DIR"
@@ -571,13 +600,21 @@ fi
 
 # Validate that all configured containers have Dockerfiles
 for config in "${CONTAINER_CONFIGS[@]}"; do
-    IFS=':' read -r container_dir image_name display_name <<< "$config"
+    IFS=':' read -r container_dir image_name display_name context_value <<< "$config"
 
     if [ ! -f "$container_dir/Dockerfile" ]; then
-        var_prefix=$(echo "$container_dir" | tr '[:lower:]' '[:upper:]')
+        var_prefix=$(echo "$container_dir" | tr '[:lower:]-' '[:upper:]_')
         echo "✗ Error: Dockerfile not found for '$container_dir' container"
         echo "  Expected location: $APP_IMAGE_DIR/$container_dir/Dockerfile"
         echo "  Note: ${var_prefix}_IMAGE and ${var_prefix}_NAME are configured, so a Dockerfile is required."
+        exit 1
+    fi
+
+    # Validate that any context override resolves to an existing directory.
+    if [ -n "$context_value" ] && [ ! -d "$TARGET_DIR/$context_value" ]; then
+        var_prefix=$(echo "$container_dir" | tr '[:lower:]-' '[:upper:]_')
+        echo "✗ Error: ${var_prefix}_CONTEXT='$context_value' does not resolve to a directory"
+        echo "  Expected location: $TARGET_DIR/$context_value"
         exit 1
     fi
 done
@@ -657,7 +694,20 @@ echo ""
 if [ ${#CONTAINER_CONFIGS[@]} -gt 0 ]; then
     STEP_NUM=2
     for config in "${CONTAINER_CONFIGS[@]}"; do
-        IFS=':' read -r container_dir image_name display_name <<< "$config"
+        IFS=':' read -r container_dir image_name display_name context_value <<< "$config"
+
+        # Resolve the docker build context. Default: container subdirectory
+        # under image/ (e.g. mysql/, postgres/). Override: <PREFIX>_CONTEXT
+        # in build.config — a path relative to the app/bundle directory,
+        # used when a sub-container needs to COPY files from outside its
+        # own subdirectory (e.g. gibbon-ai-studio bakes in skill/).
+        if [ -n "$context_value" ]; then
+            build_context="$TARGET_DIR/$context_value"
+            dockerfile_args=(--file "$APP_IMAGE_DIR/$container_dir/Dockerfile")
+        else
+            build_context="$container_dir/"
+            dockerfile_args=()
+        fi
 
         echo "Step $STEP_NUM/$TOTAL_STEPS: Building $display_name image from Dockerfile for platforms: $PLATFORMS..."
 
@@ -669,7 +719,8 @@ if [ ${#CONTAINER_CONFIGS[@]} -gt 0 ]; then
                 --tag "$IMAGE_REGISTRY/$image_name:latest" \
                 --provenance=false \
                 --push \
-                "$container_dir/"; then
+                "${dockerfile_args[@]}" \
+                "$build_context"; then
                 echo "✓ $display_name multi-platform image built and pushed successfully!"
             else
                 echo "✗ Failed to build and push $display_name Docker image"
@@ -683,7 +734,8 @@ if [ ${#CONTAINER_CONFIGS[@]} -gt 0 ]; then
                 --tag "$IMAGE_REGISTRY/$image_name:latest" \
                 --provenance=false \
                 --load \
-                "$container_dir/"; then
+                "${dockerfile_args[@]}" \
+                "$build_context"; then
                 echo "✓ $display_name image built and loaded into Docker successfully!"
                 echo "  Note: Built for local platform ($LOCAL_PLATFORM) only. Use --push for multi-platform (amd64 + arm64)."
             else
@@ -719,7 +771,7 @@ echo ""
 
 # Show all container image tags
 for config in "${CONTAINER_CONFIGS[@]}"; do
-    IFS=':' read -r container_dir image_name display_name <<< "$config"
+    IFS=':' read -r container_dir image_name display_name context_value <<< "$config"
 
     if [ "$PUSH_IMAGES" = true ]; then
         echo "$display_name Image Tags (Platforms: $PLATFORMS):"

@@ -361,8 +361,19 @@ GEMEOF
 }
 
 # Write the client's context/instructions file from its template.
-# Uses envsubst so the template can reference ${USERNAME}, ${ROOT_PASSWORD},
-# and ${AI_STUDIO_HOST} — all available in the login environment.
+#
+# envsubst (no SHELL-FORMAT) substitutes every ${VAR} and $VAR reference in
+# the template with the value of VAR from the current environment. The
+# upstream templates only reference ${USERNAME}, ${ROOT_PASSWORD}, and
+# ${AI_STUDIO_HOST}, but downstream apps (e.g. apps/gibbon's derived
+# gibbon-ai-studio image, which overlays its own CLAUDE.md.tpl with extra
+# ${GIBBON_HOST}, ${GIBBON_DB_HOST}, etc. references) can rely on this same
+# call to render their custom env vars without any per-app shim. Any
+# ${VAR} not in the env is replaced with the empty string.
+#
+# Template authors who want a literal "$VAR" or "${VAR}" in the rendered
+# output (e.g. when documenting a PHP variable name) must avoid the
+# leading "$" — envsubst has no escape syntax.
 _clv_write_context() {
     local idx="$1"
     local tpl="${CLV_CONTEXT_TPLS[$idx]}"
@@ -378,9 +389,7 @@ _clv_write_context() {
     fi
 
     mkdir -p "$dir"
-    USERNAME="$(whoami)" \
-        envsubst '${USERNAME} ${ROOT_PASSWORD} ${AI_STUDIO_HOST}' \
-        < "$tpl" > "$dir/$file"
+    USERNAME="$(whoami)" envsubst < "$tpl" > "$dir/$file"
     chmod 600 "$dir/$file"
 }
 

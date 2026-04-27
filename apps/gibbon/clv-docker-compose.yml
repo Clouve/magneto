@@ -1,4 +1,22 @@
 version: '3.8'
+# AI Studio-powered Gibbon — marketplace manifest.
+#
+# Three containers in one app pod:
+#   gibbon            — the school-management app (image from apps/gibbon/)
+#   gibbon-mysql      — Gibbon's DB (image from apps/gibbon/image/mysql/)
+#   gibbon-ai-studio  — derived AI Studio image, built from the upstream
+#                       ai-studio image (apps/ai-studio/) plus three baked-in
+#                       layers: the Gibbon DevOps Skill tree, the
+#                       /etc/profile.d/ symlink drop-in, and a Gibbon-authored
+#                       CLAUDE.md.tpl. Locked to Claude Code via
+#                       AI_STUDIO_CLIENT=claude-code. No ConfigMap
+#                       projections, no volume mounts for the skill — the
+#                       assets ship inside the image (skill update = image
+#                       rebuild + redeploy).
+#
+# See apps/gibbon/gibbon-ai-studio-bundle-spec.md §3.3 for the full packaging
+# rationale (derived-image delivery, symlink bridging into $HOME/.claude/skills/,
+# client-picker lock-down, API-key flow).
 services:
   gibbon:
     image: gibbon:latest
@@ -42,6 +60,11 @@ services:
       GIBBON_CRON_INTERVAL: userConfigurable
     volumes:
       - gibbondata:/var/www/html
+      # Shared per-pod ed25519 keypair channel for the clouve-ops shell
+      # account that gibbon-ai-studio's Claude Code agent uses to ssh into
+      # this container. See the gibbon-ai-studio service for the full
+      # mechanism.
+      - clouveopskeys:/clouve/ops-keys
     x-clouve-metadata:
       containerName: gibbon
       purpose: Frontend
@@ -51,8 +74,8 @@ services:
       cpuBase: 1
     x-clouve-bundle-metadata:
       appVersion: 30.0.01
-      appTitle: Gibbon
-      appDescription: Gibbon is an intuitive, open-source school management platform designed to revolutionize the way educational institutions operate. Tailored to meet the diverse needs of schools, Gibbon offers a comprehensive suite of tools for managing administrative tasks, tracking student progress, and facilitating effective communication among teachers, students, and parents. Its user-friendly interface and customizable modules streamline operations such as timetabling, attendance, and grade reporting. By enhancing organization and efficiency, Gibbon empowers educators to focus on delivering high-quality education, fostering an enriched learning environment, and ultimately supporting student success.
+      appTitle: Gibbon with Claude Code
+      appDescription: A cloud-hosted Gibbon school-management platform paired with a browser-based Claude Code workspace that knows how to safely operate it. School administrators launch the app, provide an Anthropic API key, and get both a live Gibbon instance and an AI agent that can perform upgrades, module installs, backups, diagnostics, and academic-year rollover through natural-language conversation — with built-in safety gates that refuse destructive operations without explicit confirmation. Gibbon remains a stock upstream install; the Claude Code workspace (AI Studio) is loaded with a Gibbon DevOps Skill containing reference docs, playbooks, and audited scripts scoped to this instance. The tenant owns the Anthropic API key and the Gibbon data; Clouve hosts the containers.
     x-clouve-healthcheck:
       enabled: true
       type: HTTP
@@ -94,6 +117,10 @@ services:
       MYSQL_ROOT_PASSWORD: secret
     volumes:
       - dbdata:/var/lib/mysql
+      # Shared per-pod ed25519 keypair channel for the clouve-ops shell
+      # account that gibbon-ai-studio's Claude Code agent uses to ssh
+      # into this container. See gibbon-ai-studio for the full mechanism.
+      - clouveopskeys:/clouve/ops-keys
     x-clouve-metadata:
       containerName: gibbon-mysql
       purpose: Database
@@ -115,8 +142,112 @@ services:
       - name: dbdata
         size: 10
         description: 'Volume from Docker Compose for gibbon-mysql (original: db_data)'
+  ai-studio:
+    image: gibbon-ai-studio:latest
+    ports:
+      - '8080:80'
+    environment:
+      AI_STUDIO_USERNAME: '{user.firstName}_{user.lastName}'
+      AI_STUDIO_PASSWORD: ai-studio-password
+      AI_STUDIO_ROOT_PASSWORD: ai-studio-root-password
+      # Locks Claude Code as the AI client. AI Studio's .bash_profile honours
+      # this env var: skips the interactive selector, marks the choice
+      # readonly in every shell, and the Preferences API rejects client-change
+      # requests with HTTP 400 (see spec §3.3). No fork of AI Studio needed.
+      AI_STUDIO_CLIENT: claude-code
+      # Pod-internal hostnames + DB creds, surfaced so the skill's playbooks
+      # can refer to them by env var instead of hard-coding service names.
+      GIBBON_HOST: gibbon
+      GIBBON_DB_HOST: gibbon-mysql
+      GIBBON_DB_NAME: gibbon
+      GIBBON_DB_USER: gibbon
+      GIBBON_DB_PASSWORD: gibbon-mysql-password
+    x-clouve-environment-types:
+      AI_STUDIO_USERNAME: applicationUsername
+      AI_STUDIO_PASSWORD: applicationPassword
+      AI_STUDIO_ROOT_PASSWORD: secret
+      AI_STUDIO_CLIENT: static
+      GIBBON_HOST: containerReference
+      GIBBON_DB_HOST: containerReference
+      GIBBON_DB_NAME: static
+      GIBBON_DB_USER: static
+      # Same `secret` value as the Gibbon service's DB_PASSWORD — Clouve
+      # resolves secret-typed env vars to the same generated value across
+      # services when the variable name matches the target service pattern.
+      # If your Clouve deployment resolves secrets per-service, replace this
+      # with the concrete mechanism your orchestrator uses for cross-service
+      # secret sharing (same pattern Moodle uses to read Gibbon's DB in the
+      # education-kit bundle).
+      GIBBON_DB_PASSWORD: secret
+    volumes:
+      - ai-studio-home:/home
+      - ai-studio-usr:/usr
+      - ai-studio-opt:/opt
+      - ai-studio-var:/var
+      # Per-pod ed25519 keypair channel for the clouve-ops shell account in
+      # gibbon and gibbon-mysql. This container's entrypoint generates the
+      # keypair into /clouve/ops-keys/ on first boot; the other two
+      # containers' entrypoints poll for the public-key file and install
+      # it as clouve-ops's only authorized_key.
+      - clouveopskeys:/clouve/ops-keys
+    x-clouve-metadata:
+      containerName: ai-studio
+      purpose: Frontend
+      protocol: TCP
+      isPublic: true
+      memoryBase: 4
+      cpuBase: 1
+    x-clouve-healthcheck:
+      enabled: true
+      type: HTTP
+      path: /
+      port: 80
+      initialDelay: 60
+      interval: 60
+      timeout: 60
+      failureThreshold: 15
+      successThreshold: 1
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - '--spider'
+        - '-q'
+        - http://localhost:80/
+      interval: 60s
+      timeout: 60s
+      retries: 15
+      start_period: 60s
+    x-clouve-volumes:
+      - name: ai-studio-home
+        size: 10
+        description: Persistent volume for home directories (stored API key, Claude Code binary, shell history)
+      - name: ai-studio-usr
+        size: 10
+        description: Persistent volume for system binaries and libraries (/usr)
+      - name: ai-studio-opt
+        size: 10
+        description: Persistent volume for optional software (/opt)
+      - name: ai-studio-var
+        size: 10
+        description: Persistent volume for /var (package db, cache, logs, web files, /etc overlay tarball)
 volumes:
   gibbondata:
     driver: local
   dbdata:
+    driver: local
+  ai-studio-home:
+    driver: local
+  ai-studio-usr:
+    driver: local
+  ai-studio-opt:
+    driver: local
+  ai-studio-var:
+    driver: local
+  # Per-pod ephemeral channel for the clouve-ops ed25519 keypair (one
+  # private + one public file, no other content). Wiped per pod
+  # lifecycle; a redeploy gets a fresh key. NOT declared in any
+  # x-clouve-volumes block — it's a small ephemeral coordination volume,
+  # not a tenant-data PVC.
+  clouveopskeys:
     driver: local
