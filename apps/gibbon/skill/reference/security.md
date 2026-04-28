@@ -25,11 +25,43 @@ Implications:
 
 ## Authentication & sessions
 
-- Native auth: `gibbonPerson.username` + hashed password in `gibbonPerson.password`. Strong-password policy controlled by `gibbonSetting(scope='User Admin', name='passwordPolicy*')`.
+- Native auth: `gibbonPerson.username` + hashed password. Strong-password policy controlled by `gibbonSetting(scope='User Admin', name='passwordPolicy*')`.
 - Password-reset flow writes to `gibbonLog` and emails the user.
 - Session store: `gibbonSession` table.
 - CSRF: **all POST forms** now carry nonce + CSRF token handling — added in v29.0.00. A module that circumvents this (e.g. ships its own forms without the helpers) is a red flag.
 - SSO: Google OAuth and Microsoft Graph supported via `config.php` settings. Credentials for those live in `config.php` NOT the DB.
+
+### Password hashing — critical detail
+
+Gibbon uses **SHA-256, not bcrypt**. The verifier (`Aura\Auth\Verifier\PasswordVerifier('sha256')` in `src/Services/AuthServiceProvider.php`) does:
+
+```php
+hash('sha256', $passwordStrongSalt . $inputPassword) === $passwordStrong
+```
+
+Two columns in `gibbonPerson` are involved:
+
+| Column | Content |
+|---|---|
+| `passwordStrongSalt` | 22-char random string; charset `./aAbBcC…zZ0-9` |
+| `passwordStrong` | `hash('sha256', salt . plaintext_password)` — hex string, 64 chars |
+
+**Common failure modes when creating users via SQL:**
+- Storing a bcrypt hash (`$2y$…`) in `passwordStrong` → login fails with "Incorrect username and password".
+- Leaving `passwordStrongSalt` as `''` → `empty()` check throws `DatabaseLoginError` ("Your request failed due to a database error").
+
+**Correct PHP to generate credentials** (pipe via SSH into the `gibbon` container):
+
+```php
+<?php
+$c = './aAbBcCdDeEfFgGhHiIjJkKlLmMnNoOpPqQrRsStTuUvVwWxXyYzZ0123456789';
+$salt = '';
+for ($x = 0; $x < 22; $x++) { $salt .= $c[mt_rand(0, strlen($c)-1)]; }
+$hash = hash('sha256', $salt . 'YOUR_PASSWORD_HERE');
+echo "Salt: $salt\nHash: $hash\n";
+```
+
+Store `$salt` → `passwordStrongSalt`, `$hash` → `passwordStrong`. Never use `password_hash()` for Gibbon user records.
 
 ## 2FA
 

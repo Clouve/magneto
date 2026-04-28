@@ -33,7 +33,14 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # Skill tree — discovered by Claude Code via the /etc/profile.d/ symlink below.
+# Wide-open mode (a+rwX) so the runtime agent — which runs as a non-root tenant
+# user — can persist new learnings, corrections, and playbooks back into the
+# skill per the "Skill Maintenance" protocol in CLAUDE.md.tpl. Single-tenant
+# pod and the agent already has passwordless sudo, so world-writable here does
+# not widen the trust boundary. Edits live in the container's overlay layer and
+# are wiped on pod restart (see CLAUDE.md.tpl "Persistent Paths").
 COPY skill/ /clouve/skills/gibbon-devops/
+RUN chmod -R a+rwX /clouve/skills/gibbon-devops/
 
 # Login-time symlink that bridges the static skill mount into the dynamic
 # per-tenant $HOME/.claude/skills/. Sourced by AI Studio's existing

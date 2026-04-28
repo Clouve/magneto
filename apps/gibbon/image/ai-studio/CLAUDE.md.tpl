@@ -225,6 +225,55 @@ The standard pattern, when you bring up a service:
 Always explain this routing approach when it applies, so the user
 understands why direct port access isn't an option.
 
+## Skill Maintenance — Keep the Gibbon Skill Current
+
+The Gibbon DevOps Skill at `~/.claude/skills/gibbon-devops/` is the
+**authoritative source** for Gibbon-specific knowledge — architecture,
+conventions, gotchas, common tasks, version-specific behaviour. Read
+its `SKILL.md` before non-trivial work, and treat the files under
+`reference/` and `playbooks/` as load-bearing.
+
+**Standing instruction for every Gibbon session.** When you finish a
+task and you have discovered something Gibbon-specific that a future
+session will benefit from — a new pattern, a corrected assumption, an
+undocumented dependency, a recurring failure mode, a workflow nuance —
+**capture it in the skill before ending the task.** The complete
+protocol (what qualifies, where each kind of learning belongs, edit and
+dedup rules, entry format) lives in the skill's `SKILL.md` under
+"Maintaining this skill" and in `learnings.md` at its root. Follow it.
+
+Edits must be **incremental** and **de-duplicated**: prefer the right
+file (`reference/*.md` for facts about Gibbon proper, `playbooks/*.md`
+for procedures, `scripts/` for audited automation) over the catch-all
+`learnings.md`; grep before appending; extend related entries instead
+of creating parallel ones.
+
+**Scope guardrail — what NOT to capture in this skill:**
+
+- Generic PHP / Apache / MySQL / Linux knowledge (training-data
+  territory, not skill content).
+- Anything tied to a `/_clv/` path — that namespace is platform-managed
+  and explicitly outside both your scope and this skill's scope.
+- Anything that belongs in a global Claude Code skill or in your
+  personal memory rather than this app's skill.
+- Secrets, credentials, or tenant-identifying data — ever.
+- Per-session ephemera (what you tried and rolled back, the contents
+  of one specific bug report). Conversation context handles that.
+
+**Persistence reality check.** The skill is mounted from
+`/clouve/skills/gibbon-devops/` (with a login-time symlink at
+`~/.claude/skills/gibbon-devops`), and `/clouve/` is **not** in the
+persistent path list above. Edits you make at runtime survive the rest
+of the session but are wiped on pod restart, and they do not flow back
+to the magneto source repo on their own. So **when you write a new
+learning, also surface a one-line summary in chat** of the form:
+
+> _Captured to skill learnings: `<file>` — `<one-line summary>`_
+
+That visible echo is the only mechanism by which a runtime learning
+becomes durable — the operator can mirror it into the magneto repo
+and the next image rebuild bakes it in for every tenant.
+
 ## Operational Guidelines
 
 ### Scope of Authority

@@ -53,6 +53,48 @@ Use this skill when the user is working with the Clouve Gibbon app, when they me
 - [reference/security.md](reference/security.md) — file permissions, installer lockdown, CSRF/nonce, 2FA, known CVEs, impersonation.
 - [reference/operations-and-signals.md](reference/operations-and-signals.md) — what "healthy" looks like, where logs live, our cron wrapper.
 - [reference/troubleshooting.md](reference/troubleshooting.md) — failure modes seen in the wild and the first thing to check for each.
+- [learnings.md](learnings.md) — living scratchpad for Gibbon-specific facts captured during real sessions that don't yet justify their own file.
+
+## Maintaining this skill
+
+This skill is a living document. When you finish a task and you have learned something Gibbon-specific that future sessions will benefit from, capture it before ending the task — otherwise it is lost.
+
+### What qualifies as worth persisting
+
+- A non-obvious behaviour that surprised you and could bite the next session.
+- A version-specific fact about gibbon v30.x that upstream docs do not surface clearly.
+- An environment quirk of the Clouve packaging — compose vs. Kubernetes differences, the `update-config.sh` sed, the gibbon-cron wrapper, the `clouve-ops` SSH channel, MySQL 8.0 charset defaults.
+- A workflow pattern the user has confirmed at least twice — the verified shape of a recurring request.
+- A correction to anything elsewhere in this skill. Fix the original file *in place*, then drop a one-line stub in [learnings.md](learnings.md) so future sessions notice the change.
+
+### What does NOT qualify
+
+- Generic PHP / Apache / MySQL / Linux knowledge (training-data territory).
+- Anything `/_clv/`-related — that namespace is the Clouve platform's responsibility, not this skill's.
+- Anything that belongs in a global Claude Code skill or in the user's personal memory (not Gibbon-specific).
+- Per-session ephemera, secrets, or tenant-identifying data.
+
+### Where each kind of learning belongs
+
+| Kind of learning | File |
+|---|---|
+| Reference fact about Gibbon proper | the relevant [reference/*.md](reference/), edited in place |
+| New verified procedure | a new file under [playbooks/](playbooks/) |
+| Audited automation | a new file under [scripts/](scripts/) plus a playbook entry that calls it |
+| Cross-cutting / too small / speculative | [learnings.md](learnings.md) |
+| Correction to anything above | fix in place + one-line stub in [learnings.md](learnings.md) |
+
+### Edit rules
+
+- **Incremental.** Append or revise one section at a time; never rewrite a whole reference file as part of a learning capture.
+- **De-duplicated.** Grep the target file (and `learnings.md`) for the topic before adding a new entry. If a related entry exists, extend it.
+- **Terse.** A learning entry is one paragraph. If it grows past ~10 lines, promote it to its own file under `reference/` or `playbooks/` and leave a one-line pointer in `learnings.md`.
+- **Dated.** Every `learnings.md` entry carries an ISO-8601 date.
+- **Pruned.** When a learning is now covered by a dedicated reference file, delete its `learnings.md` entry — git history retains the original capture.
+
+### Runtime caveat
+
+Inside the deployed AI Studio container the skill is mounted from `/clouve/skills/gibbon-devops/`, and `/clouve/` is **not** in the container's persistent path set (`/usr`, `/var`, `/opt`, `/home`). Edits made at runtime survive the rest of the session but are wiped on the next pod restart, and they do not propagate back to the magneto source repo. So when you write a new learning at runtime, also surface a one-line summary in chat in the form `Captured to skill learnings: <file> — <one-line summary>`. That visible echo is the only mechanism by which a runtime learning becomes durable — the operator can copy it into the magneto repo and rebuild the image.
 
 ## Safety gates (enforce these in every flow)
 

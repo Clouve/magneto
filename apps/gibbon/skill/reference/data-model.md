@@ -106,6 +106,29 @@ These tables can be inspected, pruned, or even rebuilt in recovery scenarios. St
 - **Academic-year scoping:** almost every "academic" table has a `gibbonSchoolYearID` column. When a query "misses" data, the first thing to check is the year scope. `gibbonSchoolYear.status` is `Upcoming | Current | Past`; exactly one row should be `Current`.
 - **Multi-tenant-per-schema is NOT supported.** One Gibbon schema = one school. This app is single-tenant-per-instance by design.
 
+## Gotchas when inserting rows manually
+
+### gibbonPerson
+
+`gibbonPerson` has ~50 columns declared `NOT NULL` with no `DEFAULT` value. MySQL strict mode will reject any `INSERT` that omits them. You must pass explicit empty strings for every text/varchar field you don't have a real value for. Key ones that catch people:
+
+- `nameInCharacters`, `officialName` — must be `''` if unknown
+- `passwordStrongSalt` — **must not be empty**; see [security.md](security.md) for the correct SHA-256 scheme
+- `address1`, `address1District`, `address1Country`, `address2`, `address2District`, `address2Country`
+- `phone1CountryCode`, `phone1`, `phone2CountryCode`, `phone2`, `phone3CountryCode`, `phone3`, `phone4CountryCode`, `phone4`
+- `website`, `languageFirst`, `languageSecond`, `languageThird`, `countryOfBirth`
+- `birthCertificateScan`, `ethnicity`, `religion`, `profession`, `employer`, `jobTitle`
+- Emergency contact fields: `emergency1Name`, `emergency1Number1`, `emergency1Number2`, `emergency1Relationship`, (same for emergency2)
+- `studentID`, `lastSchool`, `nextSchool`, `departureReason`, `transport`, `transportNotes`
+- `calendarFeedPersonal`, `lockerNumber`, `vehicleRegistration`, `personalBackground`
+- `googleAPIRefreshToken`, `microsoftAPIRefreshToken`, `genericAPIRefreshToken`, `fields`
+
+Use a PHP PDO script (piped via SSH) rather than a raw SQL heredoc — it's easier to supply named parameters cleanly without shell quoting issues.
+
+### gibbonFormGroup
+
+`gibbonFormGroup.website` has no default; always supply `''`.
+
 ## How to safely explore the DB
 
 From the AI Studio container, against the app's pod-internal MySQL:
