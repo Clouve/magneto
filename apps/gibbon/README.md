@@ -119,27 +119,33 @@ Same flow applies in dev and prod — there are no bind-mounts for the skill, so
 
 ## Cross-Container Shell Access (clouve-ops over SSH)
 
-The agent inside `gibbon-ai-studio` has a real SSH shell into both side containers (`gibbon` and `gibbon-mysql`) as the `clouve-ops` operator account — passwordless `sudo`, key-only auth, no other user allowed. This covers the OS-level operations that the TCP `mysql` and HTTP channels can't reach (Apache config, log tailing, Gibbon CLI scripts under `/var/www/html/cli/`, MySQL daemon control, `/etc/mysql/conf.d/` edits, etc.).
+The agent inside `gibbon-ai-studio` has a real SSH shell into both side containers (`gibbon` and `gibbon-mysql`) as the `clouve-ops` operator account — passwordless `sudo`, password auth, no other user allowed. This covers the OS-level operations that the TCP `mysql` and HTTP channels can't reach (Apache config, log tailing, Gibbon CLI scripts under `/var/www/html/cli/`, MySQL daemon control, `/etc/mysql/conf.d/` edits, etc.).
 
-### How the keypair is exchanged
+### How the credential is shared
 
-1. On first boot, `gibbon-ai-studio`'s entrypoint generates a per-pod ed25519 keypair into a small shared volume (`clouve_ops_keys`, mounted at `/clouve/ops-keys/` in all three containers).
-2. `gibbon` and `gibbon-mysql` each background a watcher that polls for the public-key file, installs it as the only `authorized_keys` entry for the pre-created `clouve-ops` user, then `exec`s `sshd -D`.
-3. On each interactive shell login in `gibbon-ai-studio`, the profile.d drop-in materialises a per-user 0600 copy of the private key at `$HOME/.ssh/clouve-ops`.
+A single env var, `CLOUVE_OPS_PASSWORD`, is set with the **same value** on all three services:
 
-The shared volume contains **only** the keypair — no Gibbon files, no DB files, no shared filesystem with the other containers.
+- **Local dev (`docker-compose.yml`):** hard-coded so the three containers come up consistent.
+- **Prod (`clv-docker-compose.yml`):** declared as `secret` under `x-clouve-environment-types`. Clouve generates a random password-like string at deploy time and injects the same value into all three pods (same mechanism as `GIBBON_DB_PASSWORD`, which `gibbon-ai-studio` already reads to talk to MySQL).
+
+On each container start:
+
+1. `gibbon` and `gibbon-mysql` apply the env-var value to the `clouve-ops` user with `chpasswd`, then exec `sshd -D` (sshd is restricted to that user, password auth only — no root, no pubkey, no empty passwords).
+2. `gibbon-ai-studio` reads the same env var and authenticates with `sshpass -e ssh …` so the password never has to be retyped.
+
+No shared volume, no on-disk keypair, no per-shell key materialization.
 
 ### How the agent uses it
 
 ```bash
 # Interactive shell into the gibbon container
-ssh -i ~/.ssh/clouve-ops clouve-ops@${GIBBON_HOST}
+SSHPASS="$CLOUVE_OPS_PASSWORD" sshpass -e ssh clouve-ops@${GIBBON_HOST}
 
 # Interactive shell into the gibbon-mysql container
-ssh -i ~/.ssh/clouve-ops clouve-ops@${GIBBON_DB_HOST}
+SSHPASS="$CLOUVE_OPS_PASSWORD" sshpass -e ssh clouve-ops@${GIBBON_DB_HOST}
 
 # One-shot command (preferred for scripted operations)
-ssh -i ~/.ssh/clouve-ops clouve-ops@${GIBBON_HOST} \
+SSHPASS="$CLOUVE_OPS_PASSWORD" sshpass -e ssh clouve-ops@${GIBBON_HOST} \
     "sudo tail -50 /var/log/apache2/error.log"
 ```
 
@@ -604,30 +610,27 @@ If your `${GIBBON_HOST}`/`${GIBBON_DB_HOST}` etc. show up unsubstituted in `~/.c
 
 ### Cross-Container SSH Issues
 
-If `ssh -i ~/.ssh/clouve-ops clouve-ops@${GIBBON_HOST}` (or `@${GIBBON_DB_HOST}`) fails inside `gibbon-ai-studio`:
+If `sshpass -e ssh clouve-ops@${GIBBON_HOST}` (or `@${GIBBON_DB_HOST}`) fails inside `gibbon-ai-studio`:
 
 ```bash
-# Per-pod keypair must exist in all three containers (shared via clouve_ops_keys volume)
-docker exec gibbon_ai_studio ls -l /clouve/ops-keys/
-docker exec gibbon_app        ls -l /clouve/ops-keys/
-docker exec gibbon_mysql      ls -l /clouve/ops-keys/
+# Same CLOUVE_OPS_PASSWORD must be set on all three services
+docker exec gibbon_ai_studio printenv CLOUVE_OPS_PASSWORD
+docker exec gibbon_app        printenv CLOUVE_OPS_PASSWORD
+docker exec gibbon_mysql      printenv CLOUVE_OPS_PASSWORD
 
-# Public key must be installed as clouve-ops's authorized_keys in each side container
-docker exec gibbon_app   cat /home/clouve-ops/.ssh/authorized_keys
-docker exec gibbon_mysql cat /home/clouve-ops/.ssh/authorized_keys
-
-# Per-user identity key must be materialised (mode 0600, owned by admin)
-docker exec --user admin gibbon_ai_studio ls -l /home/admin/.ssh/clouve-ops
+# clouve-ops account must be unlocked (chpasswd should have run at start)
+docker exec gibbon_app   getent shadow clouve-ops | cut -d: -f2 | head -c 1   # not '!' or '*'
+docker exec gibbon_mysql getent shadow clouve-ops | cut -d: -f2 | head -c 1
 
 # sshd actually listening?
 docker exec gibbon_app   ss -tlnp 2>/dev/null | grep ':22 ' || ps -ef | grep sshd
 docker exec gibbon_mysql ss -tlnp 2>/dev/null | grep ':22 ' || ps -ef | grep sshd
 ```
 
-Common causes of `Permission denied (publickey)`:
+Common causes of `Permission denied`:
 
-- **Per-user identity didn't materialise yet** — open a new shell in the AI Studio terminal to re-trigger `/etc/profile.d/clv-gibbon-skill.sh`.
-- **Watcher hasn't installed the public key yet** — gibbon and gibbon-mysql both background a watcher that polls for the key file with a ~120 s timeout. Give it a few seconds after pod start.
+- **Mismatched password** — the three containers were started with different `CLOUVE_OPS_PASSWORD` values. Bring them up from the same compose project so the env var is identical.
+- **chpasswd hasn't run yet** — `start-clouve-ops-sshd.sh` applies the password before exec'ing `sshd -D`; if the container is still in early init, give it a few seconds.
 - **Stale host key** — if you've redeployed with `--cleanup` and reused container names, your old `known_hosts` entry is wrong. Pass `-o StrictHostKeyChecking=accept-new` (or `ssh-keygen -R ${GIBBON_HOST}` first).
 
 ### Configuration Not Updating
@@ -781,21 +784,22 @@ The `clv-docker-compose.yml` file contains Clouve-specific extensions for market
 - `image/installer/entrypoint.sh` - Container entrypoint (install/upgrade/config-update + cron + clouve-ops sshd bring-up).
 - `image/installer/gibbon-cron.sh` - Scheduled-tasks dispatcher (invoked by cron).
 - `image/installer/update-config.sh` - Configuration update script.
-- `image/installer/start-clouve-ops-sshd.sh` - Background watcher that waits for the per-pod public key, installs it, then `exec`s `sshd -D`.
-- `image/installer/clouve-ops-sshd.conf` - sshd_config drop-in (key-only auth, no root login, only `clouve-ops` allowed).
+- `image/installer/start-clouve-ops-sshd.sh` - Applies the per-pod `CLOUVE_OPS_PASSWORD` to the `clouve-ops` user via `chpasswd`, then `exec`s `sshd -D`.
+- `image/installer/clouve-ops-sshd.conf` - sshd_config drop-in (password-only auth, no root login, only `clouve-ops` allowed).
 
 **`gibbon-mysql` image (Oracle Linux 9 + MySQL 8.0)**
 
 - `image/mysql/Dockerfile` - Re-packages upstream `mysql:8.0`; adds `openssh-server` + `sudo` + `clouve-ops` + a small operator toolset (`procps-ng`, `hostname`, `iproute`, `diffutils`, `less`, `vim-minimal`).
-- `image/mysql/entrypoint.sh` - Wrapper that backgrounds the sshd watcher then chains to the upstream `docker-entrypoint.sh`.
-- `image/mysql/start-clouve-ops-sshd.sh` - Same role as the gibbon-side watcher.
+- `image/mysql/entrypoint.sh` - Wrapper that backgrounds the sshd bring-up then chains to the upstream `docker-entrypoint.sh`.
+- `image/mysql/start-clouve-ops-sshd.sh` - Same role as the gibbon-side script (chpasswd from `CLOUVE_OPS_PASSWORD` + `sshd -D`).
 - `image/mysql/clouve-ops-sshd.conf` - sshd_config drop-in.
 
 **`gibbon-ai-studio` image (derived from upstream `ai-studio`)**
 
-- `image/ai-studio/Dockerfile` - `FROM r.clv.zone/e2eorg/ai-studio:latest` plus three baked-in layers (skill tree, profile.d drop-in, Gibbon-authored CLAUDE.md), plus `default-mysql-client` + `openssh-client`, plus the keypair-generator entrypoint.
-- `image/ai-studio/CLAUDE.md.tpl` - Gibbon-authored Claude Code system context, overrides the generic upstream template at `/clouve/ai-studio/installer/chat/claude/CLAUDE.md.tpl`.
-- `image/ai-studio/entrypoint.sh` - Generates the per-pod ed25519 keypair into `/clouve/ops-keys/` on first boot, then `exec`s the upstream init.sh.
+- `image/ai-studio/Dockerfile` - `FROM r.clv.zone/e2eorg/ai-studio:latest` plus three baked-in layers (skill tree, profile.d drop-in, Gibbon-authored CLAUDE.md), plus `default-mysql-client` + `openssh-client` + `sshpass`, plus the entrypoint shim.
+- `image/ai-studio/CLAUDE.md.tpl` - Gibbon-authored Claude Code system context, overrides the generic upstream template at `/clouve/ai-studio/installer/chat/claude/CLAUDE.md.tpl`. References `${GIBBON_HOST}`, `${GIBBON_DB_HOST}`, `${GIBBON_DB_NAME}`, `${GIBBON_DB_USER}`, `${GIBBON_DB_PASSWORD}` for envsubst at login time; the upstream image's generic env propagation (see [apps/ai-studio/image/installer/chat/install.sh](../ai-studio/image/installer/chat/install.sh)) makes those vars available without any gibbon-side shim.
+
+(No entrypoint override and no per-app `/etc/profile.d/` drop-in: the upstream `chat/install.sh` snapshots the entire entrypoint env into `/etc/profile.d/clouve-env.sh` on every container start, so any var docker-compose / Kubernetes set on this service automatically reaches login shells and renders correctly into `~/.claude/CLAUDE.md`.)
 
 **Skill tree (`apps/gibbon/skill/`, baked into `gibbon-ai-studio`)**
 

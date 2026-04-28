@@ -38,7 +38,7 @@ Use this skill when the user is working with the Clouve Gibbon app, when they me
 
 - You are inside the AI Studio container in the app's pod.
 - Gibbon is reachable at the pod-internal hostname `gibbon` on port 80. The Gibbon MySQL is at `gibbon-mysql:3306`. Both are rendered into env vars injected by the app — use `${GIBBON_HOST}` / `${GIBBON_DB_HOST}` rather than hard-coding names.
-- You **do** have an interactive shell in both side containers via SSH as the `clouve-ops` operator account (passwordless sudo). The identity key is at `~/.ssh/clouve-ops`; connect with `ssh -i ~/.ssh/clouve-ops clouve-ops@${GIBBON_HOST}` (or `@${GIBBON_DB_HOST}`). See [reference/shell-access.md](reference/shell-access.md) for when to use SSH vs. the TCP `mysql`/`curl` channels and the safety gates that apply over the SSH hop.
+- You **do** have an interactive shell in both side containers via SSH as the `clouve-ops` operator account (passwordless sudo). The credential is the per-pod password in `${CLOUVE_OPS_PASSWORD}` (already in your env); connect with `SSHPASS="$CLOUVE_OPS_PASSWORD" sshpass -e ssh clouve-ops@${GIBBON_HOST}` (or `@${GIBBON_DB_HOST}`). See [reference/shell-access.md](reference/shell-access.md) for when to use SSH vs. the TCP `mysql`/`curl` channels and the safety gates that apply over the SSH hop.
 
 ## Pointers into the deeper docs
 

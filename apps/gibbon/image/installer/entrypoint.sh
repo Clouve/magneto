@@ -168,10 +168,10 @@ echo "DONE!"
 # ============================================================================
 # CLOUVE-OPS SSHD: shell channel for the gibbon-ai-studio Claude Code agent
 # ============================================================================
-# Backgrounded — waits for the per-pod public key dropped by gibbon-ai-studio
-# at /clouve/ops-keys/id_ed25519.pub, installs it as clouve-ops's only
-# authorized key, then exec's sshd -D inside its own background tree. Dies
-# with the container when apache (PID 1) exits.
+# Backgrounded — applies the per-pod password from CLOUVE_OPS_PASSWORD
+# (same value on all three services) to the clouve-ops user via chpasswd,
+# then exec's sshd -D inside its own background tree. Dies with the
+# container when apache (PID 1) exits.
 "$GIBBON_PACKAGE_INSTALLER"/start-clouve-ops-sshd.sh &
 
 # ============================================================================

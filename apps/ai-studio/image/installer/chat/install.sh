@@ -48,17 +48,43 @@ fi
 chown "$USERNAME:$USERNAME" "$USER_HOME"
 chmod 755 "$USER_HOME"
 
-# Export all provided API keys and the root password to all login shells via
-# /etc/profile.d/ so the interactive session selector can access them.
+# Snapshot the entrypoint's env into /etc/profile.d/clouve-env.sh so every
+# var that docker-compose / Kubernetes set on this container survives the
+# `su -` invoked by ttyd's clv-session wrapper for each user shell. The
+# bash_profile selector and the per-client CLAUDE.md/GEMINI.md/AGENTS.md
+# templates rely on these being present at login time — without this
+# snapshot, post-su shells start with the bare login env and envsubst
+# renders empty placeholders.
+#
+# This is a generic propagation: any env var the orchestrator sets on the
+# service (ai-studio's own vars OR a downstream app's app-specific vars
+# like GIBBON_HOST, CLOUVE_OPS_PASSWORD, etc.) reaches login shells
+# without per-app /etc/profile.d/ shims.
+#
+# The denylist below excludes shell/system vars that login shells will
+# (and should) re-derive themselves. Bash exports function definitions
+# as env vars with funky names containing `()` — the printable-name
+# regex below filters them out. Values are quoted with `printf %q` so
+# any shell-active characters (spaces, $, quotes, newlines) survive
+# sourcing intact.
+#
+# The auth server's _update_profile_env() (image/installer/auth/server.py)
+# rewrites individual lines in this file when AI_STUDIO_HOST is detected
+# from the HTTP Host header or when an API key is saved interactively;
+# its `startswith("export VAR=")` matcher is compatible with %q quoting.
+clouve_env_excludes='^(PATH|PWD|OLDPWD|SHLVL|_|HOME|USER|LOGNAME|MAIL|TERM|SHELL|HOSTNAME|HOSTTYPE|MACHTYPE|OSTYPE|IFS|PS[0-9]|BASH.*|COLUMNS|LINES|OPTIND|RANDOM|SECONDS|UID|EUID|PPID|GROUPS|FUNCNAME)$'
+
 {
-    [ -n "$ANTHROPIC_API_KEY" ]  && echo "export ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY"
-    [ -n "$GEMINI_API_KEY" ]     && echo "export GEMINI_API_KEY=$GEMINI_API_KEY"
-    [ -n "$OPENAI_API_KEY" ]     && echo "export OPENAI_API_KEY=$OPENAI_API_KEY"
-    [ -n "$AI_STUDIO_CLIENT" ]   && echo "export AI_STUDIO_CLIENT=$AI_STUDIO_CLIENT"
-    [ -n "$AI_STUDIO_HOST" ]     && echo "export AI_STUDIO_HOST=$AI_STUDIO_HOST"
-    echo "export ROOT_PASSWORD=$ROOT_PASSWORD"
+    # `env -0` emits NUL-separated KEY=VALUE entries so embedded newlines
+    # survive (rare, but possible — and printf %q handles them either way).
+    while IFS='=' read -r -d '' var value; do
+        [[ "$var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+        [[ "$var" =~ $clouve_env_excludes ]] && continue
+        printf 'export %s=%q\n' "$var" "$value"
+    done < <(env -0)
 } > /etc/profile.d/clouve-env.sh
 chmod 644 /etc/profile.d/clouve-env.sh
+unset clouve_env_excludes
 echo -e "${GREEN}[SUCCESS]${NC} Session environment configured via /etc/profile.d/."
 
 # Install the interactive AI client selector as the user's login shell profile.

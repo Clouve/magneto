@@ -28,19 +28,26 @@ sudo for everything** — treat it as effective root inside those
 containers, gated only by the safety rules in this document and the
 Gibbon DevOps Skill.
 
-Authenticate with the per-pod ed25519 identity key the AI Studio
-entrypoint generates on first boot. A copy is materialised at
-`~/.ssh/clouve-ops` (mode 0600, owned by you) on each shell login.
+Authenticate with the per-pod password held in the env var named
+`CLOUVE_OPS_PASSWORD` — the same value is set on all three pods,
+applied to the `clouve-ops` user via `chpasswd` on each side
+container's start. The variable is already in your shell env (do not
+echo or transmit it). Use `sshpass -e`, which reads the password from
+`SSHPASS` rather than the command line, so it never lands in shell
+history or `ps`:
 
 ```bash
+# Make the per-pod password available to sshpass (do this once per shell):
+export SSHPASS=$(printenv CLOUVE_OPS_PASSWORD)
+
 # Open an interactive shell in the gibbon container
-ssh -i ~/.ssh/clouve-ops clouve-ops@${GIBBON_HOST}
+sshpass -e ssh clouve-ops@${GIBBON_HOST}
 
 # Open an interactive shell in the gibbon-mysql container
-ssh -i ~/.ssh/clouve-ops clouve-ops@${GIBBON_DB_HOST}
+sshpass -e ssh clouve-ops@${GIBBON_DB_HOST}
 
 # Run a one-shot command (preferred for scripted operations)
-ssh -i ~/.ssh/clouve-ops clouve-ops@${GIBBON_HOST} \
+sshpass -e ssh clouve-ops@${GIBBON_HOST} \
     "sudo tail -50 /var/log/apache2/error.log"
 ```
 

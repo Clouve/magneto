@@ -67,6 +67,12 @@ USERNAME="${AI_STUDIO_USERNAME:-admin}"
 PASSWORD="${AI_STUDIO_PASSWORD:-changeme}"
 ROOT_PASSWORD="${AI_STUDIO_ROOT_PASSWORD:-${PASSWORD}}"
 
+# Export so chat/install.sh's generic env snapshot (env -0) picks them up
+# and propagates them to login shells via /etc/profile.d/clouve-env.sh.
+# The CLAUDE.md / GEMINI.md / AGENTS.md templates and the bash_profile's
+# `su - root` instruction-rendering all read ROOT_PASSWORD.
+export USERNAME PASSWORD ROOT_PASSWORD
+
 # Normalize username: trim leading/trailing whitespace, collapse internal
 # whitespace sequences into a single underscore.  This ensures the username
 # is safe for useradd, home-directory paths, sudoers entries, and PAM auth.

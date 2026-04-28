@@ -40,6 +40,13 @@ services:
       DEMO_DATA: 'N'
       GIBBON_LOG_LEVEL: info
       GIBBON_CRON_INTERVAL: '* * * * *'
+      # Shared per-pod password for the clouve-ops shell account. Same
+      # value reaches gibbon, gibbon-mysql, and gibbon-ai-studio: Clouve
+      # generates a random password-like string for `secret`-typed env
+      # vars and injects identical values into pods that declare the same
+      # variable name. The agent ssh's in with `sshpass -e`; this
+      # container's start-clouve-ops-sshd.sh applies it via chpasswd.
+      CLOUVE_OPS_PASSWORD: clouve-ops-password
     x-clouve-environment-types:
       DB_HOST: containerReference
       DB_NAME: static
@@ -58,13 +65,9 @@ services:
       DEMO_DATA: static
       GIBBON_LOG_LEVEL: static
       GIBBON_CRON_INTERVAL: userConfigurable
+      CLOUVE_OPS_PASSWORD: secret
     volumes:
       - gibbondata:/var/www/html
-      # Shared per-pod ed25519 keypair channel for the clouve-ops shell
-      # account that gibbon-ai-studio's Claude Code agent uses to ssh into
-      # this container. See the gibbon-ai-studio service for the full
-      # mechanism.
-      - clouveopskeys:/clouve/ops-keys
     x-clouve-metadata:
       containerName: gibbon
       purpose: Frontend
@@ -110,17 +113,17 @@ services:
       MYSQL_USER: gibbon
       MYSQL_PASSWORD: gibbon-mysql-password
       MYSQL_ROOT_PASSWORD: gibbon-mysql-root-password
+      # Same value as the gibbon and gibbon-ai-studio services — see the
+      # gibbon service for the full rationale.
+      CLOUVE_OPS_PASSWORD: clouve-ops-password
     x-clouve-environment-types:
       MYSQL_DATABASE: static
       MYSQL_USER: static
       MYSQL_PASSWORD: secret
       MYSQL_ROOT_PASSWORD: secret
+      CLOUVE_OPS_PASSWORD: secret
     volumes:
       - dbdata:/var/lib/mysql
-      # Shared per-pod ed25519 keypair channel for the clouve-ops shell
-      # account that gibbon-ai-studio's Claude Code agent uses to ssh
-      # into this container. See gibbon-ai-studio for the full mechanism.
-      - clouveopskeys:/clouve/ops-keys
     x-clouve-metadata:
       containerName: gibbon-mysql
       purpose: Database
@@ -162,6 +165,11 @@ services:
       GIBBON_DB_NAME: gibbon
       GIBBON_DB_USER: gibbon
       GIBBON_DB_PASSWORD: gibbon-mysql-password
+      # Same value as the gibbon and gibbon-mysql services — see the
+      # gibbon service for the full rationale. The agent reads this from
+      # the env at runtime to ssh into the side containers via
+      # `sshpass -e ssh clouve-ops@…`.
+      CLOUVE_OPS_PASSWORD: clouve-ops-password
     x-clouve-environment-types:
       AI_STUDIO_USERNAME: applicationUsername
       AI_STUDIO_PASSWORD: applicationPassword
@@ -179,17 +187,12 @@ services:
       # secret sharing (same pattern Moodle uses to read Gibbon's DB in the
       # education-kit bundle).
       GIBBON_DB_PASSWORD: secret
+      CLOUVE_OPS_PASSWORD: secret
     volumes:
       - ai-studio-home:/home
       - ai-studio-usr:/usr
       - ai-studio-opt:/opt
       - ai-studio-var:/var
-      # Per-pod ed25519 keypair channel for the clouve-ops shell account in
-      # gibbon and gibbon-mysql. This container's entrypoint generates the
-      # keypair into /clouve/ops-keys/ on first boot; the other two
-      # containers' entrypoints poll for the public-key file and install
-      # it as clouve-ops's only authorized_key.
-      - clouveopskeys:/clouve/ops-keys
     x-clouve-metadata:
       containerName: ai-studio
       purpose: Frontend
@@ -243,11 +246,4 @@ volumes:
   ai-studio-opt:
     driver: local
   ai-studio-var:
-    driver: local
-  # Per-pod ephemeral channel for the clouve-ops ed25519 keypair (one
-  # private + one public file, no other content). Wiped per pod
-  # lifecycle; a redeploy gets a fresh key. NOT declared in any
-  # x-clouve-volumes block — it's a small ephemeral coordination volume,
-  # not a tenant-data PVC.
-  clouveopskeys:
     driver: local
