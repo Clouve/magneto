@@ -1,11 +1,15 @@
 # Local-dev variant of the AI Studio-powered Gibbon app.
 #
 # Mirrors clv-docker-compose.yml but targets plain docker-compose:
-#   - uses the pre-bundled gibbon-ai-studio image; the Gibbon DevOps Skill,
-#     the /etc/profile.d/ symlink drop-in, and the Gibbon-flavoured
-#     CLAUDE.md.tpl are all baked into the image at build time. Skill or
-#     persona edits require `./build.sh apps/gibbon` to take effect — dev
-#     is a faithful reproduction of prod.
+#   - uses the gibbon-ai-studio image — a thin layer on top of the stock
+#     ai-studio image that adds the runtime binaries the Gibbon DevOps
+#     Skill shells out to (mysql, mysqldump, ssh, sshpass). The skill
+#     payload itself is delivered at container start via
+#     AI_STUDIO_SKILLS=DevOps/Gibbon (resolved against the repo-root
+#     /skills/ tree, baked into the upstream image as the offline
+#     fallback). Skill content edits flow into running containers
+#     without rebuilding gibbon-ai-studio when AI_STUDIO_SKILLS_REPO is
+#     set; otherwise rebuild ai-studio to refresh the bundled fallback.
 #   - host-published ports (Gibbon on 8080, AI Studio on 8081 by default)
 #   - the .data/ pattern used by the other apps in this repo for persistent state
 #
@@ -88,7 +92,16 @@ services:
       AI_STUDIO_ROOT_PASSWORD: Root@123
       # Pre-select Claude Code; AI Studio's .bash_profile skips the selector
       # and marks the choice readonly for the session (spec §5 Q6).
-      AI_STUDIO_CLIENT: claude-code
+      # AI_STUDIO_CLIENT: claude-code
+      # Activate the Gibbon DevOps Skill. The upstream ai-studio loader
+      # (chat/skills.sh) resolves this at container start, copying the
+      # skill payload from the baked-in /clouve/skills-bundled/ tree
+      # (or sparse-cloning AI_STUDIO_SKILLS_REPO if set) into
+      # /clouve/skills/devops-gibbon/, then symlinking it into each
+      # client's ~/.{claude,gemini,codex}/skills/ directory and
+      # appending the per-skill CONTEXT.md.tpl section to the rendered
+      # CLAUDE.md / GEMINI.md / AGENTS.md.
+      AI_STUDIO_SKILLS: DevOps/Gibbon
       # Optional: inject a pre-authenticated key at launch. When unset,
       # AI Studio prompts for it on the first interactive session and
       # validates against api.anthropic.com/v1/models before storing.

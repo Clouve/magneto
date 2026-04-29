@@ -4,19 +4,19 @@ version: '3.8'
 # Three containers in one app pod:
 #   gibbon            — the school-management app (image from apps/gibbon/)
 #   gibbon-mysql      — Gibbon's DB (image from apps/gibbon/image/mysql/)
-#   gibbon-ai-studio  — derived AI Studio image, built from the upstream
-#                       ai-studio image (apps/ai-studio/) plus three baked-in
-#                       layers: the Gibbon DevOps Skill tree, the
-#                       /etc/profile.d/ symlink drop-in, and a Gibbon-authored
-#                       CLAUDE.md.tpl. Locked to Claude Code via
-#                       AI_STUDIO_CLIENT=claude-code. No ConfigMap
-#                       projections, no volume mounts for the skill — the
-#                       assets ship inside the image (skill update = image
-#                       rebuild + redeploy).
-#
-# See apps/gibbon/gibbon-ai-studio-bundle-spec.md §3.3 for the full packaging
-# rationale (derived-image delivery, symlink bridging into $HOME/.claude/skills/,
-# client-picker lock-down, API-key flow).
+#   gibbon-ai-studio  — thin layer on top of the upstream ai-studio image
+#                       (apps/ai-studio/) that adds the runtime binaries
+#                       the Gibbon DevOps Skill shells out to (mysql,
+#                       mysqldump, ssh, sshpass). The skill payload —
+#                       reference docs, playbooks, audited scripts, and
+#                       the Gibbon-flavoured CONTEXT.md.tpl — is delivered
+#                       at container start by the upstream skill loader
+#                       (chat/skills.sh) when AI_STUDIO_SKILLS=DevOps/Gibbon
+#                       is set on this service, resolved against the
+#                       repo-root /skills/ tree (baked into the upstream
+#                       image as the offline-fallback bundle, or
+#                       sparse-cloned from AI_STUDIO_SKILLS_REPO when set).
+#                       Locked to Claude Code via AI_STUDIO_CLIENT=claude-code.
 services:
   gibbon:
     image: gibbon:latest
@@ -157,7 +157,18 @@ services:
       # this env var: skips the interactive selector, marks the choice
       # readonly in every shell, and the Preferences API rejects client-change
       # requests with HTTP 400 (see spec §3.3). No fork of AI Studio needed.
-      AI_STUDIO_CLIENT: claude-code
+      # AI_STUDIO_CLIENT: claude-code
+      # Activate the Gibbon DevOps Skill. The upstream ai-studio loader
+      # (chat/skills.sh) resolves this at container start against the
+      # repo-root /skills/ tree (baked into the upstream image as the
+      # offline-fallback bundle, or sparse-cloned from
+      # AI_STUDIO_SKILLS_REPO when set). The skill payload — reference
+      # docs, playbooks, audited scripts, and the Gibbon-flavoured
+      # CONTEXT.md.tpl — is materialised at /clouve/skills/devops-gibbon/,
+      # symlinked into ~/.{claude,gemini,codex}/skills/devops-gibbon, and
+      # the per-skill CONTEXT.md.tpl is appended as a "## Skill: …" section
+      # to the rendered CLAUDE.md / GEMINI.md / AGENTS.md at session start.
+      AI_STUDIO_SKILLS: DevOps/Gibbon
       # Pod-internal hostnames + DB creds, surfaced so the skill's playbooks
       # can refer to them by env var instead of hard-coding service names.
       GIBBON_HOST: gibbon
@@ -174,7 +185,8 @@ services:
       AI_STUDIO_USERNAME: applicationUsername
       AI_STUDIO_PASSWORD: applicationPassword
       AI_STUDIO_ROOT_PASSWORD: secret
-      AI_STUDIO_CLIENT: static
+      # AI_STUDIO_CLIENT: static
+      AI_STUDIO_SKILLS: static
       GIBBON_HOST: containerReference
       GIBBON_DB_HOST: containerReference
       GIBBON_DB_NAME: static
