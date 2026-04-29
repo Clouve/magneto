@@ -650,6 +650,22 @@ if [ "$CLEANUP" = true ]; then
 fi
 
 # ============================================================================
+# Optional pre/post-build hooks
+# ============================================================================
+# A target may include image/prebuild.sh to stage extra files into the build
+# context (e.g. ai-studio bakes the repo-root /skills tree into image/skills-bundled/),
+# and image/postbuild.sh to clean up afterwards. The cleanup runs on EXIT so
+# it fires whether the build succeeds or fails.
+if [ -f "$APP_IMAGE_DIR/prebuild.sh" ]; then
+    echo "Running prebuild hook: $APP_IMAGE_DIR/prebuild.sh"
+    bash "$APP_IMAGE_DIR/prebuild.sh"
+    echo ""
+fi
+if [ -f "$APP_IMAGE_DIR/postbuild.sh" ]; then
+    trap 'bash "$APP_IMAGE_DIR/postbuild.sh" >/dev/null 2>&1 || true' EXIT
+fi
+
+# ============================================================================
 # STEP 1: Build application image from Dockerfile
 # ============================================================================
 TOTAL_STEPS=$((1 + ${#CONTAINER_CONFIGS[@]}))

@@ -90,13 +90,20 @@ CLV_KEY_URLS=(
     "https://aistudio.google.com/apikey"
     "https://platform.openai.com/api-keys"
 )
-# Context file template paths (empty string = no context file for this client)
-CLV_CONTEXT_TPLS=(
-    "/clouve/ai-studio/installer/chat/claude/CLAUDE.md.tpl"
-    "/clouve/ai-studio/installer/chat/gemini/GEMINI.md.tpl"
-    "/clouve/ai-studio/installer/chat/openai/AGENTS.md.tpl"
-)
-# Destination directory and filename for the context file (relative to $HOME)
+# Single shared base context template, rendered for whichever client the user
+# selects. Each client uses a different filename (CLAUDE.md / GEMINI.md /
+# AGENTS.md) and a different home subdir (.claude / .gemini / .codex), but
+# the body content is identical — platform rules + appended per-skill sections
+# from /clouve/skills/.active.
+#
+# Path is the runtime location written by chat/skills.sh, which copies
+# the base template from the magneto repo's skills/CONTEXT.md.tpl (git fetch
+# preferred, /clouve/skills-bundled/CONTEXT.md.tpl as offline fallback).
+# Updates to skills/CONTEXT.md.tpl in the repo flow to running containers
+# without an image rebuild when AI_STUDIO_SKILLS_REPO is set.
+CLV_CONTEXT_TPL="/clouve/skills/CONTEXT.md.tpl"
+# Destination directory and filename for the context file (relative to $HOME).
+# Empty CLV_CONTEXT_FILES entry = no context file for this client.
 CLV_CONTEXT_DIRS=( ".claude"  ".gemini"  ".codex" )
 CLV_CONTEXT_FILES=( "CLAUDE.md" "GEMINI.md" "AGENTS.md" )
 
@@ -360,26 +367,28 @@ GEMEOF
     esac
 }
 
-# Write the client's context/instructions file from its template.
+# Write the client's context/instructions file from its template, then
+# append a rendered section per active skill listed in
+# /clouve/skills/.active (written at container init by chat/skills.sh).
 #
 # envsubst (no SHELL-FORMAT) substitutes every ${VAR} and $VAR reference in
 # the template with the value of VAR from the current environment. The
-# upstream templates only reference ${USERNAME}, ${ROOT_PASSWORD}, and
-# ${AI_STUDIO_HOST}, but downstream apps (e.g. apps/gibbon's derived
-# gibbon-ai-studio image, which overlays its own CLAUDE.md.tpl with extra
-# ${GIBBON_HOST}, ${GIBBON_DB_HOST}, etc. references) can rely on this same
-# call to render their custom env vars without any per-app shim. Any
-# ${VAR} not in the env is replaced with the empty string.
+# upstream base templates reference ${USERNAME}, ${ROOT_PASSWORD}, and
+# ${AI_STUDIO_HOST}; per-skill CONTEXT.md.tpl files reference whatever
+# app-specific vars they need (${GIBBON_HOST}, ${CLOUVE_OPS_PASSWORD}, …)
+# and rely on the same generic envsubst pass. Any ${VAR} not in the env
+# is replaced with the empty string.
 #
 # Template authors who want a literal "$VAR" or "${VAR}" in the rendered
 # output (e.g. when documenting a PHP variable name) must avoid the
 # leading "$" — envsubst has no escape syntax.
 _clv_write_context() {
     local idx="$1"
-    local tpl="${CLV_CONTEXT_TPLS[$idx]}"
+    local tpl="$CLV_CONTEXT_TPL"
     local dir="$HOME/${CLV_CONTEXT_DIRS[$idx]}"
     local file="${CLV_CONTEXT_FILES[$idx]}"
-    [ -z "$tpl" ] && return 0
+    [ -z "$file" ] && return 0
+    [ -f "$tpl" ] || return 0
 
     # If AI_STUDIO_HOST was not explicitly set, fall back to the host
     # auto-detected by the auth server from the HTTP Host header.
@@ -389,8 +398,29 @@ _clv_write_context() {
     fi
 
     mkdir -p "$dir"
-    USERNAME="$(whoami)" envsubst < "$tpl" > "$dir/$file"
-    chmod 600 "$dir/$file"
+    local out="$dir/$file"
+
+    # Render the base template (the platform-wide framing — /_clv/ rules,
+    # persistent paths, etc.).
+    USERNAME="$(whoami)" envsubst < "$tpl" > "$out"
+
+    # Append a section per active skill, in the order recorded in .active.
+    if [ -r /clouve/skills/.active ]; then
+        while IFS=$'\t' read -r _slug _id; do
+            [ -z "$_slug" ] && continue
+            local skill_tpl="/clouve/skills/$_slug/CONTEXT.md.tpl"
+            [ -f "$skill_tpl" ] || continue
+            # Pretty-print the ID with spaces around the slash for the header.
+            local _heading="${_id//\// / }"
+            {
+                printf '\n\n---\n\n## Skill: %s\n\n' "$_heading"
+                USERNAME="$(whoami)" envsubst < "$skill_tpl"
+            } >> "$out"
+        done < /clouve/skills/.active
+        unset _slug _id _heading skill_tpl
+    fi
+
+    chmod 600 "$out"
 }
 
 # Prompt the user to choose between auto-accept and standard launch mode.

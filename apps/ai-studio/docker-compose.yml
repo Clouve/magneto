@@ -23,6 +23,26 @@ services:
       # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       # GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       # OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+
+      # ── Skill loading ───────────────────────────────────────────────
+      # Comma-separated list of skills to load at container init, in
+      # <Category>/<Name> form matching the on-disk paths under
+      # /skills/ in the magneto repo. Each skill's CONTEXT.md.tpl is
+      # rendered into ~/.claude/CLAUDE.md (and equivalents) under a
+      # "## Skill: <Category> / <Name>" section, and any skill/ subtree
+      # is symlinked into ~/.claude/skills/<slug>/ where <slug> is the
+      # ID lowercased with "/" → "-" (e.g. DevOps/Gibbon → devops-gibbon).
+      # AI_STUDIO_SKILLS: DevOps/Gibbon
+
+      # If AI_STUDIO_SKILLS_REPO is set, the loader sparse-clones the
+      # requested skills from that git URL at every container start
+      # (skill iteration without rebuilding the image). When unset or
+      # unreachable, the loader falls back to the skills baked into
+      # the image at /clouve/skills-bundled/.
+      # AI_STUDIO_SKILLS_REPO: https://github.com/clouve/magneto.git
+      # AI_STUDIO_SKILLS_REF: main
+      # AI_STUDIO_SKILLS_PATH: skills
+      # AI_STUDIO_SKILLS_TOKEN: ${AI_STUDIO_SKILLS_TOKEN:-}  # for private repos
     volumes:
       - ai-studio-home:/home
       - ai-studio-usr:/usr

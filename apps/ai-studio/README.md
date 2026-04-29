@@ -58,6 +58,13 @@ environment:
   ANTHROPIC_API_KEY: sk-ant-...
   GEMINI_API_KEY: AIza...
   OPENAI_API_KEY: sk-...
+  # Optionally activate one or more skills from the magneto repo's skills/
+  # tree. See "AI Skills" below.
+  AI_STUDIO_SKILLS: DevOps/Gibbon,DevOps/Moodle
+  AI_STUDIO_SKILLS_REPO: https://github.com/clouve/magneto.git  # optional
+  AI_STUDIO_SKILLS_REF: main                                    # default: main
+  AI_STUDIO_SKILLS_PATH: skills                                 # default: skills
+  AI_STUDIO_SKILLS_TOKEN: ''                                    # for private repos
 ```
 
 To override the exposed port at runtime:
@@ -89,7 +96,7 @@ When the web terminal opens, an interactive menu appears:
 
 1. **API key resolution** — if an API key for the selected client was provided at container start via an env var, it is used automatically. Otherwise the selector checks for a stored key from a previous session (`~/.{client}_api_key`), validates it live against the provider's API, and if absent or revoked prompts the user to enter one. The key is saved locally for future sessions.
 2. **Installation (first use only)** — if the selected CLI is not yet installed, the selector installs it along with any required runtime (e.g. Node.js for Gemini CLI and OpenAI Codex CLI). Installed binaries persist in the `/usr` volume so subsequent sessions skip this step.
-3. **Context file** — a server-awareness context file is written into the client's config directory (e.g. `~/.claude/CLAUDE.md`, `~/.gemini/GEMINI.md`) from a template bundled in the image.
+3. **Context file** — a server-awareness context file is rendered into the client's config directory (`~/.claude/CLAUDE.md`, `~/.gemini/GEMINI.md`, or `~/.codex/AGENTS.md`). The body is identical across the three clients: a single shared base template (`/clouve/skills/CONTEXT.md.tpl`) followed by one `## Skill: <Category> / <Name>` section for each skill listed in `AI_STUDIO_SKILLS`. Env vars referenced in the templates (`${AI_STUDIO_HOST}`, `${USERNAME}`, plus any app-specific vars like `${GIBBON_HOST}`) are interpolated by `envsubst` at render time. See [AI Skills](#ai-skills) below.
 4. **Launch mode** — for clients that support an auto-accept mode, a numbered prompt appears:
    ```
    Claude Code is ready.
@@ -131,10 +138,54 @@ rm ~/.openai_api_key    # for OpenAI Codex CLI
 
 The selector is fully data-driven. To add a new client:
 
-1. Add one entry to each parallel array in `chat/.bash_profile` (`CLV_NAMES`, `CLV_CMDS`, `CLV_INSTALLS`, `CLV_KEY_VARS`, `CLV_KEY_FILES`, `CLV_KEY_LABELS`, `CLV_CONTEXT_TPLS`, `CLV_CONTEXT_DIRS`, `CLV_CONTEXT_FILES`, `CLV_AUTO_FLAGS`, `CLV_STD_FLAGS`).
+1. Add one entry to each parallel array in `chat/.bash_profile` (`CLV_NAMES`, `CLV_IDS`, `CLV_CMDS`, `CLV_INSTALLS`, `CLV_KEY_VARS`, `CLV_KEY_FILES`, `CLV_KEY_LABELS`, `CLV_KEY_URLS`, `CLV_CONTEXT_DIRS`, `CLV_CONTEXT_FILES`, `CLV_AUTO_FLAGS`, `CLV_STD_FLAGS`). The base context template path is shared across all clients (`CLV_CONTEXT_TPL` scalar) — only the destination dir/filename are per-client.
 2. Create the corresponding install script at `chat/<client>/install.sh`.
 3. Add validation logic for the client's API endpoint in `_clv_validate_key`.
 4. `chmod +x` the new install script in the Dockerfile.
+
+## AI Skills
+
+AI Studio can mount one or more **skills** from the magneto repo's [`skills/`](../../skills) tree at container init. A skill is a directory containing a `CONTEXT.md.tpl` (a persona section appended to the agent's context file) and optionally a `skill/` subtree (an Anthropic-style `SKILL.md` package surfaced to Claude Code at `~/.claude/skills/<slug>/`).
+
+Activate skills via the `AI_STUDIO_SKILLS` env var on the ai-studio service:
+
+```yaml
+environment:
+  AI_STUDIO_SKILLS: DevOps/Gibbon,DevOps/Moodle
+```
+
+Each entry is a slash-native `<Category>/<Name>` path matching the on-disk layout under `skills/` in the magneto repo. The loader computes a slug per entry by lowercasing and replacing `/` with `-` (e.g. `DevOps/Gibbon` → `devops-gibbon`). At init it materialises:
+
+- `/clouve/skills/CONTEXT.md.tpl` — the base context template (always staged, even when `AI_STUDIO_SKILLS` is unset)
+- `/clouve/skills/<slug>/` — full skill payload (CONTEXT.md.tpl + optional skill/ subtree) for each activated skill
+- `/clouve/skills/.active` — TSV manifest (`<slug>\t<Category>/<Name>`, one row per skill, in user-specified order)
+
+At each interactive login, `/etc/profile.d/clv-skills.sh` symlinks every skill's `skill/` subdir into all three client home dirs: `~/.claude/skills/<slug>/`, `~/.gemini/skills/<slug>/`, `~/.codex/skills/<slug>/`. Claude Code natively auto-loads its `~/.claude/skills/` entries; Gemini CLI and Codex CLI don't yet have a skills-directory convention, so for those clients the skill content reaches the agent through the appended `## Skill: …` sections in their merged `GEMINI.md` / `AGENTS.md`.
+
+### Source priority
+
+The skill loader (`chat/skills.sh`) resolves each asset in order:
+
+1. **Git fetch** — when `AI_STUDIO_SKILLS_REPO` is set, a single sparse `git clone --depth=1 --filter=blob:none --sparse` pulls `skills/CONTEXT.md.tpl` plus every requested skill subdir into `/var/lib/clouve/skills-fetch/`. This lets skill iteration happen without rebuilding the image — push to magneto, restart the pod.
+2. **Baked fallback** — if the git fetch is unset, unreachable, or missing the asset, the loader falls back to `/clouve/skills-bundled/`, which is COPY'd into the image at build time from the repo-root `skills/` directory by `image/prebuild.sh`.
+
+| Env var | Default | Purpose |
+| --- | --- | --- |
+| `AI_STUDIO_SKILLS` | empty | Comma-separated `<Category>/<Name>` list. Empty = base context only, no skill sections. |
+| `AI_STUDIO_SKILLS_REPO` | empty | Git URL. When unset, only the baked-in fallback is used. |
+| `AI_STUDIO_SKILLS_REF` | `main` | Branch, tag, or commit. |
+| `AI_STUDIO_SKILLS_PATH` | `skills` | Subpath within the repo where skills live. |
+| `AI_STUDIO_SKILLS_TOKEN` | empty | Bearer token for private repos (passed via `http.extraHeader`, never embedded in the URL). |
+
+The loader is best-effort: invalid skill IDs are rejected (path-traversal-safe regex), missing skills are logged and skipped, and a failed git fetch falls through to the baked copy. Container init never aborts on skill-loading errors.
+
+### Adding a new skill
+
+1. Create `skills/<Category>/<Name>/CONTEXT.md.tpl` in the magneto repo. Author it as **section content** (start with the persona — no leading `# H1`, use `### H3` for subsections), since the renderer prepends `## Skill: <Category> / <Name>` as the H2 heading. Reference any env vars you need with `${VAR}` syntax (rendered at login time via `envsubst`).
+2. (Optional) Add a `skills/<Category>/<Name>/skill/` subtree containing `SKILL.md`, `playbooks/`, `reference/`, `scripts/`, etc. — Anthropic-style skill payload that gets symlinked into `~/.claude/skills/<slug>/` at login.
+3. Set `AI_STUDIO_SKILLS=<Category>/<Name>` (or include it in a comma-separated list) on the ai-studio service.
+
+For more detail on the skill-tree convention and slug rules, see [`skills/README.md`](../../skills/README.md).
 
 ## Deploying Services
 
@@ -189,23 +240,27 @@ Four persistent volumes are used. On first start, `/usr` and `/var` are seeded f
 ## Files
 
 - `image/Dockerfile` — Ubuntu 24.04 image with nginx, ttyd, Filebrowser Quantum, and CLI tools
+- `image/prebuild.sh` — Build hook that stages the repo-root `skills/` tree into `image/skills-bundled/` (gitignored) so the Dockerfile can `COPY` it into `/clouve/skills-bundled/`
+- `image/postbuild.sh` — Build hook (run via EXIT-trap) that removes the staged `image/skills-bundled/` after the image build completes
 - `image/installer/init.sh` — Bootstrap script (seeds `/usr` and `/var` from image snapshots into Kubernetes PVCs on first start)
 - `image/installer/entrypoint.sh` — Startup script (user creation, dev tool install, session setup, ttyd, Filebrowser, nginx)
 - `image/installer/nginx-default.conf` — nginx site config proxying `/chat` → ttyd and `/files/` → Filebrowser; serves landing page at `/`
 - `image/installer/index.html` — Landing page at `/` with navigation cards for the AI Studio terminal and File Manager
-- `image/installer/chat/install.sh` — Dev tools install + session environment setup + ttyd startup (runs at container start)
-- `image/installer/chat/.bash_profile` — Interactive AI client selector (runs at each terminal session start)
+- `image/installer/chat/install.sh` — Dev tools install + session environment setup + skill loader source + ttyd startup (runs at container start)
+- `image/installer/chat/.bash_profile` — Interactive AI client selector (runs at each terminal session start). Renders the merged context file via `_clv_write_context()`.
+- `image/installer/chat/skills.sh` — Runtime skill loader: parses `AI_STUDIO_SKILLS`, optionally sparse-clones `AI_STUDIO_SKILLS_REPO`, stages the base `CONTEXT.md.tpl` and per-skill payloads under `/clouve/skills/`, writes `/clouve/skills/.active`. Sourced by `chat/install.sh`.
 - `image/installer/chat/claude/install.sh` — Claude Code installer (sourced by `.bash_profile` on first use)
-- `image/installer/chat/claude/CLAUDE.md.tpl` — Claude Code server context template (rendered into `~/.claude/CLAUDE.md`)
 - `image/installer/chat/gemini/install.sh` — Gemini CLI installer (sourced by `.bash_profile` on first use)
-- `image/installer/chat/gemini/GEMINI.md.tpl` — Gemini CLI server context template (rendered into `~/.gemini/GEMINI.md`)
 - `image/installer/chat/openai/install.sh` — OpenAI Codex CLI installer (sourced by `.bash_profile` on first use)
+- `image/installer/profile.d/clv-skills.sh` — Login-time hook installed at `/etc/profile.d/clv-skills.sh`. Reads `/clouve/skills/.active` and creates `~/.claude/skills/<slug>/`, `~/.gemini/skills/<slug>/`, `~/.codex/skills/<slug>/` symlinks for each activated skill.
 - `image/installer/files/install.sh` — Filebrowser Quantum install script
 - `image/installer/files/filebrowser-config.yaml` — Filebrowser Quantum configuration (port, base URL, auth)
 - `image/installer/files/pam-filebrowser` — PAM service configuration for Filebrowser authentication
 - `image/build.config` — Build configuration for the centralized build script
 - `docker-compose.yml` — Container orchestration for local development/testing
 - `clv-docker-compose.yml` — Clouve marketplace manifest
+
+The base context template lives at the top of the magneto repo's [`skills/`](../../skills) tree (`skills/CONTEXT.md.tpl`), not under `apps/ai-studio/`. It's baked into the image at `/clouve/skills-bundled/CONTEXT.md.tpl` (via `prebuild.sh`) and copied into `/clouve/skills/CONTEXT.md.tpl` at runtime by `chat/skills.sh`.
 
 ## Building and Pushing Images
 

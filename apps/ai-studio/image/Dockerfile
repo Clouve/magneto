@@ -45,15 +45,26 @@ RUN usermod -aG shadow www-data
 # Copy entrypoint and static template files
 RUN mkdir -p /clouve/ai-studio/installer
 COPY installer/ /clouve/ai-studio/installer/
+
+# Bake the canonical /skills tree into the image as the offline fallback
+# source for the runtime skill loader. The loader (chat/skills.sh)
+# prefers a git-fetched copy when AI_STUDIO_SKILLS_REPO is set, and falls
+# back to this directory otherwise. Staged into the build context by
+# image/prebuild.sh from the repo-root skills/ directory.
+COPY skills-bundled/ /clouve/skills-bundled/
+
 RUN chmod +x /clouve/ai-studio/installer/entrypoint.sh \
              /clouve/ai-studio/installer/init.sh \
              /clouve/ai-studio/installer/chat/install.sh \
+             /clouve/ai-studio/installer/chat/skills.sh \
              /clouve/ai-studio/installer/chat/claude/install.sh \
              /clouve/ai-studio/installer/chat/gemini/install.sh \
              /clouve/ai-studio/installer/chat/openai/install.sh \
              /clouve/ai-studio/installer/files/install.sh \
              /clouve/ai-studio/installer/auth/server.py \
     && cp /clouve/ai-studio/installer/nginx-default.conf /etc/nginx/sites-available/default \
+    && cp /clouve/ai-studio/installer/profile.d/clv-skills.sh /etc/profile.d/clv-skills.sh \
+    && chmod 644 /etc/profile.d/clv-skills.sh \
     && mkdir -p /opt/filebrowser \
     && cp /clouve/ai-studio/installer/files/filebrowser-config.yaml /opt/filebrowser/config.yaml \
     && cp /clouve/ai-studio/installer/files/pam-filebrowser /etc/pam.d/filebrowser

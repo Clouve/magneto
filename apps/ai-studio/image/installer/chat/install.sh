@@ -87,6 +87,11 @@ chmod 644 /etc/profile.d/clouve-env.sh
 unset clouve_env_excludes
 echo -e "${GREEN}[SUCCESS]${NC} Session environment configured via /etc/profile.d/."
 
+# Load skills requested via AI_STUDIO_SKILLS. No-op when the var is unset.
+# Runs after the env snapshot above so the loader's git-fetch path can read
+# AI_STUDIO_SKILLS_REPO/REF/PATH/TOKEN from the same propagation mechanism.
+. /clouve/ai-studio/installer/chat/skills.sh
+
 # Install the interactive AI client selector as the user's login shell profile.
 # On each terminal open, the user will be prompted to choose their preferred
 # AI coding assistant client (Claude Code, Gemini CLI, OpenAI Codex CLI, or none).
