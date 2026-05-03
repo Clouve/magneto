@@ -825,7 +825,7 @@ The `clv-docker-compose.yml` file contains Clouve-specific extensions for market
 - `plugins/gibbon/skills/gibbon/reference/` - Stack/runtime, install/bootstrap, upgrade, modules, data model, backup/restore, year-end rollover, security, operations/signals, troubleshooting, **shell-access** (clouve-ops SSH guide).
 - `plugins/gibbon/skills/gibbon/playbooks/` - Step-by-step procedures (upgrade, module install, rollback, credential rotation, year-end rollover, 500 diagnosis, fresh-install hardening).
 - `plugins/gibbon/skills/gibbon/scripts/` - Audited helpers (`backup.sh`, `verify-health.sh`, `php-info.sh`).
-- The per-skill `CONTEXT.md.tpl` (Gibbon DevOps persona + SSH-via-`clouve-ops` runbook) is shipped under `context/gibbon/CONTEXT.md.tpl` in the upstream `apps/ai-studio/` tree, baked into the AI Studio image, and appended as `## Skill: gibbon` to the rendered `CLAUDE.md` at session start.
+- The per-skill `CONTEXT.md.tpl` (Gibbon DevOps persona + SSH-via-`clouve-ops` runbook) is shipped under [`context/gibbon/CONTEXT.md.tpl`](../../context/gibbon/CONTEXT.md.tpl) at the magneto repo root, baked into the AI Studio image at `/clouve/context/gibbon/CONTEXT.md.tpl`, and appended as `## Skill: gibbon` to the rendered `CLAUDE.md` at session start.
 
 **Build infrastructure**
 
