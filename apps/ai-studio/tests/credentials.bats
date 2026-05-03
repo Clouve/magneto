@@ -76,3 +76,9 @@ teardown() { _test_teardown; }
     _clv_resolve_credentials "GitHub.COM"
     [ "$_clv_cred_token" = "caps-tok" ]
 }
+
+@test "host-name normalisation: dashes become underscores in env var lookup" {
+    export AI_STUDIO_SKILLS_GIT_TOKEN__MY_CORP_GIT_EXAMPLE_COM="dash-tok"
+    _clv_resolve_credentials "my-corp-git.example.com"
+    [ "$_clv_cred_token" = "dash-tok" ]
+}
