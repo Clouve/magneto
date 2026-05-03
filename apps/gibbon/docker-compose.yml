@@ -4,12 +4,12 @@
 #   - uses the gibbon-ai-studio image — a thin layer on top of the stock
 #     ai-studio image that adds the runtime binaries the Gibbon DevOps
 #     Skill shells out to (mysql, mysqldump, ssh, sshpass). The skill
-#     payload itself is delivered at container start via
-#     AI_STUDIO_SKILLS=DevOps/Gibbon (resolved against the repo-root
-#     /skills/ tree, baked into the upstream image as the offline
-#     fallback). Skill content edits flow into running containers
-#     without rebuilding gibbon-ai-studio when AI_STUDIO_SKILLS_REPO is
-#     set; otherwise rebuild ai-studio to refresh the bundled fallback.
+#     payload itself is delivered at container start by the AI Studio
+#     skill loader (chat/skills.sh), which clones the magneto-skills
+#     Claude Code marketplace specified by AI_STUDIO_SKILLS and stages
+#     the requested plugin's payload at /clouve/skills/<plugin>/. Skill
+#     content edits flow into running containers on the next restart
+#     without rebuilding gibbon-ai-studio.
 #   - host-published ports (Gibbon on 8080, AI Studio on 8081 by default)
 #   - the .data/ pattern used by the other apps in this repo for persistent state
 #
@@ -93,15 +93,13 @@ services:
       # Pre-select Claude Code; AI Studio's .bash_profile skips the selector
       # and marks the choice readonly for the session (spec §5 Q6).
       # AI_STUDIO_CLIENT: claude-code
-      # Activate the Gibbon DevOps Skill. The upstream ai-studio loader
-      # (chat/skills.sh) resolves this at container start, copying the
-      # skill payload from the baked-in /clouve/skills-bundled/ tree
-      # (or sparse-cloning AI_STUDIO_SKILLS_REPO if set) into
-      # /clouve/skills/devops-gibbon/, then symlinking it into each
-      # client's ~/.{claude,gemini,codex}/skills/ directory and
-      # appending the per-skill CONTEXT.md.tpl section to the rendered
-      # CLAUDE.md / GEMINI.md / AGENTS.md.
-      AI_STUDIO_SKILLS: DevOps/Gibbon
+      # Activates the Gibbon DevOps plugin from the magneto-skills
+      # Claude Code marketplace. The AI Studio loader (chat/skills.sh)
+      # clones the marketplace at container start, stages the gibbon
+      # plugin's payload at /clouve/skills/gibbon/, and appends
+      # ## Skill: gibbon to ~/.claude/CLAUDE.md from the local
+      # context/gibbon/CONTEXT.md.tpl baked into the AI Studio image.
+      AI_STUDIO_SKILLS: https://github.com/Clouve/magneto-skills.git?plugins=gibbon
       # Optional: inject a pre-authenticated key at launch. When unset,
       # AI Studio prompts for it on the first interactive session and
       # validates against api.anthropic.com/v1/models before storing.

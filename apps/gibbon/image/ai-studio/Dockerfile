@@ -2,10 +2,13 @@
 #
 # Layers on top of the stock ai-studio image (built from apps/ai-studio/) and
 # adds only the runtime binaries the Gibbon DevOps Skill shells out to. The
-# skill payload itself — reference docs, playbooks, scripts, the per-client
-# context template — is delivered at container start by the upstream skill
-# loader (chat/skills.sh) when AI_STUDIO_SKILLS=DevOps/Gibbon is set on this
-# service. See ../../clv-docker-compose.yml and the repo-root /skills tree.
+# skill payload itself — reference docs, playbooks, scripts — is delivered at
+# container start by the upstream skill loader (chat/skills.sh), which clones
+# the magneto-skills Claude Code marketplace named in AI_STUDIO_SKILLS
+# (https://github.com/Clouve/magneto-skills.git?plugins=gibbon) and stages
+# the gibbon plugin at /clouve/skills/gibbon/. The per-skill context section
+# is loaded from context/gibbon/CONTEXT.md.tpl baked into the AI Studio
+# image. See ../../clv-docker-compose.yml.
 
 FROM r.clv.zone/e2eorg/ai-studio:latest
 
