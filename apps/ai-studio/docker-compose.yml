@@ -25,24 +25,25 @@ services:
       # OPENAI_API_KEY: ${OPENAI_API_KEY:-}
 
       # ── Skill loading ───────────────────────────────────────────────
-      # Comma-separated list of skills to load at container init, in
-      # <Category>/<Name> form matching the on-disk paths under
-      # /skills/ in the magneto repo. Each skill's CONTEXT.md.tpl is
-      # rendered into ~/.claude/CLAUDE.md (and equivalents) under a
-      # "## Skill: <Category> / <Name>" section, and any skill/ subtree
-      # is symlinked into ~/.claude/skills/<slug>/ where <slug> is the
-      # ID lowercased with "/" → "-" (e.g. DevOps/Gibbon → devops-gibbon).
-      # AI_STUDIO_SKILLS: DevOps/Gibbon
+      # Comma-separated list of Claude Code plugin marketplace URLs.
+      # Each entry may include ?plugins=<name1>,<name2> (subset filter,
+      # default = all plugins in the marketplace) and #<branch> (default
+      # = main). The loader clones each marketplace at container start,
+      # reads .claude-plugin/marketplace.json, stages each selected
+      # plugin under /clouve/skills/<plugin>/, and composes
+      # ~/.{claude,gemini,codex}/{CLAUDE,GEMINI,AGENTS}.md from the
+      # repo-local context/<plugin>/CONTEXT.md.tpl files baked into the
+      # image. See README.md "AI Skills" for the full spec.
+      # AI_STUDIO_SKILLS: https://github.com/Clouve/magneto-skills.git?plugins=gibbon,moodle
 
-      # If AI_STUDIO_SKILLS_REPO is set, the loader sparse-clones the
-      # requested skills from that git URL at every container start
-      # (skill iteration without rebuilding the image). When unset or
-      # unreachable, the loader falls back to the skills baked into
-      # the image at /clouve/skills-bundled/.
-      # AI_STUDIO_SKILLS_REPO: https://github.com/clouve/magneto.git
-      # AI_STUDIO_SKILLS_REF: main
-      # AI_STUDIO_SKILLS_PATH: skills
-      # AI_STUDIO_SKILLS_TOKEN: ${AI_STUDIO_SKILLS_TOKEN:-}  # for private repos
+      # Credentials for private marketplace repos. The default vars
+      # apply to every host; per-host overrides take precedence and use
+      # the uppercased host with dots/dashes replaced by underscores
+      # (e.g. AI_STUDIO_SKILLS_GIT_TOKEN__GITHUB_COM).
+      # AI_STUDIO_SKILLS_GIT_TOKEN:    ${AI_STUDIO_SKILLS_GIT_TOKEN:-}
+      # AI_STUDIO_SKILLS_GIT_USERNAME: ${AI_STUDIO_SKILLS_GIT_USERNAME:-}
+      # AI_STUDIO_SKILLS_GIT_TOKEN__GITHUB_COM:    ${AI_STUDIO_SKILLS_GIT_TOKEN__GITHUB_COM:-}
+      # AI_STUDIO_SKILLS_GIT_USERNAME__GITHUB_COM: ${AI_STUDIO_SKILLS_GIT_USERNAME__GITHUB_COM:-}
     volumes:
       - ai-studio-home:/home
       - ai-studio-usr:/usr

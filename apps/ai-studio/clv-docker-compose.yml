@@ -8,26 +8,24 @@ services:
       AI_STUDIO_USERNAME: '{user.firstName}_{user.lastName}'
       AI_STUDIO_PASSWORD: ai-studio-password
       AI_STUDIO_ROOT_PASSWORD: ai-studio-root-password
-      # Skill loading — comma-separated <Category>/<Name> list. Empty by
-      # default; downstream apps (or marketplace presets) override this
-      # to activate skills from the repo-root skills/ tree.
+      # Skill loading — comma-separated list of Claude Code plugin
+      # marketplace URLs. Each may include ?plugins=<list> and #<branch>.
+      # Empty by default; downstream apps (or marketplace presets)
+      # override this to activate plugins from one or more marketplaces.
       AI_STUDIO_SKILLS: ''
-      # Optional git source for skills. When set, the loader sparse-clones
-      # the requested skills at every container start; when unset, the
-      # baked-in copy at /clouve/skills-bundled/ is used.
-      AI_STUDIO_SKILLS_REPO: ''
-      AI_STUDIO_SKILLS_REF: main
-      AI_STUDIO_SKILLS_PATH: skills
-      AI_STUDIO_SKILLS_TOKEN: ''
+      # Credentials for private marketplace repos. Default + per-host
+      # overrides keyed by uppercased host with dots/dashes → underscores.
+      # The loader resolves credentials via GIT_ASKPASS at clone time
+      # only — never persisted to disk or embedded in URLs.
+      AI_STUDIO_SKILLS_GIT_TOKEN: ''
+      AI_STUDIO_SKILLS_GIT_USERNAME: ''
     x-clouve-environment-types:
       AI_STUDIO_USERNAME: applicationUsername
       AI_STUDIO_PASSWORD: applicationPassword
       AI_STUDIO_ROOT_PASSWORD: secret
       AI_STUDIO_SKILLS: userConfigurable
-      AI_STUDIO_SKILLS_REPO: userConfigurable
-      AI_STUDIO_SKILLS_REF: userConfigurable
-      AI_STUDIO_SKILLS_PATH: userConfigurable
-      AI_STUDIO_SKILLS_TOKEN: secret
+      AI_STUDIO_SKILLS_GIT_TOKEN: secret
+      AI_STUDIO_SKILLS_GIT_USERNAME: userConfigurable
     volumes:
       - ai-studio-home:/home
       - ai-studio-usr:/usr
