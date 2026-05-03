@@ -57,7 +57,7 @@ inspecting `/etc/mysql/`, restarting `mysqld`, etc. Routine SQL still
 goes through the TCP `mysql` (or `psql`) client from this container —
 faster and doesn't require the SSH hop.
 
-The Moodle DevOps Skill is mounted at `~/.claude/skills/devops-moodle/`
+The Moodle DevOps Skill is mounted at `~/.claude/skills/moodle/`
 (its `SKILL.md` is the entry point). It contains reference docs,
 playbooks, and a small set of audited helper scripts under `scripts/`.
 Read it before non-trivial operations — it carries the verified shape
@@ -80,7 +80,7 @@ session — the safety gates documented in the skill's `SKILL.md`.
    backup means *both* the SQL dump *and* `moodledata/filedir/` (the DB
    references files by content hash; one without the other is silently
    broken). Use the audited helper at
-   `~/.claude/skills/devops-moodle/scripts/backup.sh` rather than
+   `~/.claude/skills/moodle/scripts/backup.sh` rather than
    composing `mysqldump` and tar by hand.
 2. **Never edit `config.php` without showing the diff first**, and
    never without an explicit user `yes`. It encodes the DB credentials,
@@ -101,14 +101,14 @@ session — the safety gates documented in the skill's `SKILL.md`.
    reason — they keep the DB and `moodledata/` consistent in ways
    hand-written queries do not.
 5. **Prefer the audited helpers under
-   `~/.claude/skills/devops-moodle/scripts/`** over freehand
+   `~/.claude/skills/moodle/scripts/`** over freehand
    `rm -rf` / hand-written SQL. The helpers exist because the
    freehand path has bitten real schools.
 6. **Refuse third-party plugins from untrusted sources** without
    skimming `version.php`, `db/install.xml`, `db/upgrade.php`, and
    `lib.php`. Plugins run arbitrary PHP with full DB access and
    `moodledata/` write. See
-   `~/.claude/skills/devops-moodle/playbooks/install-plugin.md`.
+   `~/.claude/skills/moodle/playbooks/install-plugin.md`.
 7. **Treat the gradebook and quiz attempts as sacred.** Never edit
    `mdl_grade_*`, `mdl_quiz_attempts`, `mdl_question_attempt*`,
    `mdl_assign_submission`, `mdl_forum_posts`, or
@@ -116,7 +116,7 @@ session — the safety gates documented in the skill's `SKILL.md`.
    skill's `reference/data-model.md`.
 8. **After ANY upgrade, plugin install/uninstall, or `config.php`
    edit, purge MUC caches** with
-   `~/.claude/skills/devops-moodle/scripts/purge-caches.sh`. Stale
+   `~/.claude/skills/moodle/scripts/purge-caches.sh`. Stale
    caches present as silent feature breakage — missing settings
    pages, broken nav, capability changes that didn't take effect.
 9. **Never print, copy, or transmit the tenant's
@@ -137,7 +137,7 @@ that touches `moodledata/` or the `mdl_*` tables.
 
 ### Skill Maintenance — Keep the Moodle Skill Current
 
-The Moodle DevOps Skill at `~/.claude/skills/devops-moodle/` is the
+The Moodle DevOps Skill at `~/.claude/skills/moodle/` is the
 **authoritative source** for Moodle-specific knowledge — architecture,
 conventions, gotchas, common tasks, version-specific behaviour. Read
 its `SKILL.md` before non-trivial work, and treat the files under
@@ -170,10 +170,10 @@ of creating parallel ones.
 - Per-session ephemera (what you tried and rolled back, the contents
   of one specific bug report). Conversation context handles that.
 
-**Persistence reality check.** The skill is mounted from
-`/clouve/skills/devops-moodle/` (with a login-time symlink at
-`~/.claude/skills/devops-moodle`), and `/clouve/` is **not** in the
-persistent path list. Edits you make at runtime survive the rest of
+**Persistence reality check.** The skill payload is staged by the
+marketplace loader at `/clouve/skills/moodle/plugin/skills/moodle/`
+(with a login-time symlink at `~/.claude/skills/moodle`), and
+`/clouve/` is **not** in the persistent path list. Edits you make at runtime survive the rest of
 the session but are wiped on pod restart, and they do not flow back
 to the magneto source repo on their own. So **when you write a new
 learning, also surface a one-line summary in chat** of the form:

@@ -96,11 +96,10 @@ CLV_KEY_URLS=(
 # the body content is identical — platform rules + appended per-skill sections
 # from /clouve/skills/.active.
 #
-# Path is the runtime location written by chat/skills.sh, which copies
-# the base template from the magneto repo's skills/CONTEXT.md.tpl (git fetch
-# preferred, /clouve/skills-bundled/CONTEXT.md.tpl as offline fallback).
-# Updates to skills/CONTEXT.md.tpl in the repo flow to running containers
-# without an image rebuild when AI_STUDIO_SKILLS_REPO is set.
+# The base template is baked into the image at /clouve/context/CONTEXT.md.tpl
+# and copied to the runtime path below by the marketplace skill loader
+# (chat/skills.sh) at every container start. The composer reads the runtime
+# path; its contents are identical to the build-time /clouve/context/CONTEXT.md.tpl.
 CLV_CONTEXT_TPL="/clouve/skills/CONTEXT.md.tpl"
 # Destination directory and filename for the context file (relative to $HOME).
 # Empty CLV_CONTEXT_FILES entry = no context file for this client.

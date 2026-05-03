@@ -66,14 +66,14 @@ The AI Studio companion runs alongside Gibbon and gives you a browser-based term
 
 ## AI Studio Companion (Claude Code + Gibbon DevOps Skill)
 
-The `gibbon-ai-studio` image is a thin layer on top of the upstream `ai-studio` image: it adds the runtime binaries the Gibbon DevOps Skill shells out to (`mysql`, `mysqldump`, `ssh`, `sshpass`) and nothing else. The skill payload itself — reference docs, playbooks, and audited scripts — is delivered at container start by AI Studio's generic skill loader (`chat/skills.sh`) when `AI_STUDIO_SKILLS=https://github.com/Clouve/magneto-skills.git?plugins=gibbon` is set on the service. The loader clones the magneto-skills Claude Code marketplace and stages the `gibbon` plugin's payload under `/clouve/skills/gibbon/`. The Gibbon-flavoured context section is loaded from the `context/gibbon/CONTEXT.md.tpl` baked into the AI Studio image.
+The `gibbon-ai-studio` image is a thin layer on top of the upstream `ai-studio` image: it adds the runtime binaries the Gibbon DevOps Skill shells out to (`mysql`, `mysqldump`, `ssh`, `sshpass`) and nothing else. The skill payload itself — reference docs, playbooks, and audited scripts — is delivered at container start by AI Studio's generic skill loader (`chat/skills.sh`) when `AI_STUDIO_SKILLS=https://github.com/Clouve/magneto-skills.git?plugins=gibbon` is set on the service. The loader clones the magneto-skills Claude Code marketplace and stages the `gibbon` plugin's payload under `/clouve/skills/gibbon/plugin/`, then `/etc/profile.d/clv-skills.sh` symlinks each skill it contains into `~/.claude/skills/` at shell login (so the agent sees `~/.claude/skills/gibbon/`). The Gibbon-flavoured context section is loaded from the `context/gibbon/CONTEXT.md.tpl` baked into the AI Studio image.
 
 ### How activation works
 
 | Piece | Path / mechanism | Purpose |
 |---|---|---|
 | Activation env var | `AI_STUDIO_SKILLS: https://github.com/Clouve/magneto-skills.git?plugins=gibbon` on the `ai-studio` service | Marketplace URL with `?plugins=` query — tells the upstream loader which Claude Code marketplace to clone and which plugin(s) to materialise. Comma-separate plugins to stack multiple. |
-| Skill payload | `magneto-skills` repo's `plugins/gibbon/skills/gibbon/` → `/clouve/skills/gibbon/` at runtime | Reference docs, playbooks, and audited scripts the agent uses for upgrades, module installs, backups, restores, year-end rollover, and 500-error diagnosis. Wired into Claude Code via the marketplace's `.claude-plugin/marketplace.json`. |
+| Skill payload | `magneto-skills` repo's `plugins/gibbon/skills/gibbon/` → staged at `/clouve/skills/gibbon/plugin/skills/gibbon/`, exposed to the agent via the per-session symlink `~/.claude/skills/gibbon/` | Reference docs, playbooks, and audited scripts the agent uses for upgrades, module installs, backups, restores, year-end rollover, and 500-error diagnosis. Wired into Claude Code via the marketplace's `.claude-plugin/marketplace.json`. |
 | Per-skill context | `context/gibbon/CONTEXT.md.tpl` baked into the AI Studio image → appended as `## Skill: gibbon` to `~/.claude/CLAUDE.md` | Introduces the agent as a Gibbon DevOps engineer with the safety posture, SSH-via-`clouve-ops` runbook, and the standing skill-maintenance instruction. |
 | Runtime binaries | `default-mysql-client`, `openssh-client`, `sshpass` baked into `gibbon-ai-studio` | The skill scripts call out to these, so they ride in the image rather than the skill content. |
 
@@ -81,7 +81,7 @@ The `gibbon-ai-studio` image is a thin layer on top of the upstream `ai-studio` 
 
 ### Skill source resolution
 
-The loader treats `AI_STUDIO_SKILLS` as a Claude Code marketplace URL (with an optional `?plugins=…` query selecting which plugins to install). On every container start it clones the repo, reads `.claude-plugin/marketplace.json`, and stages the requested plugin payloads under `/clouve/skills/<plugin>/`. Skill edits land in running pods on the next restart by pushing to the marketplace repo — no image rebuild required.
+The loader treats `AI_STUDIO_SKILLS` as a Claude Code marketplace URL (with an optional `?plugins=…` query selecting which plugins to install). On every container start it clones the repo, reads `.claude-plugin/marketplace.json`, and stages the requested plugin payloads under `/clouve/skills/<plugin>/plugin/`. Skill edits land in running pods on the next restart by pushing to the marketplace repo — no image rebuild required.
 
 See [`apps/ai-studio/README.md`](../ai-studio/README.md#ai-skills) for the full loader contract and env-var matrix.
 
@@ -598,7 +598,7 @@ docker exec gibbon_ai_studio printenv AI_STUDIO_SKILLS
 # Missing → fix docker-compose.yml / clv-docker-compose.yml.
 
 # 2. Loader staged the plugin at container init?
-docker exec gibbon_ai_studio ls /clouve/skills/gibbon/SKILL.md
+docker exec gibbon_ai_studio ls /clouve/skills/gibbon/plugin/skills/gibbon/SKILL.md
 docker exec gibbon_ai_studio cat /clouve/skills/.active
 # .active should contain a line referencing the gibbon plugin.
 # Missing → the loader couldn't clone the marketplace or the plugin
@@ -607,7 +607,7 @@ docker exec gibbon_ai_studio cat /clouve/skills/.active
 
 # 3. Did the symlink get created at the user's shell login?
 docker exec --user admin gibbon_ai_studio ls -la /home/admin/.claude/skills/gibbon
-# Should show: ... -> /clouve/skills/gibbon
+# Should show: ... -> /clouve/skills/gibbon/plugin/skills/gibbon
 # Missing → admin hasn't opened a shell yet, OR /etc/profile.d/clv-skills.sh
 # isn't being sourced. Open a fresh terminal in /_clv/chat to re-trigger it.
 
@@ -817,7 +817,7 @@ The `clv-docker-compose.yml` file contains Clouve-specific extensions for market
 
 - `image/ai-studio/Dockerfile` - `FROM r.clv.zone/e2eorg/ai-studio:latest` plus the runtime binaries the Gibbon DevOps Skill shells out to (`default-mysql-client`, `openssh-client`, `sshpass`); regenerates `/clouve/usr-seed.tar.gz` and `/clouve/var-seed.tar.gz` so a fresh-volume deploy carries those binaries onto the persistent `/usr` and `/var` volumes.
 
-(No skill content, no CLAUDE.md template, no `/etc/profile.d/` drop-in, no entrypoint override. Skill payload is delivered at start by the upstream `chat/skills.sh`, which clones the magneto-skills marketplace named in `AI_STUDIO_SKILLS=https://github.com/Clouve/magneto-skills.git?plugins=gibbon` and stages the gibbon plugin under `/clouve/skills/gibbon/`. The per-skill context section is loaded from `context/gibbon/CONTEXT.md.tpl` baked into the AI Studio image. Env-var propagation into login shells is handled by the upstream `chat/install.sh` writing `/etc/profile.d/clouve-env.sh` on every container start, so vars docker-compose / Kubernetes set on this service render correctly in the per-client context file without any gibbon-side shim.)
+(No skill content, no CLAUDE.md template, no `/etc/profile.d/` drop-in, no entrypoint override. Skill payload is delivered at start by the upstream `chat/skills.sh`, which clones the magneto-skills marketplace named in `AI_STUDIO_SKILLS=https://github.com/Clouve/magneto-skills.git?plugins=gibbon` and stages the gibbon plugin under `/clouve/skills/gibbon/plugin/`. The per-skill context section is loaded from `context/gibbon/CONTEXT.md.tpl` baked into the AI Studio image. Env-var propagation into login shells is handled by the upstream `chat/install.sh` writing `/etc/profile.d/clouve-env.sh` on every container start, so vars docker-compose / Kubernetes set on this service render correctly in the per-client context file without any gibbon-side shim.)
 
 **Skill source ([`magneto-skills`](https://github.com/Clouve/magneto-skills) marketplace, shared with the rest of the platform)**
 

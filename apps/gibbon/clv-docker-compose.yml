@@ -13,7 +13,7 @@ version: '3.8'
 #                       skill loader (chat/skills.sh), which clones the
 #                       magneto-skills Claude Code marketplace named in
 #                       AI_STUDIO_SKILLS and stages the requested
-#                       plugin's payload at /clouve/skills/<plugin>/.
+#                       plugin's payload at /clouve/skills/<plugin>/plugin/.
 #                       The per-skill CONTEXT.md.tpl is loaded from the
 #                       local context/gibbon/ tree baked into the
 #                       AI Studio image and appended to the rendered
@@ -163,7 +163,7 @@ services:
       # Activates the Gibbon DevOps plugin from the magneto-skills
       # Claude Code marketplace. The upstream AI Studio loader
       # (chat/skills.sh) clones the marketplace at container start,
-      # stages the gibbon plugin's payload at /clouve/skills/gibbon/,
+      # stages the gibbon plugin's payload at /clouve/skills/gibbon/plugin/,
       # and appends ## Skill: gibbon to ~/.claude/CLAUDE.md from the
       # local context/gibbon/CONTEXT.md.tpl baked into the AI Studio
       # image.

@@ -96,7 +96,7 @@ services:
       # Activates the Gibbon DevOps plugin from the magneto-skills
       # Claude Code marketplace. The AI Studio loader (chat/skills.sh)
       # clones the marketplace at container start, stages the gibbon
-      # plugin's payload at /clouve/skills/gibbon/, and appends
+      # plugin's payload at /clouve/skills/gibbon/plugin/, and appends
       # ## Skill: gibbon to ~/.claude/CLAUDE.md from the local
       # context/gibbon/CONTEXT.md.tpl baked into the AI Studio image.
       AI_STUDIO_SKILLS: https://github.com/Clouve/magneto-skills.git?plugins=gibbon

@@ -61,7 +61,7 @@ inspecting `/etc/mysql/`, restarting `mysqld`, etc. Routine SQL still
 goes through the TCP `mysql` client from this container — faster and
 doesn't require the SSH hop.
 
-The Gibbon DevOps Skill is mounted at `~/.claude/skills/devops-gibbon/`
+The Gibbon DevOps Skill is mounted at `~/.claude/skills/gibbon/`
 (its `SKILL.md` is the entry point). It contains reference docs,
 playbooks, and a small set of audited helper scripts under `scripts/`.
 Read it before non-trivial operations — it carries the verified shape
@@ -82,7 +82,7 @@ session — the safety gates documented in the skill's `SKILL.md`.
    changes schema, drops more than one row, or touches `config.php`
    begins with a DB dump and a tar of `uploads/` + `config.php`.
    Use the audited helper at
-   `~/.claude/skills/devops-gibbon/scripts/backup.sh` rather than
+   `~/.claude/skills/gibbon/scripts/backup.sh` rather than
    composing `mysqldump` by hand.
 2. **Never edit `config.php` without showing the diff first**, and
    never without an explicit user `yes`. The container auto-syncs the
@@ -101,7 +101,7 @@ session — the safety gates documented in the skill's `SKILL.md`.
    to run a script, show the script (or the exact command) first,
    describe what it will do, and wait for confirmation.
 5. **Prefer the audited helpers under
-   `~/.claude/skills/devops-gibbon/scripts/`** over freehand
+   `~/.claude/skills/gibbon/scripts/`** over freehand
    `rm -rf` / hand-written SQL. The helpers exist because the
    freehand path has bitten real schools.
 6. **Refuse to install third-party Gibbon modules from untrusted
@@ -111,7 +111,7 @@ session — the safety gates documented in the skill's `SKILL.md`.
 7. **Treat the academic year as sacred.** Never simulate Gibbon's
    year-end rollover with raw SQL — drive it through the documented
    in-app workflow (`modules/User Admin/rollover.php`). See
-   `~/.claude/skills/devops-gibbon/playbooks/year-end-rollover.md`.
+   `~/.claude/skills/gibbon/playbooks/year-end-rollover.md`.
 8. **Never print, copy, or transmit the tenant's
    `ANTHROPIC_API_KEY`** (it lives at `~/.claude_api_key`). Same for
    any other secret you discover in the environment.
@@ -124,7 +124,7 @@ session — the safety gates documented in the skill's `SKILL.md`.
 
 ### Skill Maintenance — Keep the Gibbon Skill Current
 
-The Gibbon DevOps Skill at `~/.claude/skills/devops-gibbon/` is the
+The Gibbon DevOps Skill at `~/.claude/skills/gibbon/` is the
 **authoritative source** for Gibbon-specific knowledge — architecture,
 conventions, gotchas, common tasks, version-specific behaviour. Read
 its `SKILL.md` before non-trivial work, and treat the files under
@@ -157,10 +157,10 @@ of creating parallel ones.
 - Per-session ephemera (what you tried and rolled back, the contents
   of one specific bug report). Conversation context handles that.
 
-**Persistence reality check.** The skill is mounted from
-`/clouve/skills/devops-gibbon/` (with a login-time symlink at
-`~/.claude/skills/devops-gibbon`), and `/clouve/` is **not** in the
-persistent path list. Edits you make at runtime survive the rest of
+**Persistence reality check.** The skill payload is staged by the
+marketplace loader at `/clouve/skills/gibbon/plugin/skills/gibbon/`
+(with a login-time symlink at `~/.claude/skills/gibbon`), and
+`/clouve/` is **not** in the persistent path list. Edits you make at runtime survive the rest of
 the session but are wiped on pod restart, and they do not flow back
 to the magneto source repo on their own. So **when you write a new
 learning, also surface a one-line summary in chat** of the form:

@@ -653,7 +653,7 @@ fi
 # Optional pre/post-build hooks
 # ============================================================================
 # A target may include image/prebuild.sh to stage extra files into the build
-# context (e.g. ai-studio bakes the repo-root /skills tree into image/skills-bundled/),
+# context (e.g. ai-studio bakes the repo-root /context tree into image/context-bundled/),
 # and image/postbuild.sh to clean up afterwards. The cleanup runs on EXIT so
 # it fires whether the build succeeds or fails.
 if [ -f "$APP_IMAGE_DIR/prebuild.sh" ]; then

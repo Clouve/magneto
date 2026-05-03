@@ -58,8 +58,8 @@ environment:
   ANTHROPIC_API_KEY: sk-ant-...
   GEMINI_API_KEY: AIza...
   OPENAI_API_KEY: sk-...
-  # Optionally activate one or more skills from the magneto repo's skills/
-  # tree. See "AI Skills" below.
+  # Optionally activate one or more plugins from a Claude Code marketplace
+  # URL (with `?plugins=…` selecting which plugins to install). See "AI Skills" below.
   AI_STUDIO_SKILLS: https://github.com/Clouve/magneto-skills.git?plugins=gibbon,moodle
   AI_STUDIO_SKILLS_GIT_TOKEN: ''                                # for private marketplaces (default for every host)
   # AI_STUDIO_SKILLS_GIT_TOKEN__GITHUB_COM: ''                  # per-host override
