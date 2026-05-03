@@ -46,12 +46,11 @@ RUN usermod -aG shadow www-data
 RUN mkdir -p /clouve/ai-studio/installer
 COPY installer/ /clouve/ai-studio/installer/
 
-# Bake the canonical /skills tree into the image as the offline fallback
-# source for the runtime skill loader. The loader (chat/skills.sh)
-# prefers a git-fetched copy when AI_STUDIO_SKILLS_REPO is set, and falls
-# back to this directory otherwise. Staged into the build context by
-# image/prebuild.sh from the repo-root skills/ directory.
-COPY skills-bundled/ /clouve/skills-bundled/
+# Bake the repo-local context/ tree into the image. Loader at runtime copies
+# /clouve/context/CONTEXT.md.tpl to /clouve/skills/CONTEXT.md.tpl and uses
+# /clouve/context/<plugin>/CONTEXT.md.tpl as the source for per-plugin
+# context sections. Staged into the build context by image/prebuild.sh.
+COPY context-bundled/ /clouve/context/
 
 RUN chmod +x /clouve/ai-studio/installer/entrypoint.sh \
              /clouve/ai-studio/installer/init.sh \
@@ -60,6 +59,14 @@ RUN chmod +x /clouve/ai-studio/installer/entrypoint.sh \
              /clouve/ai-studio/installer/chat/claude/install.sh \
              /clouve/ai-studio/installer/chat/gemini/install.sh \
              /clouve/ai-studio/installer/chat/openai/install.sh \
+             /clouve/ai-studio/installer/chat/marketplace/loader.sh \
+             /clouve/ai-studio/installer/chat/marketplace/url-parser.sh \
+             /clouve/ai-studio/installer/chat/marketplace/credentials.sh \
+             /clouve/ai-studio/installer/chat/marketplace/git-fetcher.sh \
+             /clouve/ai-studio/installer/chat/marketplace/git-askpass-helper.sh \
+             /clouve/ai-studio/installer/chat/marketplace/marketplace-reader.sh \
+             /clouve/ai-studio/installer/chat/marketplace/plugin-stager.sh \
+             /clouve/ai-studio/installer/chat/marketplace/context-composer.sh \
              /clouve/ai-studio/installer/files/install.sh \
              /clouve/ai-studio/installer/auth/server.py \
     && cp /clouve/ai-studio/installer/nginx-default.conf /etc/nginx/sites-available/default \
