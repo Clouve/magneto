@@ -59,7 +59,7 @@ _clv_parse_marketplace_url() {
     # Plugin filter from ?plugins=…
     if [ -n "$query" ]; then
         # Iterate query params; only ?plugins= matters today.
-        local pair key val
+        local pair key val _q_pairs
         while IFS='&' read -ra _q_pairs <<< "$query"; do
             for pair in "${_q_pairs[@]}"; do
                 key="${pair%%=*}"
