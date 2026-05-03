@@ -1,0 +1,3 @@
+# Per-test temp dirs (mktemp puts them in $TMPDIR by default; this
+# is a safety net in case a future test writes here.)
+.tmp/
