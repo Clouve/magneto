@@ -60,11 +60,9 @@ environment:
   OPENAI_API_KEY: sk-...
   # Optionally activate one or more skills from the magneto repo's skills/
   # tree. See "AI Skills" below.
-  AI_STUDIO_SKILLS: DevOps/Gibbon,DevOps/Moodle
-  AI_STUDIO_SKILLS_REPO: https://github.com/clouve/magneto.git  # optional
-  AI_STUDIO_SKILLS_REF: main                                    # default: main
-  AI_STUDIO_SKILLS_PATH: skills                                 # default: skills
-  AI_STUDIO_SKILLS_TOKEN: ''                                    # for private repos
+  AI_STUDIO_SKILLS: https://github.com/Clouve/magneto-skills.git?plugins=gibbon,moodle
+  AI_STUDIO_SKILLS_GIT_TOKEN: ''                                # for private marketplaces (default for every host)
+  # AI_STUDIO_SKILLS_GIT_TOKEN__GITHUB_COM: ''                  # per-host override
 ```
 
 To override the exposed port at runtime:
@@ -145,47 +143,104 @@ The selector is fully data-driven. To add a new client:
 
 ## AI Skills
 
-AI Studio can mount one or more **skills** from the magneto repo's [`skills/`](../../skills) tree at container init. A skill is a directory containing a `CONTEXT.md.tpl` (a persona section appended to the agent's context file) and optionally a `skill/` subtree (an Anthropic-style `SKILL.md` package surfaced to Claude Code at `~/.claude/skills/<slug>/`).
+AI Studio loads plugins from one or more **Claude Code plugin marketplaces** at container start. Each marketplace is a git repository following the [Claude Code marketplace spec](https://code.claude.com/docs/en/plugin-marketplaces) (a `.claude-plugin/marketplace.json` listing one or more plugins). Plugin SKILL.md trees are surfaced to the active AI client; per-plugin persona sections are composed from this repo's local [`context/`](../../context) directory.
 
-Activate skills via the `AI_STUDIO_SKILLS` env var on the ai-studio service:
+Activate marketplaces via the `AI_STUDIO_SKILLS` env var on the ai-studio service.
+
+### URL format
+
+`AI_STUDIO_SKILLS` is a comma-separated list of marketplace repository URLs. Each URL may include:
+
+- `?plugins=<name1>,<name2>` — load only the named plugins (default = all plugins in the marketplace).
+- `#<branch>` — pin to a specific branch (default = `main`).
 
 ```yaml
 environment:
-  AI_STUDIO_SKILLS: DevOps/Gibbon,DevOps/Moodle
+  # Single marketplace, all plugins, default branch
+  AI_STUDIO_SKILLS: https://github.com/Clouve/magneto-skills.git
+
+  # Subset filter
+  AI_STUDIO_SKILLS: https://github.com/Clouve/magneto-skills.git?plugins=gibbon,moodle
+
+  # Pinned branch
+  AI_STUDIO_SKILLS: https://github.com/Clouve/magneto-skills.git?plugins=gibbon#release/2026-q2
+
+  # Multiple marketplaces (e.g. Clouve's plus a partner's)
+  AI_STUDIO_SKILLS: https://github.com/Clouve/magneto-skills.git,https://gitlab.com/somepartner/skills.git?plugins=helpdesk
+
+  # Self-hosted GitLab
+  AI_STUDIO_SKILLS: https://git.internal.clouve.com/devops/skills.git#main
 ```
 
-Each entry is a slash-native `<Category>/<Name>` path matching the on-disk layout under `skills/` in the magneto repo. The loader computes a slug per entry by lowercasing and replacing `/` with `-` (e.g. `DevOps/Gibbon` → `devops-gibbon`). At init it materialises:
+The loader works against any HTTPS-speaking git host (GitHub, GitLab incl. self-hosted, Bitbucket, Gitea / Forgejo, etc.). When the same plugin name appears in multiple marketplaces, **first occurrence wins** (in `AI_STUDIO_SKILLS` list order) — the duplicate is logged and skipped.
 
-- `/clouve/skills/CONTEXT.md.tpl` — the base context template (always staged, even when `AI_STUDIO_SKILLS` is unset)
-- `/clouve/skills/<slug>/` — full skill payload (CONTEXT.md.tpl + optional skill/ subtree) for each activated skill
-- `/clouve/skills/.active` — TSV manifest (`<slug>\t<Category>/<Name>`, one row per skill, in user-specified order)
+### What gets staged
 
-At each interactive login, `/etc/profile.d/clv-skills.sh` symlinks every skill's `skill/` subdir into all three client home dirs: `~/.claude/skills/<slug>/`, `~/.gemini/skills/<slug>/`, `~/.codex/skills/<slug>/`. Claude Code natively auto-loads its `~/.claude/skills/` entries; Gemini CLI and Codex CLI don't yet have a skills-directory convention, so for those clients the skill content reaches the agent through the appended `## Skill: …` sections in their merged `GEMINI.md` / `AGENTS.md`.
+For each active plugin:
 
-### Source priority
+- `/clouve/skills/<plugin>/plugin/` — full plugin payload (the entire plugin tree from the marketplace, including `.claude-plugin/`, `skills/`, `commands/`, `agents/`, etc.).
+- `/clouve/skills/<plugin>/CONTEXT.md.tpl` — the per-plugin persona section, copied from this repo's `context/<plugin>/CONTEXT.md.tpl` baked into the image.
 
-The skill loader (`chat/skills.sh`) resolves each asset in order:
+The base context template lives at `/clouve/context/CONTEXT.md.tpl` (baked from this repo's `context/CONTEXT.md.tpl`) and is always staged regardless of which plugins are active. At each interactive login, [`profile.d/clv-skills.sh`](image/installer/profile.d/clv-skills.sh) walks each plugin's `plugin/skills/<skill-name>/` and symlinks the skill into `~/.claude/skills/<skill-name>/`, `~/.gemini/skills/<skill-name>/`, and `~/.codex/skills/<skill-name>/`. Claude Code natively auto-loads its `~/.claude/skills/` entries; Gemini and Codex don't yet have a built-in skills-directory convention, so for those clients the skill content reaches the agent through the `## Skill: <plugin>` section appended to the merged `GEMINI.md` / `AGENTS.md`.
 
-1. **Git fetch** — when `AI_STUDIO_SKILLS_REPO` is set, a single sparse `git clone --depth=1 --filter=blob:none --sparse` pulls `skills/CONTEXT.md.tpl` plus every requested skill subdir into `/var/lib/clouve/skills-fetch/`. This lets skill iteration happen without rebuilding the image — push to magneto, restart the pod.
-2. **Baked fallback** — if the git fetch is unset, unreachable, or missing the asset, the loader falls back to `/clouve/skills-bundled/`, which is COPY'd into the image at build time from the repo-root `skills/` directory by `image/prebuild.sh`.
+### The local `context/` directory
 
-| Env var | Default | Purpose |
-| --- | --- | --- |
-| `AI_STUDIO_SKILLS` | empty | Comma-separated `<Category>/<Name>` list. Empty = base context only, no skill sections. |
-| `AI_STUDIO_SKILLS_REPO` | empty | Git URL. When unset, only the baked-in fallback is used. |
-| `AI_STUDIO_SKILLS_REF` | `main` | Branch, tag, or commit. |
-| `AI_STUDIO_SKILLS_PATH` | `skills` | Subpath within the repo where skills live. |
-| `AI_STUDIO_SKILLS_TOKEN` | empty | Bearer token for private repos (passed via `http.extraHeader`, never embedded in the URL). |
+The repo-local [`context/`](../../context) tree holds AI-Studio–specific persona templates that the loader composes into each session's context file. It is **not** part of the marketplace contract — it is private to this repo and is baked into the AI Studio image at build time.
 
-The loader is best-effort: invalid skill IDs are rejected (path-traversal-safe regex), missing skills are logged and skipped, and a failed git fetch falls through to the baked copy. Container init never aborts on skill-loading errors.
+```
+context/
+├── CONTEXT.md.tpl         # Base context (always rendered)
+├── gibbon/CONTEXT.md.tpl  # Persona section for the `gibbon` plugin
+└── moodle/CONTEXT.md.tpl  # Persona section for the `moodle` plugin
+```
 
-### Adding a new skill
+The directory name under `context/` **must equal** the plugin's `name` field in the marketplace's `marketplace.json`. Plugin name regex: `[a-z0-9][a-z0-9_-]*` (lowercase, no slashes). A plugin may exist in a marketplace without a corresponding `context/<plugin>/CONTEXT.md.tpl` (the SKILL.md tree is still staged; the context section is silently omitted with a warning), and a `context/<plugin>/CONTEXT.md.tpl` may exist without any active plugin claiming it.
 
-1. Create `skills/<Category>/<Name>/CONTEXT.md.tpl` in the magneto repo. Author it as **section content** (start with the persona — no leading `# H1`, use `### H3` for subsections), since the renderer prepends `## Skill: <Category> / <Name>` as the H2 heading. Reference any env vars you need with `${VAR}` syntax (rendered at login time via `envsubst`).
-2. (Optional) Add a `skills/<Category>/<Name>/skill/` subtree containing `SKILL.md`, `playbooks/`, `reference/`, `scripts/`, etc. — Anthropic-style skill payload that gets symlinked into `~/.claude/skills/<slug>/` at login.
-3. Set `AI_STUDIO_SKILLS=<Category>/<Name>` (or include it in a comma-separated list) on the ai-studio service.
+### Authentication for private marketplaces
 
-For more detail on the skill-tree convention and slug rules, see [`skills/README.md`](../../skills/README.md).
+Credentials are resolved per-host from env vars and injected at clone time via `GIT_ASKPASS` — never persisted to disk, embedded in URLs, or written to `.netrc`/`.git/config`.
+
+| Var | Purpose |
+| --- | --- |
+| `AI_STUDIO_SKILLS_GIT_TOKEN` | Default token for every host. |
+| `AI_STUDIO_SKILLS_GIT_USERNAME` | Optional default username override. |
+| `AI_STUDIO_SKILLS_GIT_TOKEN__<HOST>` | Per-host token; takes precedence over the default. |
+| `AI_STUDIO_SKILLS_GIT_USERNAME__<HOST>` | Per-host username override. |
+
+`<HOST>` is the host uppercased with dots and dashes replaced by underscores: `github.com` → `GITHUB_COM`, `git.internal.clouve.com` → `GIT_INTERNAL_CLOUVE_COM`.
+
+Username defaults when only a token is provided:
+
+| Host | Default username |
+| --- | --- |
+| `github.com` | `x-access-token` |
+| `gitlab.com` | `oauth2` |
+| `bitbucket.org` | `x-token-auth` |
+| anything else (incl. self-hosted) | `git` (token-as-password convention) |
+
+Self-hosted GitLab/Gitea instances default to `git` because we cannot identify them from the hostname alone — set `AI_STUDIO_SKILLS_GIT_USERNAME__<HOST>` explicitly if your host needs a different username (e.g. `oauth2` for self-hosted GitLab).
+
+If no token is configured for the host, the loader attempts an unauthenticated clone (works for public repos). On a 401/403 against a private repo with no token configured, the loader logs a clear error naming the host, repo, and the env var that would have supplied credentials, and continues with the next entry.
+
+### Error handling
+
+Each marketplace entry and each plugin within a marketplace is loaded independently — failures are logged and skipped, never fatal:
+
+- Invalid URL → entry skipped.
+- Clone failure (network, auth, missing branch) → entry skipped.
+- Missing or malformed `marketplace.json` → entry skipped.
+- Plugin filter references a name not in the marketplace → warning, continue with the rest.
+- Plugin `source` doesn't exist in the working tree → plugin skipped.
+- External plugin source clone failure → plugin skipped.
+- Duplicate plugin name across marketplaces → first wins, subsequent occurrences skipped with a warning.
+- Active plugin with no matching `context/<plugin>/CONTEXT.md.tpl` → context section omitted with a warning; SKILL.md tree still staged.
+- Base `context/CONTEXT.md.tpl` missing → warning; rendered context falls back to the per-plugin sections only.
+
+After processing the full list, the loader logs a summary: `<n> plugins loaded from <m> marketplaces, <k> skipped; <c> context sections composed`.
+
+### Migrating from the old `<Category>/<Name>` format
+
+The previous `AI_STUDIO_SKILLS=DevOps/Gibbon,DevOps/Moodle` format and the `AI_STUDIO_SKILLS_REPO` / `_REF` / `_PATH` / `_TOKEN` env vars are **fully removed** — there is no fallback. Update each `AI_STUDIO_SKILLS` value to one or more marketplace URLs, and replace the old token env var with `AI_STUDIO_SKILLS_GIT_TOKEN__<HOST>` (or the host-agnostic `AI_STUDIO_SKILLS_GIT_TOKEN`).
 
 ## Deploying Services
 
@@ -240,19 +295,27 @@ Four persistent volumes are used. On first start, `/usr` and `/var` are seeded f
 ## Files
 
 - `image/Dockerfile` — Ubuntu 24.04 image with nginx, ttyd, Filebrowser Quantum, and CLI tools
-- `image/prebuild.sh` — Build hook that stages the repo-root `skills/` tree into `image/skills-bundled/` (gitignored) so the Dockerfile can `COPY` it into `/clouve/skills-bundled/`
-- `image/postbuild.sh` — Build hook (run via EXIT-trap) that removes the staged `image/skills-bundled/` after the image build completes
+- `image/prebuild.sh` — Build hook that stages the repo-root `context/` tree into `image/context-bundled/` (gitignored) so the Dockerfile can `COPY` it into `/clouve/context/`
+- `image/postbuild.sh` — Build hook (run via EXIT-trap) that removes the staged `image/context-bundled/` after the image build completes
 - `image/installer/init.sh` — Bootstrap script (seeds `/usr` and `/var` from image snapshots into Kubernetes PVCs on first start)
 - `image/installer/entrypoint.sh` — Startup script (user creation, dev tool install, session setup, ttyd, Filebrowser, nginx)
 - `image/installer/nginx-default.conf` — nginx site config proxying `/chat` → ttyd and `/files/` → Filebrowser; serves landing page at `/`
 - `image/installer/index.html` — Landing page at `/` with navigation cards for the AI Studio terminal and File Manager
 - `image/installer/chat/install.sh` — Dev tools install + session environment setup + skill loader source + ttyd startup (runs at container start)
 - `image/installer/chat/.bash_profile` — Interactive AI client selector (runs at each terminal session start). Renders the merged context file via `_clv_write_context()`.
-- `image/installer/chat/skills.sh` — Runtime skill loader: parses `AI_STUDIO_SKILLS`, optionally sparse-clones `AI_STUDIO_SKILLS_REPO`, stages the base `CONTEXT.md.tpl` and per-skill payloads under `/clouve/skills/`, writes `/clouve/skills/.active`. Sourced by `chat/install.sh`.
+- `image/installer/chat/skills.sh` — Marketplace loader entry point. Sources the modules under `image/installer/chat/marketplace/` and invokes the orchestrator.
+- `image/installer/chat/marketplace/loader.sh` — Top-level orchestrator: parses `AI_STUDIO_SKILLS`, runs the per-marketplace pipeline, deduplicates plugins by name (first-wins), writes `/clouve/skills/.active`.
+- `image/installer/chat/marketplace/url-parser.sh` — Parses a marketplace URL into (host, clone URL, branch, plugin filter).
+- `image/installer/chat/marketplace/credentials.sh` — Per-host credential resolution from env vars.
+- `image/installer/chat/marketplace/git-fetcher.sh` — Clones with credentials injected via `GIT_ASKPASS`, deduplicates clones.
+- `image/installer/chat/marketplace/git-askpass-helper.sh` — `GIT_ASKPASS` helper script.
+- `image/installer/chat/marketplace/marketplace-reader.sh` — Reads `.claude-plugin/marketplace.json`, applies plugin filter.
+- `image/installer/chat/marketplace/plugin-stager.sh` — Stages plugin payload + per-plugin context template, recursively resolves external plugin sources.
+- `image/installer/chat/marketplace/context-composer.sh` — Composes `~/.{claude,gemini,codex}/{CLAUDE,GEMINI,AGENTS}.md` from base + per-plugin sections, runs `envsubst`.
 - `image/installer/chat/claude/install.sh` — Claude Code installer (sourced by `.bash_profile` on first use)
 - `image/installer/chat/gemini/install.sh` — Gemini CLI installer (sourced by `.bash_profile` on first use)
 - `image/installer/chat/openai/install.sh` — OpenAI Codex CLI installer (sourced by `.bash_profile` on first use)
-- `image/installer/profile.d/clv-skills.sh` — Login-time hook installed at `/etc/profile.d/clv-skills.sh`. Reads `/clouve/skills/.active` and creates `~/.claude/skills/<slug>/`, `~/.gemini/skills/<slug>/`, `~/.codex/skills/<slug>/` symlinks for each activated skill.
+- `image/installer/profile.d/clv-skills.sh` — Login-time hook installed at `/etc/profile.d/clv-skills.sh`. Reads `/clouve/skills/.active` and creates `~/.claude/skills/<skill-name>/`, `~/.gemini/skills/<skill-name>/`, `~/.codex/skills/<skill-name>/` symlinks for each active plugin's skill tree.
 - `image/installer/files/install.sh` — Filebrowser Quantum install script
 - `image/installer/files/filebrowser-config.yaml` — Filebrowser Quantum configuration (port, base URL, auth)
 - `image/installer/files/pam-filebrowser` — PAM service configuration for Filebrowser authentication
@@ -260,7 +323,7 @@ Four persistent volumes are used. On first start, `/usr` and `/var` are seeded f
 - `docker-compose.yml` — Container orchestration for local development/testing
 - `clv-docker-compose.yml` — Clouve marketplace manifest
 
-The base context template lives at the top of the magneto repo's [`skills/`](../../skills) tree (`skills/CONTEXT.md.tpl`), not under `apps/ai-studio/`. It's baked into the image at `/clouve/skills-bundled/CONTEXT.md.tpl` (via `prebuild.sh`) and copied into `/clouve/skills/CONTEXT.md.tpl` at runtime by `chat/skills.sh`.
+The base context template lives at the top of the magneto repo's [`context/`](../../context) tree (`context/CONTEXT.md.tpl`), not under `apps/ai-studio/`. It's baked into the image at `/clouve/context/CONTEXT.md.tpl` (via `prebuild.sh`) and consumed at runtime by the marketplace loader's context composer.
 
 ## Building and Pushing Images
 
