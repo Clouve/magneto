@@ -67,25 +67,14 @@ _clv_load_marketplaces() {
     local seen_plugins=$'\n'
     local seen_sources=$'\n'
 
-    # Split AI_STUDIO_SKILLS on top-level commas only. Commas inside the
-    # query string of a URL (e.g. ?plugins=a,b) must be preserved -- a naive
-    # IFS=',' split would shred them. Strategy: walk the string and replace
-    # top-level commas (those outside a `?...` query) with newlines, which
-    # never appear in URLs. Then split the resulting blob on newlines.
-    local _i _ch _in_query=0 _entries=""
-    for (( _i=0; _i<${#AI_STUDIO_SKILLS}; _i++ )); do
-        _ch="${AI_STUDIO_SKILLS:$_i:1}"
-        case "$_ch" in
-            '?')      _in_query=1; _entries+="$_ch" ;;
-            ',')      if [ "$_in_query" -eq 1 ]; then _entries+="$_ch"; else _entries+=$'\n'; _in_query=0; fi ;;
-            $'\n')    _entries+=$'\n'; _in_query=0 ;;
-            *)        _entries+="$_ch" ;;
-        esac
-    done
+    # Split AI_STUDIO_SKILLS into entries. A naive `IFS=','` split would shred
+    # URLs whose query string contains commas (e.g. `?plugins=a,b,c`). The only
+    # valid inter-URL delimiter is `,https://` -- so insert a newline marker
+    # before every such boundary, then iterate by newline.
+    local _entries="${AI_STUDIO_SKILLS//,https:\/\//$'\n'https://}"
 
-    local IFS=$'\n'
     local entry
-    for entry in $_entries; do
+    while IFS= read -r entry; do
         # Trim whitespace.
         entry="${entry#"${entry%%[![:space:]]*}"}"
         entry="${entry%"${entry##*[![:space:]]}"}"
@@ -142,7 +131,7 @@ _clv_load_marketplaces() {
                 total_skipped=$((total_skipped + 1))
             fi
         done <<< "$plugins_tsv"
-    done
+    done <<< "$_entries"
 
     # Count composed sections for the summary (plugins with a per-plugin tpl).
     local composed=0

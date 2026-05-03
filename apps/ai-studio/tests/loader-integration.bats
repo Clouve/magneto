@@ -114,3 +114,34 @@ _queue_clone_with_plugins() {
     [[ "$output" == *"1 plugins loaded from 2 marketplaces"* ]]
     [[ "$output" == *"skipped"* ]]
 }
+
+@test "multi-marketplace with ?plugins= on first URL: both marketplaces processed" {
+    _stub_git_response "magneto" 0 'mkdir -p "$clone_dir/.claude-plugin" "$clone_dir/g/.claude-plugin"; printf %s '"'"'{"plugins":[{"name":"gibbon","source":"./g"},{"name":"moodle","source":"./m"}]}'"'"' > "$clone_dir/.claude-plugin/marketplace.json"; printf %s "{}" > "$clone_dir/g/.claude-plugin/plugin.json"; mkdir -p "$clone_dir/m/.claude-plugin"; printf %s "{}" > "$clone_dir/m/.claude-plugin/plugin.json"'
+    _stub_git_response "partner" 0 'mkdir -p "$clone_dir/.claude-plugin" "$clone_dir/h/.claude-plugin"; printf %s '"'"'{"plugins":[{"name":"helpdesk","source":"./h"}]}'"'"' > "$clone_dir/.claude-plugin/marketplace.json"; printf %s "{}" > "$clone_dir/h/.claude-plugin/plugin.json"'
+    AI_STUDIO_SKILLS="https://github.com/Clouve/magneto-skills.git?plugins=gibbon,https://gitlab.com/somepartner/their-skills.git?plugins=helpdesk" run _clv_load_marketplaces
+    [ "$status" -eq 0 ]
+    [ -d "$_CLV_SKILLS_DIR/gibbon/plugin" ]
+    [ -d "$_CLV_SKILLS_DIR/helpdesk/plugin" ]
+    [ ! -d "$_CLV_SKILLS_DIR/moodle" ]
+    [[ "$output" == *"2 plugins loaded from 2 marketplaces"* ]]
+}
+
+@test "multi-marketplace with ?plugins= on both URLs: both marketplaces processed independently" {
+    _stub_git_response "magneto" 0 'mkdir -p "$clone_dir/.claude-plugin" "$clone_dir/g/.claude-plugin" "$clone_dir/m/.claude-plugin"; printf %s '"'"'{"plugins":[{"name":"gibbon","source":"./g"},{"name":"moodle","source":"./m"}]}'"'"' > "$clone_dir/.claude-plugin/marketplace.json"; printf %s "{}" > "$clone_dir/g/.claude-plugin/plugin.json"; printf %s "{}" > "$clone_dir/m/.claude-plugin/plugin.json"'
+    _stub_git_response "partner" 0 'mkdir -p "$clone_dir/.claude-plugin" "$clone_dir/h/.claude-plugin"; printf %s '"'"'{"plugins":[{"name":"helpdesk","source":"./h"}]}'"'"' > "$clone_dir/.claude-plugin/marketplace.json"; printf %s "{}" > "$clone_dir/h/.claude-plugin/plugin.json"'
+    AI_STUDIO_SKILLS="https://github.com/Clouve/magneto-skills.git?plugins=gibbon,moodle,https://gitlab.com/somepartner/their-skills.git?plugins=helpdesk" _clv_load_marketplaces
+    [ -d "$_CLV_SKILLS_DIR/gibbon/plugin" ]
+    [ -d "$_CLV_SKILLS_DIR/moodle/plugin" ]
+    [ -d "$_CLV_SKILLS_DIR/helpdesk/plugin" ]
+}
+
+@test "comma inside ?plugins= filter is preserved" {
+    # Verifies that ?plugins=a,b,c stays as a single filter, not three entries.
+    _stub_git_response "clone" 0 'mkdir -p "$clone_dir/.claude-plugin" "$clone_dir/g/.claude-plugin" "$clone_dir/m/.claude-plugin"; printf %s '"'"'{"plugins":[{"name":"gibbon","source":"./g"},{"name":"moodle","source":"./m"},{"name":"extra","source":"./e"}]}'"'"' > "$clone_dir/.claude-plugin/marketplace.json"; mkdir -p "$clone_dir/e/.claude-plugin"; printf %s "{}" > "$clone_dir/g/.claude-plugin/plugin.json"; printf %s "{}" > "$clone_dir/m/.claude-plugin/plugin.json"; printf %s "{}" > "$clone_dir/e/.claude-plugin/plugin.json"'
+    AI_STUDIO_SKILLS="https://github.com/Clouve/magneto-skills.git?plugins=gibbon,moodle" run _clv_load_marketplaces
+    [ "$status" -eq 0 ]
+    [ -d "$_CLV_SKILLS_DIR/gibbon/plugin" ]
+    [ -d "$_CLV_SKILLS_DIR/moodle/plugin" ]
+    [ ! -d "$_CLV_SKILLS_DIR/extra" ]
+    [[ "$output" == *"1 plugins loaded from 1 marketplaces"* ]] || [[ "$output" == *"2 plugins loaded from 1 marketplaces"* ]]
+}
