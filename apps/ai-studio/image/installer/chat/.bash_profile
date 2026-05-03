@@ -400,27 +400,11 @@ _clv_write_context() {
     mkdir -p "$dir"
     local out="$dir/$file"
 
-    # Render the base template (the platform-wide framing — /_clv/ rules,
-    # persistent paths, etc.).
-    USERNAME="$(whoami)" envsubst < "$tpl" > "$out"
-
-    # Append a section per active skill, in the order recorded in .active.
-    if [ -r /clouve/skills/.active ]; then
-        while IFS=$'\t' read -r _slug _id; do
-            [ -z "$_slug" ] && continue
-            local skill_tpl="/clouve/skills/$_slug/CONTEXT.md.tpl"
-            [ -f "$skill_tpl" ] || continue
-            # Pretty-print the ID with spaces around the slash for the header.
-            local _heading="${_id//\// / }"
-            {
-                printf '\n\n---\n\n## Skill: %s\n\n' "$_heading"
-                USERNAME="$(whoami)" envsubst < "$skill_tpl"
-            } >> "$out"
-        done < /clouve/skills/.active
-        unset _slug _id _heading skill_tpl
-    fi
-
-    chmod 600 "$out"
+    # Delegate composition (base + per-plugin sections + envsubst) to the
+    # marketplace context composer so the rendering rules stay in one place.
+    # shellcheck source=/dev/null
+    . /clouve/ai-studio/installer/chat/marketplace/context-composer.sh
+    USERNAME="$(whoami)" _clv_compose_context "$tpl" "/clouve/skills/.active" "$out"
 }
 
 # Prompt the user to choose between auto-accept and standard launch mode.
