@@ -1,0 +1,101 @@
+services:
+  magneto-agent:
+    image: r.clv.zone/e2eorg/magneto-agent
+    container_name: magneto_agent_server
+    restart: unless-stopped
+    ports:
+      - "${TEST_HTTP_PORT:-8080}:80"
+    environment:
+      MAGNETO_AGENT_USERNAME: admin
+      MAGNETO_AGENT_PASSWORD: Admin@123
+      MAGNETO_AGENT_ROOT_PASSWORD: Root@123
+      
+      # Optional — auto-detected from the HTTP Host header when omitted.
+      # Useful for local dev or test.sh URL substitution.
+      # MAGNETO_AGENT_HOST: ${TEST_DOMAIN:-localhost:8080}
+
+      # Optionally pre-set the default AI client for this instance. 
+      # Supported values are: claude-code | gemini-cli | codex-cli
+      # MAGNETO_AGENT_CLIENT: claude-code # claude-code | gemini-cli | codex-cli
+      
+      # Optionally pre-set an API key to skip the per-session key prompt.
+      # Any key provided here is injected into all login shells at startup.
+      # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      # OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+
+      # ── Skill loading ───────────────────────────────────────────────
+      # Comma-separated list of Claude Code plugin marketplace URLs.
+      # Each entry may include ?plugins=<name1>,<name2> (subset filter,
+      # default = all plugins in the marketplace) and #<branch> (default
+      # = main). The loader clones each marketplace at container start,
+      # reads .claude-plugin/marketplace.json, stages each selected
+      # plugin under /clouve/skills/<plugin>/, and composes
+      # ~/.{claude,gemini,codex}/{CLAUDE,GEMINI,AGENTS}.md from the
+      # per-plugin CONTEXT.md.tpl files pulled at init by sidecar-fetcher
+      # from each sidecar in CLV_SIDECAR_HOSTS. See README.md "AI Skills"
+      # for the full spec.
+      # MAGNETO_AGENT_SKILLS: https://github.com/Clouve/magneto-skills.git?plugins=gibbon,moodle # main branch
+      # MAGNETO_AGENT_SKILLS: https://github.com/Clouve/magneto-skills.git?plugins=gibbon,moodle#develop # develop branch
+
+      # Credentials for private marketplace repos. The default vars
+      # apply to every host; per-host overrides take precedence and use
+      # the uppercased host with dots/dashes replaced by underscores
+      # (e.g. MAGNETO_AGENT_SKILLS_GIT_TOKEN__GITHUB_COM).
+      # MAGNETO_AGENT_SKILLS_GIT_TOKEN:    ${MAGNETO_AGENT_SKILLS_GIT_TOKEN:-}
+      # MAGNETO_AGENT_SKILLS_GIT_USERNAME: ${MAGNETO_AGENT_SKILLS_GIT_USERNAME:-}
+      #
+      # Per-host token samples — uncomment the host(s) you need. The
+      # username defaults are applied automatically; only set
+      # MAGNETO_AGENT_SKILLS_GIT_USERNAME__<HOST> if your host needs a
+      # different convention than the listed default.
+      #
+      # GitHub (also: GitHub Enterprise — same username convention)
+      # MAGNETO_AGENT_SKILLS_GIT_TOKEN__GITHUB_COM:    ${MAGNETO_AGENT_SKILLS_GIT_TOKEN__GITHUB_COM:-}        # username default: x-access-token
+      # MAGNETO_AGENT_SKILLS_GIT_USERNAME__GITHUB_COM: ${MAGNETO_AGENT_SKILLS_GIT_USERNAME__GITHUB_COM:-}
+      #
+      # GitLab.com
+      # MAGNETO_AGENT_SKILLS_GIT_TOKEN__GITLAB_COM:    ${MAGNETO_AGENT_SKILLS_GIT_TOKEN__GITLAB_COM:-}        # username default: oauth2
+      # MAGNETO_AGENT_SKILLS_GIT_USERNAME__GITLAB_COM: ${MAGNETO_AGENT_SKILLS_GIT_USERNAME__GITLAB_COM:-}
+      #
+      # Bitbucket Cloud
+      # MAGNETO_AGENT_SKILLS_GIT_TOKEN__BITBUCKET_ORG:    ${MAGNETO_AGENT_SKILLS_GIT_TOKEN__BITBUCKET_ORG:-}     # username default: x-token-auth
+      # MAGNETO_AGENT_SKILLS_GIT_USERNAME__BITBUCKET_ORG: ${MAGNETO_AGENT_SKILLS_GIT_USERNAME__BITBUCKET_ORG:-}
+      #
+      # Codeberg (Forgejo)
+      # MAGNETO_AGENT_SKILLS_GIT_TOKEN__CODEBERG_ORG:    ${MAGNETO_AGENT_SKILLS_GIT_TOKEN__CODEBERG_ORG:-}      # username default: git
+      # MAGNETO_AGENT_SKILLS_GIT_USERNAME__CODEBERG_ORG: ${MAGNETO_AGENT_SKILLS_GIT_USERNAME__CODEBERG_ORG:-}
+      #
+      # Gitea (gitea.com SaaS — adjust for self-hosted Gitea below)
+      # MAGNETO_AGENT_SKILLS_GIT_TOKEN__GITEA_COM:    ${MAGNETO_AGENT_SKILLS_GIT_TOKEN__GITEA_COM:-}            # username default: git
+      # MAGNETO_AGENT_SKILLS_GIT_USERNAME__GITEA_COM: ${MAGNETO_AGENT_SKILLS_GIT_USERNAME__GITEA_COM:-}
+      #
+      # Self-hosted GitLab (e.g. https://git.internal.clouve.com) — username
+      # default is "git"; set _USERNAME__<HOST> to "oauth2" for GitLab.
+      # MAGNETO_AGENT_SKILLS_GIT_TOKEN__GIT_INTERNAL_CLOUVE_COM:    ${MAGNETO_AGENT_SKILLS_GIT_TOKEN__GIT_INTERNAL_CLOUVE_COM:-}
+      # MAGNETO_AGENT_SKILLS_GIT_USERNAME__GIT_INTERNAL_CLOUVE_COM: oauth2
+      #
+      # Self-hosted Gitea / Forgejo — default "git" username works out of the box.
+      # MAGNETO_AGENT_SKILLS_GIT_TOKEN__GIT_EXAMPLE_COM:    ${MAGNETO_AGENT_SKILLS_GIT_TOKEN__GIT_EXAMPLE_COM:-}
+      # MAGNETO_AGENT_SKILLS_GIT_USERNAME__GIT_EXAMPLE_COM: ${MAGNETO_AGENT_SKILLS_GIT_USERNAME__GIT_EXAMPLE_COM:-}
+    volumes:
+      - magneto-agent-home:/home
+      - magneto-agent-usr:/usr
+      - magneto-agent-opt:/opt
+      - magneto-agent-var:/var
+    networks:
+      - magneto_agent_network
+
+volumes:
+  magneto-agent-home:
+    driver: local
+  magneto-agent-usr:
+    driver: local
+  magneto-agent-opt:
+    driver: local
+  magneto-agent-var:
+    driver: local
+
+networks:
+  magneto_agent_network:
+    driver: bridge

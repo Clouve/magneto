@@ -1,0 +1,80 @@
+version: '3.8'
+
+networks:
+  n8n_network:
+    driver: bridge
+
+volumes:
+  n8n_data:
+  postgres_data:
+
+services:
+  n8n-postgres:
+    image: r.clv.zone/e2eorg/n8n-postgres:latest
+    container_name: n8n_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: n8n_root
+      POSTGRES_PASSWORD: n8n_root_password
+      POSTGRES_DB: n8n
+      POSTGRES_NON_ROOT_USER: n8n
+      POSTGRES_NON_ROOT_PASSWORD: n8n_password
+    volumes:
+      # PostgreSQL 18+ uses /var/lib/postgresql as the mount point
+      # This allows pg_upgrade to work properly with version-specific subdirectories
+      - postgres_data:/var/lib/postgresql
+    networks:
+      - n8n_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h localhost -U n8n_root -d n8n"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  n8n:
+    image: r.clv.zone/e2eorg/n8n:latest
+    container_name: n8n_app
+    restart: unless-stopped
+    ports:
+      - "${TEST_PORT:-8080}:5678"
+    environment:
+      # Database Configuration (non-root user per official n8n recommendations)
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: n8n-postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: n8n
+      DB_POSTGRESDB_USER: n8n
+      DB_POSTGRESDB_PASSWORD: n8n_password
+
+      # n8n URL Configuration
+      # This URL is used for webhook URLs and the editor UI
+      N8N_EDITOR_BASE_URL: http://${TEST_DOMAIN:-t1.test.clv}:${TEST_PORT:-8080}
+      WEBHOOK_URL: http://${TEST_DOMAIN:-t1.test.clv}:${TEST_PORT:-8080}
+      N8N_HOST: 0.0.0.0
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+
+      # Task Runner Configuration (required for n8n 2.x)
+      N8N_RUNNERS_MODE: internal
+
+      # Encryption key for stored credentials
+      # IMPORTANT: Change this to a strong key in production!
+      N8N_ENCRYPTION_KEY: n8n_local_dev_encryption_key_32ch
+
+      # Reverse proxy configuration (1 hop for ingress/LB)
+      N8N_PROXY_HOPS: 1
+
+      # Disable telemetry and hiring banner for marketplace deployment
+      N8N_DIAGNOSTICS_ENABLED: false
+      N8N_HIRING_BANNER_ENABLED: false
+
+      # Timezone configuration
+      GENERIC_TIMEZONE: UTC
+      TZ: UTC
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks:
+      - n8n_network
+    depends_on:
+      n8n-postgres:
+        condition: service_healthy

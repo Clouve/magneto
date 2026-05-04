@@ -1,0 +1,144 @@
+version: '3.8'
+services:
+  owncloud:
+    image: owncloud:latest
+    ports:
+      - '8080:8080'
+    environment:
+      OWNCLOUD_REDIS_HOST: owncloud-redis
+      OWNCLOUD_DB_HOST: owncloud-mariadb
+      OWNCLOUD_DB_TYPE: mysql
+      OWNCLOUD_DB_NAME: owncloud
+      OWNCLOUD_DB_USERNAME: owncloud
+      OWNCLOUD_DB_PASSWORD: owncloud-mariadb-password
+      OWNCLOUD_DOMAIN: localhost
+      OWNCLOUD_TRUSTED_DOMAINS: localhost
+      OWNCLOUD_ADMIN_USERNAME: '{user.firstName}_{user.lastName}'
+      OWNCLOUD_ADMIN_PASSWORD: owncloud-password
+      OWNCLOUD_MYSQL_UTF8MB4: 'true'
+      OWNCLOUD_REDIS_ENABLED: 'true'
+    x-clouve-environment-types:
+      OWNCLOUD_REDIS_HOST: containerReference
+      OWNCLOUD_DB_HOST: containerReference
+      OWNCLOUD_DB_TYPE: static
+      OWNCLOUD_DB_NAME: static
+      OWNCLOUD_DB_USERNAME: static
+      OWNCLOUD_DB_PASSWORD: secret
+      OWNCLOUD_DOMAIN: applicationHost
+      OWNCLOUD_TRUSTED_DOMAINS: applicationHost
+      OWNCLOUD_ADMIN_USERNAME: applicationUsername
+      OWNCLOUD_ADMIN_PASSWORD: applicationPassword
+      OWNCLOUD_MYSQL_UTF8MB4: static
+      OWNCLOUD_REDIS_ENABLED: static
+    volumes:
+      - ownclouddata:/mnt/data
+    x-clouve-metadata:
+      containerName: owncloud
+      purpose: Frontend
+      protocol: TCP
+      isPublic: true
+      memoryBase: 1
+      cpuBase: 1
+    x-clouve-bundle-metadata:
+      appVersion: 10.16.0
+      appTitle: ownCloud
+      appDescription: ownCloud is a powerful, open-source file sync and share platform that enables businesses to securely store, access, and collaborate on files from anywhere. With its robust security features, including end-to-end encryption and granular access controls, ownCloud ensures that sensitive business data remains protected while facilitating seamless collaboration across teams. The platform offers flexible deployment options, comprehensive file versioning, and extensive integration capabilities with enterprise tools. Whether for document management, team collaboration, or secure file sharing with external partners, ownCloud provides a scalable, self-hosted solution that gives organizations complete control over their data while enhancing productivity and compliance.
+    x-clouve-healthcheck:
+      enabled: true
+      type: Command
+      path: /usr/bin/healthcheck
+      port: 8080
+      initialDelay: 30
+      interval: 15
+      timeout: 15
+      failureThreshold: 5
+      successThreshold: 1
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - /usr/bin/healthcheck
+      interval: 15s
+      timeout: 15s
+      retries: 5
+      start_period: 30s
+    x-clouve-volumes:
+      - name: ownclouddata
+        size: 10
+        description: Volume for ownCloud application data and files
+  owncloud-mariadb:
+    image: owncloud-mariadb:latest
+    ports:
+      - '3306:3306'
+    environment:
+      MYSQL_DATABASE: owncloud
+      MYSQL_USER: owncloud
+      MYSQL_PASSWORD: owncloud-mariadb-password
+      MYSQL_ROOT_PASSWORD: owncloud-mariadb-root-password
+      MARIADB_AUTO_UPGRADE: '1'
+    x-clouve-environment-types:
+      MYSQL_DATABASE: static
+      MYSQL_USER: static
+      MYSQL_PASSWORD: secret
+      MYSQL_ROOT_PASSWORD: secret
+      MARIADB_AUTO_UPGRADE: static
+    volumes:
+      - dbdata:/var/lib/mysql
+    x-clouve-metadata:
+      containerName: owncloud-mariadb
+      purpose: Database
+      protocol: TCP
+      isPublic: false
+      memoryBase: 1
+      cpuBase: 0.5
+    x-clouve-healthcheck:
+      enabled: false
+      type: HTTP
+      path: /health
+      port: 3306
+      initialDelay: 30
+      interval: 10
+      timeout: 5
+      failureThreshold: 3
+      successThreshold: 1
+    x-clouve-volumes:
+      - name: dbdata
+        size: 10
+        description: Volume for MariaDB database data
+  owncloud-redis:
+    image: owncloud-redis:latest
+    ports:
+      - '6379:6379'
+    environment:
+      REDIS_DB: '0'
+    x-clouve-environment-types:
+      REDIS_DB: static
+    volumes:
+      - redisdata:/data
+    x-clouve-metadata:
+      containerName: owncloud-redis
+      purpose: Cache
+      protocol: TCP
+      isPublic: false
+      memoryBase: 1
+      cpuBase: 0.5
+    x-clouve-healthcheck:
+      enabled: false
+      type: TCP
+      path: /
+      port: 6379
+      initialDelay: 10
+      interval: 10
+      timeout: 5
+      failureThreshold: 3
+      successThreshold: 1
+    x-clouve-volumes:
+      - name: redisdata
+        size: 10
+        description: Volume for Redis cache data
+volumes:
+  ownclouddata:
+    driver: local
+  dbdata:
+    driver: local
+  redisdata:
+    driver: local

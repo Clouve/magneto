@@ -1,0 +1,76 @@
+version: '3.8'
+services:
+  magneto-agent:
+    image: magneto-agent:latest
+    ports:
+      - '80:80'
+    environment:
+      MAGNETO_AGENT_USERNAME: '{user.firstName}_{user.lastName}'
+      MAGNETO_AGENT_PASSWORD: magneto-agent-password
+      MAGNETO_AGENT_ROOT_PASSWORD: magneto-agent-root-password
+      MAGNETO_AGENT_CLIENT: codex-cli
+    x-clouve-environment-types:
+      MAGNETO_AGENT_USERNAME: applicationUsername
+      MAGNETO_AGENT_PASSWORD: applicationPassword
+      MAGNETO_AGENT_ROOT_PASSWORD: secret
+      MAGNETO_AGENT_CLIENT: static
+    volumes:
+      - magneto-agent-home:/home
+      - magneto-agent-usr:/usr
+      - magneto-agent-opt:/opt
+      - magneto-agent-var:/var
+    x-clouve-metadata:
+      containerName: magneto-agent
+      purpose: Database
+      protocol: TCP
+      isPublic: true
+      memoryBase: 4
+      cpuBase: 1
+    x-clouve-bundle-metadata:
+      appVersion: '24.04'
+      appTitle: Magneto Agent
+      appDescription: A cloud-hosted AI coding workspace powered by OpenAI Codex CLI, accessible directly from your browser — no local setup required. Includes a full Ubuntu 24.04 LTS environment with OpenAI Codex CLI pre-selected as your AI assistant and Filebrowser Quantum for uploading, downloading, and editing files on your server. OpenAI Codex CLI is installed on first use and persists across sessions.
+      appIcon: /thermo/assets/Company/e2eorg/attachments/3d88b747584d0edd-claude.png
+    x-clouve-healthcheck:
+      enabled: true
+      type: HTTP
+      path: /
+      port: 80
+      initialDelay: 60
+      interval: 60
+      timeout: 60
+      failureThreshold: 15
+      successThreshold: 1
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - '--spider'
+        - '-q'
+        - http://localhost:80/
+      interval: 60s
+      timeout: 60s
+      retries: 15
+      start_period: 60s
+    x-clouve-volumes:
+      - name: magneto-agent-home
+        size: 10
+        description: Persistent volume for home directories
+      - name: magneto-agent-usr
+        size: 10
+        description: Persistent volume for system binaries and libraries (/usr)
+      - name: magneto-agent-opt
+        size: 10
+        description: Persistent volume for optional software (/opt)
+      - name: magneto-agent-var
+        size: 10
+        description: Persistent volume for /var (package db, cache, logs, web files)
+volumes:
+  magneto-agent-home:
+    driver: local
+  magneto-agent-usr:
+    driver: local
+  magneto-agent-opt:
+    driver: local
+  magneto-agent-var:
+    driver: local

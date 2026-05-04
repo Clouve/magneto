@@ -1,0 +1,130 @@
+version: '3.8'
+
+networks:
+  crm_network:
+    driver: bridge
+
+volumes:
+  limesurvey_db_data:
+  limesurvey_data:
+  limesurvey_upload:
+  suitecrm_db_data:
+  suitecrm_data:
+
+services:
+  # LimeSurvey MariaDB Database
+  limesurvey-mariadb:
+    image: r.clv.zone/e2eorg/limesurvey-mariadb:latest
+    container_name: crm_kit_limesurvey_mariadb
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: limesurvey
+      MYSQL_USER: limesurvey
+      MYSQL_PASSWORD: limesurvey_password
+      MYSQL_ROOT_PASSWORD: limesurvey_root_password
+    volumes:
+      - limesurvey_db_data:/var/lib/mysql
+    networks:
+      - crm_network
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # LimeSurvey Application
+  limesurvey:
+    image: r.clv.zone/e2eorg/limesurvey:latest
+    container_name: crm_kit_limesurvey_app
+    restart: unless-stopped
+    depends_on:
+      limesurvey-mariadb:
+        condition: service_healthy
+      suitecrm-mariadb:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      # Database Configuration
+      DB_TYPE: mysql
+      DB_HOST: limesurvey-mariadb
+      DB_PORT: 3306
+      DB_NAME: limesurvey
+      DB_USERNAME: limesurvey
+      DB_PASSWORD: limesurvey_password
+      # LimeSurvey Admin Configuration
+      ADMIN_USER: admin
+      ADMIN_NAME: Administrator
+      ADMIN_EMAIL: admin@example.com
+      ADMIN_PASSWORD: Admin@123
+      # URL Configuration
+      PUBLIC_URL: http://localhost:8080
+      
+      INSTALL_DEMO_DATA: "true"
+
+      # CRM Kit Integration - SuiteCRM Integration Plugin
+      ENABLE_SUITECRM_INTEGRATION: "true"
+      # SuiteCRM Connection Configuration
+      SUITECRM_URL: http://suitecrm:80
+      SUITECRM_ADMIN_USER: admin
+      SUITECRM_ADMIN_PASSWORD: Admin@123
+      # SuiteCRM Database Configuration (for OAuth2 client setup)
+      SUITECRM_DB_HOST: suitecrm-mariadb
+      SUITECRM_DB_PORT: 3306
+      SUITECRM_DB_NAME: suitecrm
+      SUITECRM_DB_USER: suitecrm
+      SUITECRM_DB_PASSWORD: suitecrm_password
+    volumes:
+      - limesurvey_data:/var/www/html
+      - limesurvey_upload:/var/www/html/upload
+    networks:
+      - crm_network
+
+  # SuiteCRM MariaDB Database
+  suitecrm-mariadb:
+    image: r.clv.zone/e2eorg/suitecrm-mariadb:latest
+    container_name: crm_kit_suitecrm_mariadb
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: suitecrm
+      MYSQL_USER: suitecrm
+      MYSQL_PASSWORD: suitecrm_password
+      MYSQL_ROOT_PASSWORD: suitecrm_root_password
+    volumes:
+      - suitecrm_db_data:/var/lib/mysql
+    networks:
+      - crm_network
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # SuiteCRM Application
+  suitecrm:
+    image: r.clv.zone/e2eorg/suitecrm:latest
+    container_name: crm_kit_suitecrm_app
+    restart: unless-stopped
+    depends_on:
+      suitecrm-mariadb:
+        condition: service_healthy
+    ports:
+      - "8081:80"
+    environment:
+      # Database Configuration
+      DATABASE_HOST: suitecrm-mariadb
+      DATABASE_PORT: 3306
+      DATABASE_NAME: suitecrm
+      DATABASE_USER: suitecrm
+      DATABASE_PASSWORD: suitecrm_password
+      # SuiteCRM Configuration
+      SUITECRM_URL: http://localhost:8081
+      SUITECRM_ADMIN_USER: admin
+      SUITECRM_ADMIN_PASSWORD: Admin@123
+      SUITECRM_INSTALL_DEMO_DATA: "no"
+    volumes:
+      - suitecrm_data:/var/www/html
+    networks:
+      - crm_network
+
+

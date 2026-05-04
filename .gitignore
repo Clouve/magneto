@@ -1,0 +1,7 @@
+.idea
+.data
+.claude
+.playwright-mcp
+.vscode
+.research
+!.gitkeep

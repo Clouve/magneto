@@ -1,0 +1,249 @@
+version: '3.8'
+
+networks:
+  education_network:
+    driver: bridge
+
+volumes:
+  gibbon_db_data:
+  gibbon_data:
+  moodle_db_data:
+  moodle_data:
+  moodledata:
+
+services:
+  # Gibbon MySQL Database
+  gibbon-mysql:
+    image: r.clv.zone/e2eorg/gibbon-mysql:latest
+    container_name: education_kit_gibbon_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: gibbon
+      MYSQL_USER: gibbon
+      MYSQL_PASSWORD: gibbon_password
+      MYSQL_ROOT_PASSWORD: gibbon_root_password
+    volumes:
+      - gibbon_db_data:/var/lib/mysql
+    networks:
+      - education_network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-pgibbon_root_password"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Gibbon Application
+  gibbon:
+    image: r.clv.zone/e2eorg/gibbon:latest
+    container_name: education_kit_gibbon_app
+    restart: unless-stopped
+    depends_on:
+      gibbon-mysql:
+        condition: service_healthy
+    ports:
+      - "8081:80"
+    environment:
+      # Database Configuration
+      DB_HOST: gibbon-mysql
+      DB_NAME: gibbon
+      DB_USER: gibbon
+      DB_PASSWORD: gibbon_password
+      # Gibbon Application Configuration
+      GIBBON_AUTOINSTALL: "1"
+      GIBBON_URL: http://localhost:8081
+      GIBBON_TITLE: My School
+      GIBBON_FIRSTNAME: Admin
+      GIBBON_LASTNAME: User
+      GIBBON_EMAIL: admin@example.com
+      GIBBON_USERNAME: admin
+      GIBBON_PASSWORD: admin_password
+      GIBBON_SYSTEM_NAME: My School
+      GIBBON_ORGANISATION_NAME: My School
+      GIBBON_ORGANISATION_INITIALS: MS
+      DEMO_DATA: "N"
+      GIBBON_LOG_LEVEL: info
+      # Education Kit Integration
+      ENABLE_MOODLE_INTEGRATION: "true"
+      # Gibbon Integration SQL - Part 1: moodleUser view
+      # Exposes Gibbon users (students and staff) to Moodle for SSO authentication
+      GIBBON_INTEGRATION_SQL_1: |
+        CREATE OR REPLACE VIEW moodleUser AS
+          SELECT
+            username,
+            preferredName,
+            surname,
+            email,
+            website
+          FROM gibbonPerson
+          JOIN gibbonRole ON (gibbonRole.gibbonRoleID = gibbonPerson.gibbonRoleIDPrimary)
+          WHERE (category = 'Student' OR category = 'Staff')
+            AND status = 'Full';
+      # Gibbon Integration SQL - Part 2: moodleCourse view
+      # Exposes Gibbon courses for the current school year to Moodle
+      GIBBON_INTEGRATION_SQL_2: |
+        CREATE OR REPLACE VIEW moodleCourse AS
+          SELECT *
+          FROM gibbonCourse
+          WHERE gibbonSchoolYearID = (
+            SELECT gibbonSchoolYearID
+            FROM gibbonSchoolYear
+            WHERE status = 'Current'
+          );
+      # Gibbon Integration SQL - Part 3: moodleEnrolment view
+      # Exposes Gibbon course enrollments to Moodle (students and teachers)
+      GIBBON_INTEGRATION_SQL_3: |
+        CREATE OR REPLACE VIEW moodleEnrolment AS
+          -- Student enrollments
+          SELECT
+            gibbonCourseClass.gibbonCourseID,
+            gibbonPerson.username,
+            'student' AS role
+          FROM gibbonCourseClassPerson
+          JOIN gibbonPerson ON (gibbonCourseClassPerson.gibbonPersonID = gibbonPerson.gibbonPersonID)
+          JOIN gibbonCourseClass ON (gibbonCourseClassPerson.gibbonCourseClassID = gibbonCourseClass.gibbonCourseClassID)
+          WHERE gibbonCourseClassPerson.role = 'Student'
+            AND gibbonPerson.status = 'Full'
+          UNION
+          -- Teacher enrollments
+          SELECT
+            gibbonCourseClass.gibbonCourseID,
+            gibbonPerson.username,
+            'editingteacher' AS role
+          FROM gibbonCourseClassPerson
+          JOIN gibbonPerson ON (gibbonCourseClassPerson.gibbonPersonID = gibbonPerson.gibbonPersonID)
+          JOIN gibbonCourseClass ON (gibbonCourseClassPerson.gibbonCourseClassID = gibbonCourseClass.gibbonCourseClassID)
+          WHERE gibbonCourseClassPerson.role = 'Teacher'
+            AND gibbonPerson.status = 'Full';
+    volumes:
+      - gibbon_data:/var/www/html
+    networks:
+      - education_network
+
+  # Moodle MySQL Database
+  moodle-mysql:
+    image: r.clv.zone/e2eorg/moodle-mysql:latest
+    container_name: education_kit_moodle_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: moodle
+      MYSQL_USER: moodle
+      MYSQL_PASSWORD: moodle_password
+      MYSQL_ROOT_PASSWORD: moodle_root_password
+    volumes:
+      - moodle_db_data:/var/lib/mysql
+    networks:
+      - education_network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Moodle Application
+  moodle:
+    image: r.clv.zone/e2eorg/moodle:latest
+    container_name: education_kit_moodle_app
+    restart: unless-stopped
+    depends_on:
+      moodle-mysql:
+        condition: service_healthy
+      gibbon-mysql:
+        condition: service_healthy
+    ports:
+      - "8080:80"
+    environment:
+      # Database Configuration
+      DB_HOST: moodle-mysql
+      DB_NAME: moodle
+      DB_USER: moodle
+      DB_PASSWORD: moodle_password
+      # Moodle Application Configuration
+      MOODLE_URL: http://localhost:8080
+      MOODLE_SITE_NAME: My Moodle Site
+      MOODLE_EMAIL: admin@example.com
+      MOODLE_USERNAME: admin
+      MOODLE_PASSWORD: Admin@123
+      MOODLE_FULLNAME: Administrator
+      MOODLE_SHORTNAME: Admin
+      MOODLE_LOG_LEVEL: info
+      # Gibbon Integration Configuration
+      GIBBON_DB_HOST: gibbon-mysql
+      GIBBON_DB_NAME: gibbon
+      GIBBON_DB_USER: gibbon
+      GIBBON_DB_PASSWORD: gibbon_password
+      # Education Kit Integration
+      ENABLE_GIBBON_INTEGRATION: "true"
+      # Moodle Integration SQL - Part 1: Enable External Database plugins
+      # Enables auth_db (authentication) and enrol_database (enrollment) plugins
+      MOODLE_INTEGRATION_SQL_1: |
+        -- Enable External Database Authentication plugin
+        INSERT INTO mdl_config (name, value)
+        VALUES ('auth', 'manual,db')
+        ON DUPLICATE KEY UPDATE value = IF(value NOT LIKE '%db%', CONCAT(value,',db'), value);
+        -- Enable External Database Enrollment plugin
+        INSERT INTO mdl_config (name, value)
+        VALUES ('enrol_plugins_enabled', 'manual,database')
+        ON DUPLICATE KEY UPDATE value = IF(value NOT LIKE '%database%', CONCAT(value,',database'), value);
+      # Moodle Integration SQL - Part 2: Configure External Database Authentication
+      # Configures auth_db plugin to authenticate users against Gibbon database
+      MOODLE_INTEGRATION_SQL_2: |
+        -- Database connection settings
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'host', 'gibbon-mysql') ON DUPLICATE KEY UPDATE value = 'gibbon-mysql';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'name', 'gibbon') ON DUPLICATE KEY UPDATE value = 'gibbon';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'user', 'gibbon') ON DUPLICATE KEY UPDATE value = 'gibbon';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'pass', 'gibbon_password') ON DUPLICATE KEY UPDATE value = 'gibbon_password';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'type', 'mysql') ON DUPLICATE KEY UPDATE value = 'mysql';
+        -- User table and field mappings
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'table', 'moodleUser') ON DUPLICATE KEY UPDATE value = 'moodleUser';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'fielduser', 'username') ON DUPLICATE KEY UPDATE value = 'username';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'passtype', 'internal') ON DUPLICATE KEY UPDATE value = 'internal';
+        -- User synchronization settings
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'removeuser', '2') ON DUPLICATE KEY UPDATE value = '2';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'updateusers', '1') ON DUPLICATE KEY UPDATE value = '1';
+        -- First name field mapping
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'field_map_firstname', 'preferredName') ON DUPLICATE KEY UPDATE value = 'preferredName';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'field_updatelocal_firstname', 'onlogin') ON DUPLICATE KEY UPDATE value = 'onlogin';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'field_updateremote_firstname', '0') ON DUPLICATE KEY UPDATE value = '0';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'field_lock_firstname', 'locked') ON DUPLICATE KEY UPDATE value = 'locked';
+        -- Last name field mapping
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'field_map_lastname', 'surname') ON DUPLICATE KEY UPDATE value = 'surname';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'field_updatelocal_lastname', 'onlogin') ON DUPLICATE KEY UPDATE value = 'onlogin';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'field_updateremote_lastname', '0') ON DUPLICATE KEY UPDATE value = '0';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'field_lock_lastname', 'locked') ON DUPLICATE KEY UPDATE value = 'locked';
+        -- Email field mapping
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'field_map_email', 'email') ON DUPLICATE KEY UPDATE value = 'email';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'field_updatelocal_email', 'oncreate') ON DUPLICATE KEY UPDATE value = 'oncreate';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'field_updateremote_email', '0') ON DUPLICATE KEY UPDATE value = '0';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'field_lock_email', 'locked') ON DUPLICATE KEY UPDATE value = 'locked';
+      # Moodle Integration SQL - Part 3: Configure External Database Enrollment
+      # Configures enrol_database plugin to sync course enrollments from Gibbon
+      MOODLE_INTEGRATION_SQL_3: |
+        -- Database connection settings
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'dbhost', 'gibbon-mysql') ON DUPLICATE KEY UPDATE value = 'gibbon-mysql';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'dbname', 'gibbon') ON DUPLICATE KEY UPDATE value = 'gibbon';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'dbuser', 'gibbon') ON DUPLICATE KEY UPDATE value = 'gibbon';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'dbpass', 'gibbon_password') ON DUPLICATE KEY UPDATE value = 'gibbon_password';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'dbtype', 'mysqli') ON DUPLICATE KEY UPDATE value = 'mysqli';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'dbencoding', 'utf-8') ON DUPLICATE KEY UPDATE value = 'utf-8';
+        -- Local field mappings (Moodle side)
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'localcoursefield', 'idnumber') ON DUPLICATE KEY UPDATE value = 'idnumber';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'localuserfield', 'username') ON DUPLICATE KEY UPDATE value = 'username';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'localrolefield', 'shortname') ON DUPLICATE KEY UPDATE value = 'shortname';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'localcategoryfield', 'id') ON DUPLICATE KEY UPDATE value = 'id';
+        -- Remote enrollment table settings (Gibbon side)
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'remoteenroltable', 'moodleEnrolment') ON DUPLICATE KEY UPDATE value = 'moodleEnrolment';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'remotecoursefield', 'gibbonCourseID') ON DUPLICATE KEY UPDATE value = 'gibbonCourseID';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'remoteuserfield', 'username') ON DUPLICATE KEY UPDATE value = 'username';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'remoterolefield', 'role') ON DUPLICATE KEY UPDATE value = 'role';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'defaultrole', '5') ON DUPLICATE KEY UPDATE value = '5';
+        -- Remote course table settings (Gibbon side)
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'newcoursetable', 'moodleCourse') ON DUPLICATE KEY UPDATE value = 'moodleCourse';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'newcoursefullname', 'name') ON DUPLICATE KEY UPDATE value = 'name';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'newcourseshortname', 'nameShort') ON DUPLICATE KEY UPDATE value = 'nameShort';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'newcourseidnumber', 'gibbonCourseID') ON DUPLICATE KEY UPDATE value = 'gibbonCourseID';
+    volumes:
+      - moodle_data:/var/www/html
+      - moodledata:/var/moodledata
+    networks:
+      - education_network
+

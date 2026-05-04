@@ -1,0 +1,66 @@
+version: '3.8'
+
+networks:
+  limesurvey_network:
+    driver: bridge
+
+volumes:
+  db_data:
+  limesurvey_data:
+  limesurvey_upload:
+
+services:
+  limesurvey-mariadb:
+    image: r.clv.zone/e2eorg/limesurvey-mariadb
+    container_name: limesurvey_db
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: limesurvey
+      MYSQL_USER: limesurvey
+      MYSQL_PASSWORD: limesurvey_password
+      MYSQL_ROOT_PASSWORD: root_password
+    volumes:
+      - db_data:/var/lib/mysql
+    networks:
+      - limesurvey_network
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  limesurvey:
+    image: r.clv.zone/e2eorg/limesurvey
+    container_name: limesurvey_app
+    restart: unless-stopped
+    ports:
+      - "${TEST_PORT:-8080}:8080"
+    environment:
+      # Database Configuration
+      DB_TYPE: mysql
+      DB_HOST: limesurvey-mariadb
+      DB_PORT: 3306
+      DB_NAME: limesurvey
+      DB_USERNAME: limesurvey
+      DB_PASSWORD: limesurvey_password
+
+      # LimeSurvey Admin Configuration
+      ADMIN_USER: admin
+      ADMIN_NAME: Administrator
+      ADMIN_EMAIL: admin@example.com
+      ADMIN_PASSWORD: Admin@123
+
+      # LimeSurvey URL Configuration
+      # Uses environment variable substitution for testing flexibility
+      # Default: http://t1.test.clv:8080
+      # Override with: TEST_DOMAIN and TEST_PORT environment variables
+      PUBLIC_URL: http://${TEST_DOMAIN:-t1.test.clv}:${TEST_PORT:-8080}
+
+      # Demo Data Installation
+      # Set to 'true' to import demo survey data on first startup
+      INSTALL_DEMO_DATA: "true"
+    volumes:
+      - limesurvey_data:/var/www/html
+      - limesurvey_upload:/var/www/html/upload
+    networks:
+      - limesurvey_network

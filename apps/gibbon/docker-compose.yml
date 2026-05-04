@@ -1,0 +1,155 @@
+# Local-dev variant of the Magneto Agent-powered Gibbon app.
+#
+# Mirrors clv-docker-compose.yml but targets plain docker-compose:
+#   - uses the upstream magneto-agent image directly. The runtime binaries the
+#     Gibbon DevOps Skill shells out to (mysql, mysqldump, ssh, sshpass)
+#     are installed at container start by the gibbon plugin's install.sh
+#     hook (in the magneto-skills marketplace). The skill payload itself
+#     — reference docs, playbooks, audited scripts — is delivered by the
+#     same mechanism: Magneto Agent's skill loader (chat/skills.sh) clones the
+#     marketplace specified by MAGNETO_AGENT_SKILLS and stages the requested
+#     plugin's payload at /clouve/skills/<plugin>/. Skill content edits
+#     and runtime-dep changes both flow into running containers on the
+#     next restart, with no per-app image rebuild.
+#   - host-published ports (Gibbon on 8080, Magneto Agent on 8081 by default)
+#   - the .data/ pattern used by the other apps in this repo for persistent state
+#
+# Usage:
+#     ./start.sh apps/gibbon
+# or:
+#     docker compose up
+#
+# Set ANTHROPIC_API_KEY in your shell to skip the in-terminal key prompt.
+services:
+  gibbon-mysql:
+    image: r.clv.zone/e2eorg/gibbon-mysql
+    container_name: gibbon_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: gibbon
+      MYSQL_USER: gibbon
+      MYSQL_PASSWORD: gibbon_password
+      MYSQL_ROOT_PASSWORD: root_password
+      # Shared per-pod password for the clouve-ops shell account. The same
+      # value is set on all three services; the Magneto Agent container uses it
+      # to ssh in (sshpass), gibbon and gibbon-mysql apply it to the
+      # clouve-ops user with chpasswd at start. In prod this is generated
+      # by Clouve's marketplace as a `secret` and injected into all three
+      # pods (see clv-docker-compose.yml).
+      CLOUVE_OPS_PASSWORD: clouve_ops_dev_password
+    volumes:
+      - db_data:/var/lib/mysql
+    networks:
+      - gibbon_network
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot_password"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  gibbon:
+    image: r.clv.zone/e2eorg/gibbon
+    container_name: gibbon_app
+    restart: unless-stopped
+    ports:
+      - "${GIBBON_PORT:-8080}:80"
+    environment:
+      DB_HOST: gibbon-mysql
+      DB_NAME: gibbon
+      DB_USER: gibbon
+      DB_PASSWORD: gibbon_password
+      GIBBON_AUTOINSTALL: "1"
+      GIBBON_URL: http://${TEST_DOMAIN:-t1.test.clv}:${GIBBON_PORT:-8080}
+      GIBBON_TITLE: My School
+      GIBBON_FIRSTNAME: Admin
+      GIBBON_LASTNAME: User
+      GIBBON_EMAIL: admin@example.com
+      GIBBON_USERNAME: admin
+      GIBBON_PASSWORD: Admin@123
+      GIBBON_SYSTEM_NAME: My School
+      GIBBON_ORGANISATION_NAME: My School
+      GIBBON_ORGANISATION_INITIALS: MS
+      DEMO_DATA: "N"
+      GIBBON_LOG_LEVEL: info
+      GIBBON_CRON_INTERVAL: "* * * * *"
+      # Same value as the gibbon-mysql service — see its comment.
+      CLOUVE_OPS_PASSWORD: clouve_ops_dev_password
+    volumes:
+      - gibbon_data:/var/www/html
+    networks:
+      - gibbon_network
+
+  magneto-agent:
+    image: r.clv.zone/e2eorg/magneto-agent
+    container_name: gibbon_magneto_agent
+    restart: unless-stopped
+    ports:
+      - "${MAGNETO_AGENT_PORT:-8081}:80"
+    environment:
+      MAGNETO_AGENT_USERNAME: admin
+      MAGNETO_AGENT_PASSWORD: Admin@123
+      MAGNETO_AGENT_ROOT_PASSWORD: Root@123
+      
+      # Pre-select Claude Code; Magneto Agent's .bash_profile skips the selector
+      # and marks the choice readonly for the session (spec §5 Q6).
+      # MAGNETO_AGENT_CLIENT: claude-code
+      
+      # Activates the Gibbon DevOps plugin from the magneto-skills
+      # Claude Code marketplace. The Magneto Agent loader (chat/skills.sh)
+      # clones the marketplace at container start, stages the gibbon
+      # plugin's payload at /clouve/skills/gibbon/plugin/, appends
+      # ## Skill: gibbon to ~/.claude/CLAUDE.md from
+      # context/gibbon/CONTEXT.md.tpl baked into THIS gibbon image (pulled
+      # by Magneto Agent at init via clouve-ops SSH using sidecar-fetcher; no
+      # longer baked into the Magneto Agent image), and runs the plugin's
+      # install.sh hook to apt-install the runtime binaries the skill shells
+      # out to (mysql-client, openssh-client, sshpass). The hook is
+      # idempotent across restarts.
+      MAGNETO_AGENT_SKILLS: https://github.com/Clouve/magneto-skills.git?plugins=gibbon#develop # develop branch
+      MAGNETO_AGENT_SKILLS_GIT_TOKEN: ${MAGNETO_AGENT_SKILLS_GIT_TOKEN:-}
+      MAGNETO_AGENT_SKILLS_GIT_USERNAME: ${MAGNETO_AGENT_SKILLS_GIT_USERNAME:-}
+
+      # Optional: inject a pre-authenticated key at launch. When unset,
+      # Magneto Agent prompts for it on the first interactive session and
+      # validates against api.anthropic.com/v1/models before storing.
+      # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      
+      # Pod-internal Gibbon targets surfaced to the skill's playbooks so
+      # they can refer to the services by env-var rather than hard-coding.
+      GIBBON_HOST: gibbon
+      GIBBON_DB_HOST: gibbon-mysql
+      GIBBON_DB_NAME: gibbon
+      GIBBON_DB_USER: gibbon
+      GIBBON_DB_PASSWORD: gibbon_password
+      
+      # Same value as the gibbon-mysql service — Claude Code authenticates
+      # to gibbon and gibbon-mysql via `sshpass -e ssh clouve-ops@…` using
+      # this password. See gibbon-mysql for the full rationale.
+      CLOUVE_OPS_PASSWORD: clouve_ops_dev_password
+    volumes:
+      - magneto_agent_home:/home
+      - magneto_agent_usr:/usr
+      - magneto_agent_opt:/opt
+      - magneto_agent_var:/var
+    networks:
+      - gibbon_network
+
+volumes:
+  db_data:
+    driver: local
+  gibbon_data:
+    driver: local
+  magneto_agent_home:
+    driver: local
+  magneto_agent_usr:
+    driver: local
+  magneto_agent_opt:
+    driver: local
+  magneto_agent_var:
+    driver: local
+
+networks:
+  gibbon_network:
+    driver: bridge
