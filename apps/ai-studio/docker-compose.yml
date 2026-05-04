@@ -34,7 +34,8 @@ services:
       # ~/.{claude,gemini,codex}/{CLAUDE,GEMINI,AGENTS}.md from the
       # repo-local context/<plugin>/CONTEXT.md.tpl files baked into the
       # image. See README.md "AI Skills" for the full spec.
-      # AI_STUDIO_SKILLS: https://github.com/Clouve/magneto-skills.git?plugins=gibbon,moodle
+      # AI_STUDIO_SKILLS: https://github.com/Clouve/magneto-skills.git?plugins=gibbon,moodle # main branch
+      # AI_STUDIO_SKILLS: https://github.com/Clouve/magneto-skills.git?plugins=gibbon,moodle#feat/marketplace-migration # feat/marketplace-migration branch
 
       # Credentials for private marketplace repos. The default vars
       # apply to every host; per-host overrides take precedence and use
@@ -42,8 +43,40 @@ services:
       # (e.g. AI_STUDIO_SKILLS_GIT_TOKEN__GITHUB_COM).
       # AI_STUDIO_SKILLS_GIT_TOKEN:    ${AI_STUDIO_SKILLS_GIT_TOKEN:-}
       # AI_STUDIO_SKILLS_GIT_USERNAME: ${AI_STUDIO_SKILLS_GIT_USERNAME:-}
-      # AI_STUDIO_SKILLS_GIT_TOKEN__GITHUB_COM:    ${AI_STUDIO_SKILLS_GIT_TOKEN__GITHUB_COM:-}
+      #
+      # Per-host token samples — uncomment the host(s) you need. The
+      # username defaults are applied automatically; only set
+      # AI_STUDIO_SKILLS_GIT_USERNAME__<HOST> if your host needs a
+      # different convention than the listed default.
+      #
+      # GitHub (also: GitHub Enterprise — same username convention)
+      # AI_STUDIO_SKILLS_GIT_TOKEN__GITHUB_COM:    ${AI_STUDIO_SKILLS_GIT_TOKEN__GITHUB_COM:-}        # username default: x-access-token
       # AI_STUDIO_SKILLS_GIT_USERNAME__GITHUB_COM: ${AI_STUDIO_SKILLS_GIT_USERNAME__GITHUB_COM:-}
+      #
+      # GitLab.com
+      # AI_STUDIO_SKILLS_GIT_TOKEN__GITLAB_COM:    ${AI_STUDIO_SKILLS_GIT_TOKEN__GITLAB_COM:-}        # username default: oauth2
+      # AI_STUDIO_SKILLS_GIT_USERNAME__GITLAB_COM: ${AI_STUDIO_SKILLS_GIT_USERNAME__GITLAB_COM:-}
+      #
+      # Bitbucket Cloud
+      # AI_STUDIO_SKILLS_GIT_TOKEN__BITBUCKET_ORG:    ${AI_STUDIO_SKILLS_GIT_TOKEN__BITBUCKET_ORG:-}     # username default: x-token-auth
+      # AI_STUDIO_SKILLS_GIT_USERNAME__BITBUCKET_ORG: ${AI_STUDIO_SKILLS_GIT_USERNAME__BITBUCKET_ORG:-}
+      #
+      # Codeberg (Forgejo)
+      # AI_STUDIO_SKILLS_GIT_TOKEN__CODEBERG_ORG:    ${AI_STUDIO_SKILLS_GIT_TOKEN__CODEBERG_ORG:-}      # username default: git
+      # AI_STUDIO_SKILLS_GIT_USERNAME__CODEBERG_ORG: ${AI_STUDIO_SKILLS_GIT_USERNAME__CODEBERG_ORG:-}
+      #
+      # Gitea (gitea.com SaaS — adjust for self-hosted Gitea below)
+      # AI_STUDIO_SKILLS_GIT_TOKEN__GITEA_COM:    ${AI_STUDIO_SKILLS_GIT_TOKEN__GITEA_COM:-}            # username default: git
+      # AI_STUDIO_SKILLS_GIT_USERNAME__GITEA_COM: ${AI_STUDIO_SKILLS_GIT_USERNAME__GITEA_COM:-}
+      #
+      # Self-hosted GitLab (e.g. https://git.internal.clouve.com) — username
+      # default is "git"; set _USERNAME__<HOST> to "oauth2" for GitLab.
+      # AI_STUDIO_SKILLS_GIT_TOKEN__GIT_INTERNAL_CLOUVE_COM:    ${AI_STUDIO_SKILLS_GIT_TOKEN__GIT_INTERNAL_CLOUVE_COM:-}
+      # AI_STUDIO_SKILLS_GIT_USERNAME__GIT_INTERNAL_CLOUVE_COM: oauth2
+      #
+      # Self-hosted Gitea / Forgejo — default "git" username works out of the box.
+      # AI_STUDIO_SKILLS_GIT_TOKEN__GIT_EXAMPLE_COM:    ${AI_STUDIO_SKILLS_GIT_TOKEN__GIT_EXAMPLE_COM:-}
+      # AI_STUDIO_SKILLS_GIT_USERNAME__GIT_EXAMPLE_COM: ${AI_STUDIO_SKILLS_GIT_USERNAME__GIT_EXAMPLE_COM:-}
     volumes:
       - ai-studio-home:/home
       - ai-studio-usr:/usr
