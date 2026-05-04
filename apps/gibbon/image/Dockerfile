@@ -9,7 +9,7 @@ RUN apt-get update && apt-get -y upgrade && \
         openssh-server sudo && \
     echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen && locale-gen
 
-# Operator account used by gibbon-ai-studio's Claude Code agent for shell
+# Operator account used by gibbon-magneto-agent's Claude Code agent for shell
 # access into this container. The account password is set at runtime by
 # /clouve/gibbon/installer/start-clouve-ops-sshd.sh from the per-pod
 # CLOUVE_OPS_PASSWORD env var (same value on all three services).
@@ -45,6 +45,11 @@ RUN printf "expose_php=Off\nupload_max_filesize = 20M\npost_max_size = 20M\nmemo
 WORKDIR /clouve
 COPY installer ./gibbon/installer
 RUN chmod +x ./gibbon/installer/*.sh
+
+# Persona pulled at init by Magneto Agent's sidecar-fetcher over clouve-ops SSH.
+# The plugin-name subdir (`context/gibbon/`) makes the persona self-identifying
+# in the sidecar→AI-Studio merge: tar c on /clouve/context/ emits ./gibbon/CONTEXT.md.tpl.
+COPY context/ /clouve/context/
 
 # clouve-ops sshd hardening drop-in (installer/clouve-ops-sshd.conf is
 # part of the COPY above). Lands as a sshd_config.d snippet that the

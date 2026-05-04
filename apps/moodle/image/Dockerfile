@@ -96,6 +96,11 @@ COPY installer ./moodle/installer
 # Make installer scripts executable
 RUN chmod +x ./moodle/installer/*.sh
 
+# Persona pulled at init by AI Studio's sidecar-fetcher over clouve-ops SSH.
+# The plugin-name subdir (`context/moodle/`) makes the persona self-identifying
+# in the sidecar→AI-Studio merge: tar c on /clouve/context/ emits ./moodle/CONTEXT.md.tpl.
+COPY context/ /clouve/context/
+
 # Note: Cron configuration is done dynamically at runtime in entrypoint.sh
 # based on the MOODLE_CRON_INTERVAL environment variable
 

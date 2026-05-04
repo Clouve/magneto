@@ -1,22 +1,22 @@
 services:
-  ai-studio:
-    image: r.clv.zone/e2eorg/ai-studio
-    container_name: ai_studio_server
+  magneto-agent:
+    image: r.clv.zone/e2eorg/magneto-agent
+    container_name: magneto_agent_server
     restart: unless-stopped
     ports:
       - "${TEST_HTTP_PORT:-8080}:80"
     environment:
-      AI_STUDIO_USERNAME: admin
-      AI_STUDIO_PASSWORD: Admin@123
-      AI_STUDIO_ROOT_PASSWORD: Root@123
+      MAGNETO_AGENT_USERNAME: admin
+      MAGNETO_AGENT_PASSWORD: Admin@123
+      MAGNETO_AGENT_ROOT_PASSWORD: Root@123
       
       # Optional — auto-detected from the HTTP Host header when omitted.
       # Useful for local dev or test.sh URL substitution.
-      # AI_STUDIO_HOST: ${TEST_DOMAIN:-localhost:8080}
+      # MAGNETO_AGENT_HOST: ${TEST_DOMAIN:-localhost:8080}
 
       # Optionally pre-set the default AI client for this instance. 
       # Supported values are: claude-code | gemini-cli | codex-cli
-      # AI_STUDIO_CLIENT: claude-code # claude-code | gemini-cli | codex-cli
+      # MAGNETO_AGENT_CLIENT: claude-code # claude-code | gemini-cli | codex-cli
       
       # Optionally pre-set an API key to skip the per-session key prompt.
       # Any key provided here is injected into all login shells at startup.
@@ -32,69 +32,70 @@ services:
       # reads .claude-plugin/marketplace.json, stages each selected
       # plugin under /clouve/skills/<plugin>/, and composes
       # ~/.{claude,gemini,codex}/{CLAUDE,GEMINI,AGENTS}.md from the
-      # repo-local context/<plugin>/CONTEXT.md.tpl files baked into the
-      # image. See README.md "AI Skills" for the full spec.
-      # AI_STUDIO_SKILLS: https://github.com/Clouve/magneto-skills.git?plugins=gibbon,moodle # main branch
-      # AI_STUDIO_SKILLS: https://github.com/Clouve/magneto-skills.git?plugins=gibbon,moodle#feat/marketplace-migration # feat/marketplace-migration branch
+      # per-plugin CONTEXT.md.tpl files pulled at init by sidecar-fetcher
+      # from each sidecar in CLV_SIDECAR_HOSTS. See README.md "AI Skills"
+      # for the full spec.
+      # MAGNETO_AGENT_SKILLS: https://github.com/Clouve/magneto-skills.git?plugins=gibbon,moodle # main branch
+      # MAGNETO_AGENT_SKILLS: https://github.com/Clouve/magneto-skills.git?plugins=gibbon,moodle#develop # develop branch
 
       # Credentials for private marketplace repos. The default vars
       # apply to every host; per-host overrides take precedence and use
       # the uppercased host with dots/dashes replaced by underscores
-      # (e.g. AI_STUDIO_SKILLS_GIT_TOKEN__GITHUB_COM).
-      # AI_STUDIO_SKILLS_GIT_TOKEN:    ${AI_STUDIO_SKILLS_GIT_TOKEN:-}
-      # AI_STUDIO_SKILLS_GIT_USERNAME: ${AI_STUDIO_SKILLS_GIT_USERNAME:-}
+      # (e.g. MAGNETO_AGENT_SKILLS_GIT_TOKEN__GITHUB_COM).
+      # MAGNETO_AGENT_SKILLS_GIT_TOKEN:    ${MAGNETO_AGENT_SKILLS_GIT_TOKEN:-}
+      # MAGNETO_AGENT_SKILLS_GIT_USERNAME: ${MAGNETO_AGENT_SKILLS_GIT_USERNAME:-}
       #
       # Per-host token samples — uncomment the host(s) you need. The
       # username defaults are applied automatically; only set
-      # AI_STUDIO_SKILLS_GIT_USERNAME__<HOST> if your host needs a
+      # MAGNETO_AGENT_SKILLS_GIT_USERNAME__<HOST> if your host needs a
       # different convention than the listed default.
       #
       # GitHub (also: GitHub Enterprise — same username convention)
-      # AI_STUDIO_SKILLS_GIT_TOKEN__GITHUB_COM:    ${AI_STUDIO_SKILLS_GIT_TOKEN__GITHUB_COM:-}        # username default: x-access-token
-      # AI_STUDIO_SKILLS_GIT_USERNAME__GITHUB_COM: ${AI_STUDIO_SKILLS_GIT_USERNAME__GITHUB_COM:-}
+      # MAGNETO_AGENT_SKILLS_GIT_TOKEN__GITHUB_COM:    ${MAGNETO_AGENT_SKILLS_GIT_TOKEN__GITHUB_COM:-}        # username default: x-access-token
+      # MAGNETO_AGENT_SKILLS_GIT_USERNAME__GITHUB_COM: ${MAGNETO_AGENT_SKILLS_GIT_USERNAME__GITHUB_COM:-}
       #
       # GitLab.com
-      # AI_STUDIO_SKILLS_GIT_TOKEN__GITLAB_COM:    ${AI_STUDIO_SKILLS_GIT_TOKEN__GITLAB_COM:-}        # username default: oauth2
-      # AI_STUDIO_SKILLS_GIT_USERNAME__GITLAB_COM: ${AI_STUDIO_SKILLS_GIT_USERNAME__GITLAB_COM:-}
+      # MAGNETO_AGENT_SKILLS_GIT_TOKEN__GITLAB_COM:    ${MAGNETO_AGENT_SKILLS_GIT_TOKEN__GITLAB_COM:-}        # username default: oauth2
+      # MAGNETO_AGENT_SKILLS_GIT_USERNAME__GITLAB_COM: ${MAGNETO_AGENT_SKILLS_GIT_USERNAME__GITLAB_COM:-}
       #
       # Bitbucket Cloud
-      # AI_STUDIO_SKILLS_GIT_TOKEN__BITBUCKET_ORG:    ${AI_STUDIO_SKILLS_GIT_TOKEN__BITBUCKET_ORG:-}     # username default: x-token-auth
-      # AI_STUDIO_SKILLS_GIT_USERNAME__BITBUCKET_ORG: ${AI_STUDIO_SKILLS_GIT_USERNAME__BITBUCKET_ORG:-}
+      # MAGNETO_AGENT_SKILLS_GIT_TOKEN__BITBUCKET_ORG:    ${MAGNETO_AGENT_SKILLS_GIT_TOKEN__BITBUCKET_ORG:-}     # username default: x-token-auth
+      # MAGNETO_AGENT_SKILLS_GIT_USERNAME__BITBUCKET_ORG: ${MAGNETO_AGENT_SKILLS_GIT_USERNAME__BITBUCKET_ORG:-}
       #
       # Codeberg (Forgejo)
-      # AI_STUDIO_SKILLS_GIT_TOKEN__CODEBERG_ORG:    ${AI_STUDIO_SKILLS_GIT_TOKEN__CODEBERG_ORG:-}      # username default: git
-      # AI_STUDIO_SKILLS_GIT_USERNAME__CODEBERG_ORG: ${AI_STUDIO_SKILLS_GIT_USERNAME__CODEBERG_ORG:-}
+      # MAGNETO_AGENT_SKILLS_GIT_TOKEN__CODEBERG_ORG:    ${MAGNETO_AGENT_SKILLS_GIT_TOKEN__CODEBERG_ORG:-}      # username default: git
+      # MAGNETO_AGENT_SKILLS_GIT_USERNAME__CODEBERG_ORG: ${MAGNETO_AGENT_SKILLS_GIT_USERNAME__CODEBERG_ORG:-}
       #
       # Gitea (gitea.com SaaS — adjust for self-hosted Gitea below)
-      # AI_STUDIO_SKILLS_GIT_TOKEN__GITEA_COM:    ${AI_STUDIO_SKILLS_GIT_TOKEN__GITEA_COM:-}            # username default: git
-      # AI_STUDIO_SKILLS_GIT_USERNAME__GITEA_COM: ${AI_STUDIO_SKILLS_GIT_USERNAME__GITEA_COM:-}
+      # MAGNETO_AGENT_SKILLS_GIT_TOKEN__GITEA_COM:    ${MAGNETO_AGENT_SKILLS_GIT_TOKEN__GITEA_COM:-}            # username default: git
+      # MAGNETO_AGENT_SKILLS_GIT_USERNAME__GITEA_COM: ${MAGNETO_AGENT_SKILLS_GIT_USERNAME__GITEA_COM:-}
       #
       # Self-hosted GitLab (e.g. https://git.internal.clouve.com) — username
       # default is "git"; set _USERNAME__<HOST> to "oauth2" for GitLab.
-      # AI_STUDIO_SKILLS_GIT_TOKEN__GIT_INTERNAL_CLOUVE_COM:    ${AI_STUDIO_SKILLS_GIT_TOKEN__GIT_INTERNAL_CLOUVE_COM:-}
-      # AI_STUDIO_SKILLS_GIT_USERNAME__GIT_INTERNAL_CLOUVE_COM: oauth2
+      # MAGNETO_AGENT_SKILLS_GIT_TOKEN__GIT_INTERNAL_CLOUVE_COM:    ${MAGNETO_AGENT_SKILLS_GIT_TOKEN__GIT_INTERNAL_CLOUVE_COM:-}
+      # MAGNETO_AGENT_SKILLS_GIT_USERNAME__GIT_INTERNAL_CLOUVE_COM: oauth2
       #
       # Self-hosted Gitea / Forgejo — default "git" username works out of the box.
-      # AI_STUDIO_SKILLS_GIT_TOKEN__GIT_EXAMPLE_COM:    ${AI_STUDIO_SKILLS_GIT_TOKEN__GIT_EXAMPLE_COM:-}
-      # AI_STUDIO_SKILLS_GIT_USERNAME__GIT_EXAMPLE_COM: ${AI_STUDIO_SKILLS_GIT_USERNAME__GIT_EXAMPLE_COM:-}
+      # MAGNETO_AGENT_SKILLS_GIT_TOKEN__GIT_EXAMPLE_COM:    ${MAGNETO_AGENT_SKILLS_GIT_TOKEN__GIT_EXAMPLE_COM:-}
+      # MAGNETO_AGENT_SKILLS_GIT_USERNAME__GIT_EXAMPLE_COM: ${MAGNETO_AGENT_SKILLS_GIT_USERNAME__GIT_EXAMPLE_COM:-}
     volumes:
-      - ai-studio-home:/home
-      - ai-studio-usr:/usr
-      - ai-studio-opt:/opt
-      - ai-studio-var:/var
+      - magneto-agent-home:/home
+      - magneto-agent-usr:/usr
+      - magneto-agent-opt:/opt
+      - magneto-agent-var:/var
     networks:
-      - ai_studio_network
+      - magneto_agent_network
 
 volumes:
-  ai-studio-home:
+  magneto-agent-home:
     driver: local
-  ai-studio-usr:
+  magneto-agent-usr:
     driver: local
-  ai-studio-opt:
+  magneto-agent-opt:
     driver: local
-  ai-studio-var:
+  magneto-agent-var:
     driver: local
 
 networks:
-  ai_studio_network:
+  magneto_agent_network:
     driver: bridge
