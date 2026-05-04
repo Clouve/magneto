@@ -10,6 +10,22 @@
 #   $_CLV_SKILLS_DIR/<plugin-name>/plugin/         — full plugin payload
 #   $_CLV_SKILLS_DIR/<plugin-name>/CONTEXT.md.tpl  — copied from local context/, if present
 #
+# Optional per-plugin install hook:
+#   If the staged payload contains a top-level install.sh, the stager runs it
+#   after staging on every container start. This is how a plugin declares the
+#   runtime apt packages, binaries, or kernel-side state it needs (e.g. a
+#   plugin whose scripts shell out to mysql/ssh installs those packages here
+#   instead of bloating the base AI Studio image). Contract:
+#     - The hook runs as root (the entrypoint is root) with no arguments.
+#     - The hook MUST be idempotent — it is invoked on every container start
+#       (not just the first), since /clouve/skills/ is rebuilt each time.
+#     - Errors are logged but non-fatal: a hook failure does not abort plugin
+#       activation or other plugins. The plugin is still considered staged.
+#     - Hooks should rely on package state in /usr and /var (both persistent
+#       volumes). /etc is rebuilt from the image layer each start; runtime
+#       /etc edits made by a hook only persist if entrypoint.sh's /etc-overlay
+#       SIGTERM trap fires on graceful shutdown.
+#
 # Requires: git-fetcher.sh and url-parser.sh sourced.
 # Env vars (caller-overridable for tests):
 #   _CLV_SKILLS_DIR  — default /clouve/skills
@@ -58,6 +74,16 @@ _clv_stage_plugin() {
         chmod a+r "$dest/CONTEXT.md.tpl"
     else
         echo "[plugin-stager] $name: no context/$name/CONTEXT.md.tpl — context section will be omitted" >&2
+    fi
+
+    # Run the optional install hook. See the header comment for the contract.
+    local install_hook="$dest/plugin/install.sh"
+    if [ -f "$install_hook" ]; then
+        chmod +x "$install_hook" 2>/dev/null || true
+        echo "[plugin-stager] $name: running install.sh"
+        if ! ( cd "$dest/plugin" && bash "$install_hook" ); then
+            echo "[plugin-stager] $name: install.sh exited non-zero — continuing" >&2
+        fi
     fi
 
     return 0

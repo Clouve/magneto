@@ -166,7 +166,7 @@ echo ""
 echo "DONE!"
 
 # ============================================================================
-# CLOUVE-OPS SSHD: shell channel for the gibbon-ai-studio Claude Code agent
+# CLOUVE-OPS SSHD: shell channel for the AI Studio container's Claude Code agent
 # ============================================================================
 # Backgrounded — applies the per-pod password from CLOUVE_OPS_PASSWORD
 # (same value on all three services) to the clouve-ops user via chpasswd,

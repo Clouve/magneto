@@ -4,7 +4,7 @@ Gibbon deployment for the Clouve marketplace, packaged as a three-container app:
 
 - **`gibbon`** — the GibbonEdu school-management web app (PHP 8.3 + Apache).
 - **`gibbon-mysql`** — MySQL 8.0, the database backing Gibbon.
-- **`gibbon-ai-studio`** — a browser-based [AI Studio](../ai-studio/) workspace pre-bundled with Claude Code, a Gibbon DevOps Skill, and SSH access into the other two containers as a `clouve-ops` operator account. This is what makes the app self-driving: a school administrator drops in an Anthropic API key, lands in a terminal, and gets an agent that can perform upgrades, module installs, backups, diagnostics, and academic-year rollover through natural-language conversation — with safety gates that refuse destructive operations without explicit confirmation.
+- **`ai-studio`** — a browser-based [AI Studio](../ai-studio/) workspace (the upstream image, used directly — no Gibbon-specific image layer) pre-bundled with Claude Code, a Gibbon DevOps Skill, and SSH access into the other two containers as a `clouve-ops` operator account. This is what makes the app self-driving: a school administrator drops in an Anthropic API key, lands in a terminal, and gets an agent that can perform upgrades, module installs, backups, diagnostics, and academic-year rollover through natural-language conversation — with safety gates that refuse destructive operations without explicit confirmation.
 
 Gibbon is an open-source school management platform designed for educational institutions.
 
@@ -66,7 +66,11 @@ The AI Studio companion runs alongside Gibbon and gives you a browser-based term
 
 ## AI Studio Companion (Claude Code + Gibbon DevOps Skill)
 
-The `gibbon-ai-studio` image is a thin layer on top of the upstream `ai-studio` image: it adds the runtime binaries the Gibbon DevOps Skill shells out to (`mysql`, `mysqldump`, `ssh`, `sshpass`) and nothing else. The skill payload itself — reference docs, playbooks, and audited scripts — is delivered at container start by AI Studio's generic skill loader (`chat/skills.sh`) when `AI_STUDIO_SKILLS=https://github.com/Clouve/magneto-skills.git?plugins=gibbon` is set on the service. The loader clones the magneto-skills Claude Code marketplace and stages the `gibbon` plugin's payload under `/clouve/skills/gibbon/plugin/`, then `/etc/profile.d/clv-skills.sh` symlinks each skill it contains into `~/.claude/skills/` at shell login (so the agent sees `~/.claude/skills/gibbon/`). The Gibbon-flavoured context section is loaded from the `context/gibbon/CONTEXT.md.tpl` baked into the AI Studio image.
+This app pulls the upstream `ai-studio` image directly — there is no Gibbon-specific image layer. Both the skill payload (reference docs, playbooks, audited scripts) and its runtime binary deps (`mysql`, `mysqldump`, `ssh`, `sshpass`) are delivered at container start by AI Studio's generic skill loader (`chat/skills.sh`) when `AI_STUDIO_SKILLS=https://github.com/Clouve/magneto-skills.git?plugins=gibbon` is set on the service:
+
+1. The loader clones the magneto-skills Claude Code marketplace and stages the `gibbon` plugin's payload under `/clouve/skills/gibbon/plugin/`. `/etc/profile.d/clv-skills.sh` then symlinks each skill it contains into `~/.claude/skills/` at shell login (so the agent sees `~/.claude/skills/gibbon/`).
+2. After staging, the loader runs the plugin's `install.sh` hook ([`plugins/gibbon/install.sh`](https://github.com/Clouve/magneto-skills/blob/main/plugins/gibbon/install.sh) in the marketplace repo). The hook idempotently `apt-get install`s the binaries the skill's scripts shell out to. Subsequent restarts find the packages already present and no-op.
+3. The Gibbon-flavoured context section is loaded from the `context/gibbon/CONTEXT.md.tpl` baked into the AI Studio image.
 
 ### How activation works
 
@@ -75,7 +79,7 @@ The `gibbon-ai-studio` image is a thin layer on top of the upstream `ai-studio` 
 | Activation env var | `AI_STUDIO_SKILLS: https://github.com/Clouve/magneto-skills.git?plugins=gibbon` on the `ai-studio` service | Marketplace URL with `?plugins=` query — tells the upstream loader which Claude Code marketplace to clone and which plugin(s) to materialise. Comma-separate plugins to stack multiple. |
 | Skill payload | `magneto-skills` repo's `plugins/gibbon/skills/gibbon/` → staged at `/clouve/skills/gibbon/plugin/skills/gibbon/`, exposed to the agent via the per-session symlink `~/.claude/skills/gibbon/` | Reference docs, playbooks, and audited scripts the agent uses for upgrades, module installs, backups, restores, year-end rollover, and 500-error diagnosis. Wired into Claude Code via the marketplace's `.claude-plugin/marketplace.json`. |
 | Per-skill context | `context/gibbon/CONTEXT.md.tpl` baked into the AI Studio image → appended as `## Skill: gibbon` to `~/.claude/CLAUDE.md` | Introduces the agent as a Gibbon DevOps engineer with the safety posture, SSH-via-`clouve-ops` runbook, and the standing skill-maintenance instruction. |
-| Runtime binaries | `default-mysql-client`, `openssh-client`, `sshpass` baked into `gibbon-ai-studio` | The skill scripts call out to these, so they ride in the image rather than the skill content. |
+| Runtime binaries | `default-mysql-client`, `openssh-client`, `sshpass` installed at container start by the plugin's `install.sh` hook | The skill scripts call out to these. They live in the marketplace alongside the skill so they travel with it — no per-app image layer needed. |
 
 `${GIBBON_HOST}`, `${GIBBON_DB_HOST}`, `${GIBBON_DB_NAME}`, `${GIBBON_DB_USER}`, and `${GIBBON_DB_PASSWORD}` (along with the upstream `${USERNAME}`, `${ROOT_PASSWORD}`, `${AI_STUDIO_HOST}`) are substituted into the rendered context file by `envsubst` at session start, so the agent sees the resolved hostnames and credentials in its system prompt.
 
@@ -122,23 +126,23 @@ $EDITOR plugins/gibbon/skills/gibbon/SKILL.md
 ./start.sh apps/gibbon
 ```
 
-No image rebuild is required for skill content edits. Editing `gibbon-ai-studio` itself is only needed when the runtime binary deps it adds (`mysql`, `sshpass`, …) change, or when the per-skill `context/gibbon/CONTEXT.md.tpl` baked into the upstream `ai-studio` image changes.
+No image rebuild is required for skill content edits — and as of the plugin's `install.sh` hook, the runtime apt deps live in the marketplace too, so changing them (`mysql`, `sshpass`, …) is also a marketplace push, not an image rebuild. The only reason to rebuild `apps/ai-studio` is when the per-skill `context/gibbon/CONTEXT.md.tpl` baked into the image changes, or when the upstream AI Studio installer / loader itself changes.
 
 ## Cross-Container Shell Access (clouve-ops over SSH)
 
-The agent inside `gibbon-ai-studio` has a real SSH shell into both side containers (`gibbon` and `gibbon-mysql`) as the `clouve-ops` operator account — passwordless `sudo`, password auth, no other user allowed. This covers the OS-level operations that the TCP `mysql` and HTTP channels can't reach (Apache config, log tailing, Gibbon CLI scripts under `/var/www/html/cli/`, MySQL daemon control, `/etc/mysql/conf.d/` edits, etc.).
+The agent inside the AI Studio container has a real SSH shell into both side containers (`gibbon` and `gibbon-mysql`) as the `clouve-ops` operator account — passwordless `sudo`, password auth, no other user allowed. This covers the OS-level operations that the TCP `mysql` and HTTP channels can't reach (Apache config, log tailing, Gibbon CLI scripts under `/var/www/html/cli/`, MySQL daemon control, `/etc/mysql/conf.d/` edits, etc.).
 
 ### How the credential is shared
 
 A single env var, `CLOUVE_OPS_PASSWORD`, is set with the **same value** on all three services:
 
 - **Local dev (`docker-compose.yml`):** hard-coded so the three containers come up consistent.
-- **Prod (`clv-docker-compose.yml`):** declared as `secret` under `x-clouve-environment-types`. Clouve generates a random password-like string at deploy time and injects the same value into all three pods (same mechanism as `GIBBON_DB_PASSWORD`, which `gibbon-ai-studio` already reads to talk to MySQL).
+- **Prod (`clv-docker-compose.yml`):** declared as `secret` under `x-clouve-environment-types`. Clouve generates a random password-like string at deploy time and injects the same value into all three pods (same mechanism as `GIBBON_DB_PASSWORD`, which the AI Studio container already reads to talk to MySQL).
 
 On each container start:
 
 1. `gibbon` and `gibbon-mysql` apply the env-var value to the `clouve-ops` user with `chpasswd`, then exec `sshd -D` (sshd is restricted to that user, password auth only — no root, no pubkey, no empty passwords).
-2. `gibbon-ai-studio` reads the same env var and authenticates with `sshpass -e ssh …` so the password never has to be retyped.
+2. The `ai-studio` container reads the same env var and authenticates with `sshpass -e ssh …` so the password never has to be retyped.
 
 No shared volume, no on-disk keypair, no per-shell key materialization.
 
@@ -519,7 +523,7 @@ Verifying integration views...
 
 ## Features
 
-- ✅ **AI Agent Companion**: Pre-bundled Claude Code workspace (`gibbon-ai-studio`) with a Gibbon DevOps Skill that can perform upgrades, module installs, backups, diagnostics, and academic-year rollover through natural language.
+- ✅ **AI Agent Companion**: Browser-based Claude Code workspace (the upstream `ai-studio` image, configured via `AI_STUDIO_SKILLS`) with a Gibbon DevOps Skill that can perform upgrades, module installs, backups, diagnostics, and academic-year rollover through natural language.
 - ✅ **Cross-Container Shell Access**: `clouve-ops` SSH operator account in `gibbon` and `gibbon-mysql` (passwordless sudo, key-only auth) — the agent has a real shell in both side containers without any shared filesystem with their data.
 - ✅ **Dynamic Configuration Updates**: Automatic synchronization of database credentials and application URL.
 - ✅ **Custom Docker Images**: Built from Dockerfiles (Gibbon v30.0.01).
@@ -629,7 +633,7 @@ If your `${GIBBON_HOST}`/`${GIBBON_DB_HOST}` etc. show up unsubstituted in `~/.c
 
 ### Cross-Container SSH Issues
 
-If `sshpass -e ssh clouve-ops@${GIBBON_HOST}` (or `@${GIBBON_DB_HOST}`) fails inside `gibbon-ai-studio`:
+If `sshpass -e ssh clouve-ops@${GIBBON_HOST}` (or `@${GIBBON_DB_HOST}`) fails inside the `ai-studio` container:
 
 ```bash
 # Same CLOUVE_OPS_PASSWORD must be set on all three services
@@ -794,7 +798,7 @@ The `clv-docker-compose.yml` file contains Clouve-specific extensions for market
 
 **Compose manifests**
 
-- `docker-compose.yml` - Container orchestration for local development (three services: `gibbon`, `gibbon-mysql`, `ai-studio` using `gibbon-ai-studio:latest`).
+- `docker-compose.yml` - Container orchestration for local development (three services: `gibbon`, `gibbon-mysql`, `ai-studio` using the upstream `ai-studio:latest` image directly).
 - `clv-docker-compose.yml` - Clouve marketplace deployment configuration (same three services with `x-clouve-*` metadata extensions).
 
 **`gibbon` image (PHP 8.3 + Apache)**
@@ -813,11 +817,13 @@ The `clv-docker-compose.yml` file contains Clouve-specific extensions for market
 - `image/mysql/start-clouve-ops-sshd.sh` - Same role as the gibbon-side script (chpasswd from `CLOUVE_OPS_PASSWORD` + `sshd -D`).
 - `image/mysql/clouve-ops-sshd.conf` - sshd_config drop-in.
 
-**`gibbon-ai-studio` image (derived from upstream `ai-studio`)**
+**`ai-studio` container (upstream image, used directly — no Gibbon-specific image layer)**
 
-- `image/ai-studio/Dockerfile` - `FROM r.clv.zone/e2eorg/ai-studio:latest` plus the runtime binaries the Gibbon DevOps Skill shells out to (`default-mysql-client`, `openssh-client`, `sshpass`); regenerates `/clouve/usr-seed.tar.gz` and `/clouve/var-seed.tar.gz` so a fresh-volume deploy carries those binaries onto the persistent `/usr` and `/var` volumes.
+The compose files reference `r.clv.zone/e2eorg/ai-studio:latest` directly. There is no `image/ai-studio/Dockerfile` in this app — both the skill payload AND its runtime apt deps now live in the [`magneto-skills`](https://github.com/Clouve/magneto-skills) marketplace:
 
-(No skill content, no CLAUDE.md template, no `/etc/profile.d/` drop-in, no entrypoint override. Skill payload is delivered at start by the upstream `chat/skills.sh`, which clones the magneto-skills marketplace named in `AI_STUDIO_SKILLS=https://github.com/Clouve/magneto-skills.git?plugins=gibbon` and stages the gibbon plugin under `/clouve/skills/gibbon/plugin/`. The per-skill context section is loaded from `context/gibbon/CONTEXT.md.tpl` baked into the AI Studio image. Env-var propagation into login shells is handled by the upstream `chat/install.sh` writing `/etc/profile.d/clouve-env.sh` on every container start, so vars docker-compose / Kubernetes set on this service render correctly in the per-client context file without any gibbon-side shim.)
+- Skill payload (reference docs, playbooks, scripts) is delivered at start by the upstream `chat/skills.sh`, which clones the marketplace named in `AI_STUDIO_SKILLS=https://github.com/Clouve/magneto-skills.git?plugins=gibbon` and stages the gibbon plugin under `/clouve/skills/gibbon/plugin/`.
+- Runtime apt packages (`default-mysql-client`, `openssh-client`, `sshpass`) are installed at start by the plugin's `install.sh` hook (`plugins/gibbon/install.sh` in the marketplace repo), invoked by AI Studio's plugin-stager after staging. The hook is idempotent — packages that are already present (e.g. on a warm restart) are detected via `dpkg-query` and the apt-get path is skipped.
+- The per-skill context section is loaded from `context/gibbon/CONTEXT.md.tpl` baked into the upstream AI Studio image. Env-var propagation into login shells is handled by the upstream `chat/install.sh` writing `/etc/profile.d/clouve-env.sh` on every container start, so vars docker-compose / Kubernetes set on this service render correctly in the per-client context file without any gibbon-side shim.
 
 **Skill source ([`magneto-skills`](https://github.com/Clouve/magneto-skills) marketplace, shared with the rest of the platform)**
 
@@ -866,7 +872,7 @@ For more information, visit: https://gibbonedu.org/
 
 - **Gibbon** is licensed under the **GNU GPL v3**. The upstream `LICENSE.md` ships unmodified inside the `gibbon` container.
 - The **Gibbon DevOps Skill** (the `gibbon` plugin in the [`magneto-skills`](https://github.com/Clouve/magneto-skills) marketplace, plus its companion `context/gibbon/CONTEXT.md.tpl` baked into the AI Studio image) is Clouve-authored content under Clouve's standard licensing terms. It embeds no Gibbon source code.
-- The upstream `apps/ai-studio` image (the parent layer of `gibbon-ai-studio`) carries its own license; see that app's documentation.
+- The upstream `apps/ai-studio` image (used directly by this app) carries its own license; see that app's documentation.
 
 ---
 

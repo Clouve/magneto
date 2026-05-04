@@ -14,9 +14,9 @@ LABEL version="8.0"
 # This avoids Docker Hub rate limits when creating multi-platform manifests
 
 # clouve-ops shell channel (mirrors the same setup in apps/gibbon/image/
-# Dockerfile). openssh-server lets gibbon-ai-studio's Claude Code agent
-# `ssh clouve-ops@${GIBBON_DB_HOST}` for OS-level operations on the DB
-# host (mysqld restart, log inspection, my.cnf tweaks, disk usage). The
+# Dockerfile). openssh-server lets the AI Studio container's Claude Code
+# agent `ssh clouve-ops@${GIBBON_DB_HOST}` for OS-level operations on the
+# DB host (mysqld restart, log inspection, my.cnf tweaks, disk usage). The
 # routine SQL surface is still the TCP MySQL client.
 RUN microdnf install -y openssh-server sudo shadow-utils \
         procps-ng hostname iproute diffutils less vim-minimal \

@@ -564,10 +564,8 @@ fi
 # - Local builds (--load) only need the host platform, so they use the default
 #   docker driver. Crucially, the default driver shares its image cache with
 #   the host daemon, which is required when one of our Dockerfiles uses
-#   FROM <local-image> (e.g. apps/gibbon/image/ai-studio/ uses FROM
-#   r.clv.zone/e2eorg/ai-studio:latest, and that image is built locally and
-#   only exists in the host daemon's cache, not in the docker-container
-#   driver's isolated cache).
+#   FROM <local-image> — locally-built images only exist in the host
+#   daemon's cache, not in the docker-container driver's isolated cache.
 if [ "$PUSH_IMAGES" = true ]; then
     BUILDX_BUILDER="multiplatform-builder"
     if ! docker buildx inspect "$BUILDX_BUILDER" &> /dev/null; then
@@ -716,7 +714,7 @@ if [ ${#CONTAINER_CONFIGS[@]} -gt 0 ]; then
         # under image/ (e.g. mysql/, postgres/). Override: <PREFIX>_CONTEXT
         # in build.config — a path relative to the app/bundle directory,
         # used when a sub-container needs to COPY files from outside its
-        # own subdirectory (e.g. gibbon-ai-studio bakes in skill/).
+        # own subdirectory.
         if [ -n "$context_value" ]; then
             build_context="$TARGET_DIR/$context_value"
             dockerfile_args=(--file "$APP_IMAGE_DIR/$container_dir/Dockerfile")
