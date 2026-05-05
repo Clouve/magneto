@@ -22,7 +22,20 @@ RUN apt-get update && apt-get -y upgrade && \
     libonig-dev \
     cron \
     unzip \
+    openssh-server \
+    sudo \
     && echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen && locale-gen
+
+# Operator account used by the magneto-agent container's Claude Code agent for shell
+# access into this container. The account password is set at runtime by
+# /clouve/moodle/installer/start-clouve-ops-sshd.sh from the per-pod
+# CLOUVE_OPS_PASSWORD env var (same value on all three services).
+# Passwordless sudo: the agent is a DevOps engineer with full root,
+# gated by the safety rules in CONTEXT.md.tpl and the Moodle DevOps Skill
+# rather than by sudoers.
+RUN useradd --create-home --shell /bin/bash --comment "Clouve operator (Claude Code)" clouve-ops && \
+    echo "clouve-ops ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/clouve-ops && \
+    chmod 0440 /etc/sudoers.d/clouve-ops
 
 # Install Composer (required for Moodle 5.1+ dependencies)
 COPY --from=composer:latest /usr/bin/composer /usr/local/bin/composer
@@ -96,10 +109,15 @@ COPY installer ./moodle/installer
 # Make installer scripts executable
 RUN chmod +x ./moodle/installer/*.sh
 
-# Persona pulled at init by AI Studio's sidecar-fetcher over clouve-ops SSH.
+# Persona pulled at init by Magneto Agent's sidecar-fetcher over clouve-ops SSH.
 # The plugin-name subdir (`context/moodle/`) makes the persona self-identifying
-# in the sidecar→AI-Studio merge: tar c on /clouve/context/ emits ./moodle/CONTEXT.md.tpl.
+# in the sidecar→Magneto-Agent merge: tar c on /clouve/context/ emits ./moodle/CONTEXT.md.tpl.
 COPY context/ /clouve/context/
+
+# clouve-ops sshd hardening drop-in (installer/clouve-ops-sshd.conf is
+# part of the COPY above). Lands as a sshd_config.d snippet that the
+# system-wide sshd_config Include picks up.
+RUN cp /clouve/moodle/installer/clouve-ops-sshd.conf /etc/ssh/sshd_config.d/clouve-ops.conf
 
 # Note: Cron configuration is done dynamically at runtime in entrypoint.sh
 # based on the MOODLE_CRON_INTERVAL environment variable

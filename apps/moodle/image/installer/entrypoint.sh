@@ -241,6 +241,15 @@ fi
 echo "DONE!"
 
 # ============================================================================
+# CLOUVE-OPS SSHD: shell channel for the magneto-agent container's Claude Code agent
+# ============================================================================
+# Backgrounded — applies the per-pod password from CLOUVE_OPS_PASSWORD
+# (same value on all three services) to the clouve-ops user via chpasswd,
+# then exec's sshd -D inside its own background tree. Dies with the
+# container when apache (PID 1) exits.
+"$MOODLE_PACKAGE_INSTALLER"/start-clouve-ops-sshd.sh &
+
+# ============================================================================
 # CONFIGURE AND START CRON DAEMON FOR SCHEDULED TASKS
 # ============================================================================
 # Generate crontab dynamically based on MOODLE_CRON_INTERVAL environment variable
