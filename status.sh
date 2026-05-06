@@ -28,10 +28,19 @@ if [ $# -ge 1 ]; then
     # Mode 1: Called with app/bundle name or path from parent directory
     TARGET_ARG="$1"
 
-    # Check if the argument contains a path separator (relative path mode)
+    # Check if the argument contains a path separator (path mode)
     if [[ "$TARGET_ARG" == *"/"* ]]; then
-        # Relative path mode: use the path directly
-        WORK_DIR="$SCRIPT_DIR/$TARGET_ARG"
+        # Path mode: resolve as absolute, then relative to the current
+        # working directory, then relative to the script directory. This
+        # lets the script be invoked from anywhere with a path like
+        # `./magneto/apps/wordpress` or an absolute path.
+        if [[ "$TARGET_ARG" == /* ]]; then
+            WORK_DIR="$TARGET_ARG"
+        elif [ -f "$TARGET_ARG/docker-compose.yml" ]; then
+            WORK_DIR="$(cd "$TARGET_ARG" && pwd)"
+        else
+            WORK_DIR="$SCRIPT_DIR/$TARGET_ARG"
+        fi
         DISPLAY_NAME="$(basename "$TARGET_ARG")"
 
         if [ ! -d "$WORK_DIR" ] || [ ! -f "$WORK_DIR/docker-compose.yml" ]; then

@@ -27,6 +27,8 @@
 
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Color codes for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -140,6 +142,24 @@ validate_app_directory() {
     fi
 
     print_success "Found docker-compose.yml in $app_path" >&2
+}
+
+# Resolve the app path so the script works regardless of the caller's cwd.
+# Tries absolute, then relative to the current working directory, then
+# relative to the script directory. Returns the original argument when
+# nothing matches so validate_app_directory can emit the canonical error.
+resolve_app_path() {
+    local app_path="$1"
+
+    if [[ "$app_path" == /* ]]; then
+        echo "$app_path"
+    elif [ -f "$app_path/docker-compose.yml" ]; then
+        (cd "$app_path" && pwd)
+    elif [ -f "$SCRIPT_DIR/$app_path/docker-compose.yml" ]; then
+        echo "$SCRIPT_DIR/$app_path"
+    else
+        echo "$app_path"
+    fi
 }
 
 # ============================================================================
@@ -468,8 +488,9 @@ main() {
     # Parse arguments and set global configuration
     parse_arguments "$@"
 
-    # Get app path (relative to current directory)
-    local app_path="$1"
+    # Resolve app path: absolute, relative to cwd, or relative to SCRIPT_DIR.
+    local app_path
+    app_path="$(resolve_app_path "$1")"
 
     # Run the test
     if run_url_update_test "$app_path"; then

@@ -267,10 +267,19 @@ elif [ "$1" = "--cleanup" ]; then
     show_usage
     exit 1
 elif [ "${1:0:2}" != "--" ]; then
-    # Check if the argument contains a path separator (relative path mode)
+    # Check if the argument contains a path separator (path mode)
     if [[ "$1" == *"/"* ]]; then
-        # Relative path mode: use the path directly
-        TARGET_DIR="$SCRIPT_DIR/$1"
+        # Path mode: resolve as absolute, then relative to the current
+        # working directory, then relative to the script directory. This
+        # lets the script be invoked from anywhere with a path like
+        # `./magneto/apps/gibbon` or an absolute path.
+        if [[ "$1" == /* ]]; then
+            TARGET_DIR="$1"
+        elif [ -d "$1/image" ]; then
+            TARGET_DIR="$(cd "$1" && pwd)"
+        else
+            TARGET_DIR="$SCRIPT_DIR/$1"
+        fi
         DISPLAY_NAME="$(basename "$1")"
 
         if [ ! -d "$TARGET_DIR/image" ]; then

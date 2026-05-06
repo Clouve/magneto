@@ -19,12 +19,30 @@ marketplace/dkr/
 
 ## Shared Management Scripts
 
-These scripts work with any Docker Compose application or bundle in the `apps/` or `bundles/` directories.
+These scripts work with any Docker Compose application or bundle in the `apps/` or `bundles/` directories — and, because they accept arbitrary paths, with sibling repos (e.g. [`magneto-agent`](../magneto-agent/)) too.
 
 All scripts support three modes of operation:
-1. **Simple name mode**: Use just the app/bundle name (searches in apps/ and bundles/)
-2. **Relative path mode**: Use a relative path like `apps/wordpress` or `bundles/education-kit`
+1. **Simple name mode**: Use just the app/bundle name (searches `magneto/apps/` and `magneto/bundles/`)
+2. **Path mode**: Pass any path that contains a `/` — absolute, relative to your current working directory, or relative to the magneto directory
 3. **Local mode**: Run from within an app/bundle directory without arguments
+
+### Path resolution
+
+`build.sh`, `start.sh`, `stop.sh`, `logs.sh`, `status.sh`, and `test.sh` all resolve a path argument in this order:
+
+1. **Absolute path** (starts with `/`) — used as-is
+2. **Relative to the current working directory** — used when the directory exists and contains the expected entry (`image/` for `build.sh`, `docker-compose.yml` for the others)
+3. **Relative to the magneto directory** — fallback, preserves the historical behavior
+
+This means you can invoke the scripts from anywhere. For example, from a workspace root that contains both `magneto/` and a sibling repo:
+
+```bash
+./magneto/build.sh ./magneto-agent               # path relative to cwd
+./magneto/start.sh /abs/path/to/magneto-agent    # absolute path
+./magneto/build.sh apps/wordpress                # falls back to magneto/apps/wordpress
+```
+
+Simple-name mode (an argument without a `/`) only searches `magneto/apps/` and `magneto/bundles/`, so use a path for anything outside those.
 
 ### start.sh - Start Applications/Bundles
 
