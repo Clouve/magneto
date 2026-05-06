@@ -112,7 +112,7 @@ services:
 
       # Pre-select Claude Code; Magneto Agent's .bash_profile skips the selector
       # and marks the choice readonly for the session (spec §5 Q6).
-      MAGNETO_AGENT_CLIENT: claude-code
+      # MAGNETO_AGENT_CLIENT: claude-code
 
       # Optional: inject a pre-authenticated key at launch. When unset,
       # Magneto Agent prompts for it on the first interactive session and
@@ -130,7 +130,7 @@ services:
       # install.sh hook to apt-install the runtime binaries the skill shells
       # out to (mysql-client, openssh-client, sshpass). The hook is
       # idempotent across restarts.
-      MAGNETO_AGENT_SKILLS: https://github.com/Clouve/magneto-skills.git?plugins=moodle#develop # develop branch
+      MAGNETO_AGENT_SKILLS: https://github.com/Clouve/magneto-skills.git?plugins=moodle
       # MAGNETO_AGENT_SKILLS_GIT_TOKEN: ${MAGNETO_AGENT_SKILLS_GIT_TOKEN:-}
       # MAGNETO_AGENT_SKILLS_GIT_USERNAME: ${MAGNETO_AGENT_SKILLS_GIT_USERNAME:-}
 

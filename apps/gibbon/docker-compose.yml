@@ -112,7 +112,7 @@ services:
       # install.sh hook to apt-install the runtime binaries the skill shells
       # out to (mysql-client, openssh-client, sshpass). The hook is
       # idempotent across restarts.
-      MAGNETO_AGENT_SKILLS: https://github.com/Clouve/magneto-skills.git?plugins=gibbon#develop # develop branch
+      MAGNETO_AGENT_SKILLS: https://github.com/Clouve/magneto-skills.git?plugins=gibbon
       # MAGNETO_AGENT_SKILLS_GIT_TOKEN: ${MAGNETO_AGENT_SKILLS_GIT_TOKEN:-}
       # MAGNETO_AGENT_SKILLS_GIT_USERNAME: ${MAGNETO_AGENT_SKILLS_GIT_USERNAME:-}
 
