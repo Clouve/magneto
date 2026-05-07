@@ -96,6 +96,11 @@ services:
       # and marks the choice readonly for the session (spec §5 Q6).
       # MAGNETO_AGENT_CLIENT: claude-code
       
+      # Optional: inject a pre-authenticated key at launch. When unset,
+      # Magneto Agent prompts for it on the first interactive session and
+      # validates against api.anthropic.com/v1/models before storing.
+      # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      
       # Activates the Gibbon DevOps plugin from the magneto-skills
       # Claude Code marketplace. The Magneto Agent loader (chat/skills.sh)
       # clones the marketplace at container start, stages the gibbon
@@ -107,15 +112,10 @@ services:
       # install.sh hook to apt-install the runtime binaries the skill shells
       # out to (mysql-client, openssh-client, sshpass). The hook is
       # idempotent across restarts.
-      MAGNETO_AGENT_SKILLS: https://github.com/Clouve/magneto-skills.git?plugins=gibbon#develop # develop branch
-      MAGNETO_AGENT_SKILLS_GIT_TOKEN: ${MAGNETO_AGENT_SKILLS_GIT_TOKEN:-}
-      MAGNETO_AGENT_SKILLS_GIT_USERNAME: ${MAGNETO_AGENT_SKILLS_GIT_USERNAME:-}
+      MAGNETO_AGENT_SKILLS: https://github.com/Clouve/magneto-skills.git?plugins=gibbon
+      # MAGNETO_AGENT_SKILLS_GIT_TOKEN: ${MAGNETO_AGENT_SKILLS_GIT_TOKEN:-}
+      # MAGNETO_AGENT_SKILLS_GIT_USERNAME: ${MAGNETO_AGENT_SKILLS_GIT_USERNAME:-}
 
-      # Optional: inject a pre-authenticated key at launch. When unset,
-      # Magneto Agent prompts for it on the first interactive session and
-      # validates against api.anthropic.com/v1/models before storing.
-      # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      
       # Pod-internal Gibbon targets surfaced to the skill's playbooks so
       # they can refer to the services by env-var rather than hard-coding.
       GIBBON_HOST: gibbon
@@ -128,6 +128,11 @@ services:
       # to gibbon and gibbon-mysql via `sshpass -e ssh clouve-ops@…` using
       # this password. See gibbon-mysql for the full rationale.
       CLOUVE_OPS_PASSWORD: clouve_ops_dev_password
+
+      # Hosts Magneto Agent's sidecar-fetcher SSHs to at init to merge per-plugin
+      # CONTEXT.md.tpl files baked into each side container's /clouve/context/
+      # tree. Comma-separated; resolves to the gibbon service in this app.
+      CLV_SIDECAR_HOSTS: gibbon
     volumes:
       - magneto_agent_home:/home
       - magneto_agent_usr:/usr

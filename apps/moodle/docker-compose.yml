@@ -1,4 +1,26 @@
 version: '3.8'
+# Local-dev variant of the Magneto Agent-powered Moodle app.
+#
+# Mirrors clv-docker-compose.yml but targets plain docker-compose:
+#   - uses the upstream magneto-agent image directly. The runtime binaries the
+#     Moodle DevOps Skill shells out to (mysql, mysqldump, ssh, sshpass)
+#     are installed at container start by the moodle plugin's install.sh
+#     hook (in the magneto-skills marketplace). The skill payload itself
+#     — reference docs, playbooks, audited scripts — is delivered by the
+#     same mechanism: Magneto Agent's skill loader (chat/skills.sh) clones the
+#     marketplace specified by MAGNETO_AGENT_SKILLS and stages the requested
+#     plugin's payload at /clouve/skills/<plugin>/. Skill content edits
+#     and runtime-dep changes both flow into running containers on the
+#     next restart, with no per-app image rebuild.
+#   - host-published ports (Moodle on 8080, Magneto Agent on 8081 by default)
+#   - the named-volume pattern used by the other apps in this repo
+#
+# Usage:
+#     ./start.sh apps/moodle
+# or:
+#     docker compose up
+#
+# Set ANTHROPIC_API_KEY in your shell to skip the in-terminal key prompt.
 
 networks:
   moodle_network:
@@ -8,6 +30,10 @@ volumes:
   db_data:
   moodle_data:
   moodledata:
+  magneto_agent_home:
+  magneto_agent_usr:
+  magneto_agent_opt:
+  magneto_agent_var:
 
 services:
   moodle-mysql:
@@ -19,6 +45,13 @@ services:
       MYSQL_USER: moodle
       MYSQL_PASSWORD: moodle_password
       MYSQL_ROOT_PASSWORD: root_password
+      # Shared per-pod password for the clouve-ops shell account. The same
+      # value is set on all three services; the magneto-agent container uses
+      # it to ssh in (sshpass), moodle and moodle-mysql apply it to the
+      # clouve-ops user with chpasswd at start. In prod this is generated
+      # by Clouve's marketplace as a `secret` and injected into all three
+      # pods (see clv-docker-compose.yml).
+      CLOUVE_OPS_PASSWORD: clouve_ops_dev_password
     volumes:
       - db_data:/var/lib/mysql
     networks:
@@ -58,9 +91,70 @@ services:
       #   */10 * * * * - Every 10 minutes
       #   0 * * * *    - Every hour
       MOODLE_CRON_INTERVAL: "*/1 * * * *"
+      # Same value as the moodle-mysql service — see its comment.
+      CLOUVE_OPS_PASSWORD: clouve_ops_dev_password
     volumes:
       - moodle_data:/var/www/html
       - moodledata:/var/moodledata
     networks:
       - moodle_network
 
+  magneto-agent:
+    image: r.clv.zone/e2eorg/magneto-agent
+    container_name: moodle_magneto_agent
+    restart: unless-stopped
+    ports:
+      - "${MAGNETO_AGENT_PORT:-8081}:80"
+    environment:
+      MAGNETO_AGENT_USERNAME: admin
+      MAGNETO_AGENT_PASSWORD: Admin@123
+      MAGNETO_AGENT_ROOT_PASSWORD: Root@123
+
+      # Pre-select Claude Code; Magneto Agent's .bash_profile skips the selector
+      # and marks the choice readonly for the session (spec §5 Q6).
+      # MAGNETO_AGENT_CLIENT: claude-code
+
+      # Optional: inject a pre-authenticated key at launch. When unset,
+      # Magneto Agent prompts for it on the first interactive session and
+      # validates against api.anthropic.com/v1/models before storing.
+      # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+
+      # Activates the Moodle DevOps plugin from the magneto-skills
+      # Claude Code marketplace. The Magneto Agent loader (chat/skills.sh)
+      # clones the marketplace at container start, stages the moodle
+      # plugin's payload at /clouve/skills/moodle/plugin/, appends
+      # ## Skill: moodle to ~/.claude/CLAUDE.md from
+      # context/moodle/CONTEXT.md.tpl baked into THIS moodle image (pulled
+      # by Magneto Agent at init via clouve-ops SSH using sidecar-fetcher; no
+      # longer baked into the magneto-agent image), and runs the plugin's
+      # install.sh hook to apt-install the runtime binaries the skill shells
+      # out to (mysql-client, openssh-client, sshpass). The hook is
+      # idempotent across restarts.
+      MAGNETO_AGENT_SKILLS: https://github.com/Clouve/magneto-skills.git?plugins=moodle
+      # MAGNETO_AGENT_SKILLS_GIT_TOKEN: ${MAGNETO_AGENT_SKILLS_GIT_TOKEN:-}
+      # MAGNETO_AGENT_SKILLS_GIT_USERNAME: ${MAGNETO_AGENT_SKILLS_GIT_USERNAME:-}
+
+      # Pod-internal Moodle targets surfaced to the skill's playbooks so
+      # they can refer to the services by env-var rather than hard-coding.
+      MOODLE_HOST: moodle
+      MOODLE_DB_HOST: moodle-mysql
+      MOODLE_DB_NAME: moodle
+      MOODLE_DB_USER: moodle
+      MOODLE_DB_PASSWORD: moodle_password
+
+      # Same value as the moodle-mysql service — Claude Code authenticates
+      # to moodle and moodle-mysql via `sshpass -e ssh clouve-ops@…` using
+      # this password. See moodle-mysql for the full rationale.
+      CLOUVE_OPS_PASSWORD: clouve_ops_dev_password
+
+      # Hosts Magneto Agent's sidecar-fetcher SSHs to at init to merge per-plugin
+      # CONTEXT.md.tpl files baked into each side container's /clouve/context/
+      # tree. Comma-separated; resolves to the moodle service in this app.
+      CLV_SIDECAR_HOSTS: moodle
+    volumes:
+      - magneto_agent_home:/home
+      - magneto_agent_usr:/usr
+      - magneto_agent_opt:/opt
+      - magneto_agent_var:/var
+    networks:
+      - moodle_network
