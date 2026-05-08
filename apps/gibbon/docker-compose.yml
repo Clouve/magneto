@@ -56,6 +56,7 @@ services:
     ports:
       - "${GIBBON_PORT:-8080}:80"
     environment:
+      GIBBON_HOST: gibbon
       DB_HOST: gibbon-mysql
       DB_NAME: gibbon
       DB_USER: gibbon
@@ -116,22 +117,19 @@ services:
       # MAGNETO_AGENT_SKILLS_GIT_TOKEN: ${MAGNETO_AGENT_SKILLS_GIT_TOKEN:-}
       # MAGNETO_AGENT_SKILLS_GIT_USERNAME: ${MAGNETO_AGENT_SKILLS_GIT_USERNAME:-}
 
-      # Pod-internal Gibbon targets surfaced to the skill's playbooks so
-      # they can refer to the services by env-var rather than hard-coding.
-      GIBBON_HOST: gibbon
-      GIBBON_DB_HOST: gibbon-mysql
-      GIBBON_DB_NAME: gibbon
-      GIBBON_DB_USER: gibbon
-      GIBBON_DB_PASSWORD: gibbon_password
-      
       # Same value as the gibbon-mysql service — Claude Code authenticates
       # to gibbon and gibbon-mysql via `sshpass -e ssh clouve-ops@…` using
       # this password. See gibbon-mysql for the full rationale.
       CLOUVE_OPS_PASSWORD: clouve_ops_dev_password
 
-      # Hosts Magneto Agent's sidecar-fetcher SSHs to at init to merge per-plugin
-      # CONTEXT.md.tpl files baked into each side container's /clouve/context/
-      # tree. Comma-separated; resolves to the gibbon service in this app.
+      # Hosts Magneto Agent SSHs to at init for two parallel pulls:
+      #   - sidecar-fetcher: merges per-plugin CONTEXT.md.tpl files baked
+      #     into each side container's /clouve/context/ tree.
+      #   - sidecar-env-fetcher: snapshots each sibling's env via
+      #     `printenv` and re-exports under <UPPER(host)>_* prefix into
+      #     /etc/profile.d/clv-sidecar-env.sh, so skills can reference
+      #     GIBBON_HOST, GIBBON_DB_HOST, GIBBON_DB_PASSWORD, etc. without
+      #     this manifest having to hand-inject them. Comma-separated.
       CLV_SIDECAR_HOSTS: gibbon
     volumes:
       - magneto_agent_home:/home

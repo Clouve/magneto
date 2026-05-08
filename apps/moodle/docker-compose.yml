@@ -75,6 +75,7 @@ services:
       DB_USER: moodle
       DB_PASSWORD: moodle_password
       # Moodle Application Configuration
+      MOODLE_HOST: moodle
       MOODLE_URL: http://${TEST_DOMAIN:-t1.test.clv}:${TEST_PORT:-8080}
       MOODLE_SITE_NAME: My Moodle Site
       MOODLE_EMAIL: admin@example.com
@@ -134,22 +135,19 @@ services:
       # MAGNETO_AGENT_SKILLS_GIT_TOKEN: ${MAGNETO_AGENT_SKILLS_GIT_TOKEN:-}
       # MAGNETO_AGENT_SKILLS_GIT_USERNAME: ${MAGNETO_AGENT_SKILLS_GIT_USERNAME:-}
 
-      # Pod-internal Moodle targets surfaced to the skill's playbooks so
-      # they can refer to the services by env-var rather than hard-coding.
-      MOODLE_HOST: moodle
-      MOODLE_DB_HOST: moodle-mysql
-      MOODLE_DB_NAME: moodle
-      MOODLE_DB_USER: moodle
-      MOODLE_DB_PASSWORD: moodle_password
-
       # Same value as the moodle-mysql service — Claude Code authenticates
       # to moodle and moodle-mysql via `sshpass -e ssh clouve-ops@…` using
       # this password. See moodle-mysql for the full rationale.
       CLOUVE_OPS_PASSWORD: clouve_ops_dev_password
 
-      # Hosts Magneto Agent's sidecar-fetcher SSHs to at init to merge per-plugin
-      # CONTEXT.md.tpl files baked into each side container's /clouve/context/
-      # tree. Comma-separated; resolves to the moodle service in this app.
+      # Hosts Magneto Agent SSHs to at init for two parallel pulls:
+      #   - sidecar-fetcher: merges per-plugin CONTEXT.md.tpl files baked
+      #     into each side container's /clouve/context/ tree.
+      #   - sidecar-env-fetcher: snapshots each sibling's env via
+      #     `printenv` and re-exports under <UPPER(host)>_* prefix into
+      #     /etc/profile.d/clv-sidecar-env.sh, so skills can reference
+      #     MOODLE_HOST, MOODLE_DB_HOST, MOODLE_DB_PASSWORD, etc. without
+      #     this manifest having to hand-inject them. Comma-separated.
       CLV_SIDECAR_HOSTS: moodle
     volumes:
       - magneto_agent_home:/home

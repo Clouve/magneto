@@ -17,6 +17,14 @@ container and reach the others over the pod-internal network:
   in `${GIBBON_DB_PASSWORD}`.
 - the Magneto Agent container you are running inside of.
 
+The `${...}` placeholders above are interpolated at render time from the
+gibbon sibling's env: the magneto-agent's `sidecar-env-fetcher` snapshots
+each sibling's env at boot and re-exports under the `GIBBON_*` namespace.
+If you need the actual var names at runtime — say, for a script that
+reads from env directly rather than relying on the rendered values —
+confirm them with `env | grep -i gibbon` before depending on any
+specific one.
+
 ### Cross-container shell access (clouve-ops)
 
 You **do** have a shell into both side containers via SSH, as the

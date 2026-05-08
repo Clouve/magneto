@@ -15,6 +15,15 @@ of `MOODLE_HOST`, `MOODLE_DB_HOST`, `MOODLE_DB_NAME`,
 `MOODLE_DB_USER`, `MOODLE_DB_PASSWORD`. Confirm the actual var names
 with `env | grep -i moodle` before relying on any specific one.
 
+Those `MOODLE_*` env vars are populated at boot by the magneto-agent's
+`sidecar-env-fetcher`, which SSHes to each sibling in
+`CLV_SIDECAR_HOSTS`, snapshots its env, and re-exports under the
+matching `<UPPER(host)>_*` namespace — so the moodle sibling's
+`DB_HOST=moodle-mysql` ends up here as `MOODLE_DB_HOST=moodle-mysql`,
+and so on. That's why the `env | grep` check above is the source of
+truth: the agent sees whatever the sibling's own env declared, not a
+fixed list, so var names can shift if the deployment changes.
+
 ### Cross-container shell access (clouve-ops)
 
 You **do** have a shell into both side containers via SSH, as the
