@@ -1,7 +1,4 @@
 version: '3.8'
-# Magneto Agent-powered Gibbon — marketplace manifest.
-# See docker-compose.yml for the architectural overview and per-env-var
-# rationale; this file is the Clouve marketplace projection of the same pod.
 services:
   gibbon:
     image: gibbon:latest
@@ -25,7 +22,6 @@ services:
       DEMO_DATA: 'N'
       GIBBON_LOG_LEVEL: info
       GIBBON_CRON_INTERVAL: '* * * * *'
-      CLOUVE_OPS_PASSWORD: clouve-ops-password
     x-clouve-environment-types:
       DB_HOST: containerReference
       DB_NAME: static
@@ -44,7 +40,6 @@ services:
       DEMO_DATA: static
       GIBBON_LOG_LEVEL: static
       GIBBON_CRON_INTERVAL: userConfigurable
-      CLOUVE_OPS_PASSWORD: secret
     volumes:
       - gibbondata:/var/www/html
     x-clouve-metadata:
@@ -92,13 +87,11 @@ services:
       MYSQL_USER: gibbon
       MYSQL_PASSWORD: gibbon-mysql-password
       MYSQL_ROOT_PASSWORD: gibbon-mysql-root-password
-      CLOUVE_OPS_PASSWORD: clouve-ops-password
     x-clouve-environment-types:
       MYSQL_DATABASE: static
       MYSQL_USER: static
       MYSQL_PASSWORD: secret
       MYSQL_ROOT_PASSWORD: secret
-      CLOUVE_OPS_PASSWORD: secret
     volumes:
       - dbdata:/var/lib/mysql
     x-clouve-metadata:
@@ -122,82 +115,21 @@ services:
       - name: dbdata
         size: 10
         description: 'Volume from Docker Compose for gibbon-mysql (original: db_data)'
-  magneto-agent:
-    image: magneto-agent:latest
-    ports:
-      - '8080:80'
-    environment:
-      MAGNETO_AGENT_USERNAME: '{user.firstName}_{user.lastName}'
-      MAGNETO_AGENT_PASSWORD: magneto-agent-password
-      MAGNETO_AGENT_ROOT_PASSWORD: magneto-agent-root-password
-      # MAGNETO_AGENT_CLIENT: claude-code
-      MAGNETO_AGENT_SKILLS: https://github.com/Clouve/magneto-skills.git?plugins=gibbon
-      CLOUVE_OPS_PASSWORD: clouve-ops-password
-      CLV_SIDECAR_HOSTS: gibbon
-    x-clouve-environment-types:
-      MAGNETO_AGENT_USERNAME: applicationUsername
-      MAGNETO_AGENT_PASSWORD: applicationPassword
-      MAGNETO_AGENT_ROOT_PASSWORD: secret
-      # MAGNETO_AGENT_CLIENT: static
-      MAGNETO_AGENT_SKILLS: static
-      CLOUVE_OPS_PASSWORD: secret
-      CLV_SIDECAR_HOSTS: containerReference
-    volumes:
-      - magneto-agent-home:/home
-      - magneto-agent-usr:/usr
-      - magneto-agent-opt:/opt
-      - magneto-agent-var:/var
-    x-clouve-metadata:
-      containerName: magneto-agent
-      purpose: Frontend
-      protocol: TCP
-      isPublic: true
-      memoryBase: 4
-      cpuBase: 1
-    x-clouve-healthcheck:
-      enabled: true
-      type: HTTP
-      path: /
-      port: 80
-      initialDelay: 60
-      interval: 60
-      timeout: 60
-      failureThreshold: 15
-      successThreshold: 1
-    healthcheck:
-      test:
-        - CMD
-        - wget
-        - '--spider'
-        - '-q'
-        - http://localhost:80/
-      interval: 60s
-      timeout: 60s
-      retries: 15
-      start_period: 60s
-    x-clouve-volumes:
-      - name: magneto-agent-home
-        size: 10
-        description: Persistent volume for home directories (stored API key, Claude Code binary, shell history)
-      - name: magneto-agent-usr
-        size: 10
-        description: Persistent volume for system binaries and libraries (/usr)
-      - name: magneto-agent-opt
-        size: 10
-        description: Persistent volume for optional software (/opt)
-      - name: magneto-agent-var
-        size: 10
-        description: Persistent volume for /var (package db, cache, logs, web files, /etc overlay tarball)
 volumes:
   gibbondata:
     driver: local
   dbdata:
     driver: local
-  magneto-agent-home:
-    driver: local
-  magneto-agent-usr:
-    driver: local
-  magneto-agent-opt:
-    driver: local
-  magneto-agent-var:
-    driver: local
+x-clouve-agent:
+  enabled: true
+  skills:
+    url: https://github.com/Clouve/magneto-skills.git?plugins=gibbon
+    git:
+      token: ''
+      username: ''
+  advanced:
+    client: null
+    isPublic: true
+    sidecarHosts:
+      - gibbon
+    sidecarHostsExclude: []
