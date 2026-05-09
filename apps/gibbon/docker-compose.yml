@@ -1,18 +1,31 @@
-# Local-dev variant of the Magneto Agent-powered Gibbon app.
+# Magneto Agent-powered Gibbon — local-dev variant of clv-docker-compose.yml.
 #
-# Mirrors clv-docker-compose.yml but targets plain docker-compose:
-#   - uses the upstream magneto-agent image directly. The runtime binaries the
-#     Gibbon DevOps Skill shells out to (mysql, mysqldump, ssh, sshpass)
-#     are installed at container start by the gibbon plugin's install.sh
-#     hook (in the magneto-skills marketplace). The skill payload itself
-#     — reference docs, playbooks, audited scripts — is delivered by the
-#     same mechanism: Magneto Agent's skill loader (chat/skills.sh) clones the
-#     marketplace specified by MAGNETO_AGENT_SKILLS and stages the requested
-#     plugin's payload at /clouve/skills/<plugin>/. Skill content edits
-#     and runtime-dep changes both flow into running containers on the
-#     next restart, with no per-app image rebuild.
-#   - host-published ports (Gibbon on 8080, Magneto Agent on 8081 by default)
-#   - the .data/ pattern used by the other apps in this repo for persistent state
+# Three containers in one pod:
+#   gibbon        — the school-management app (image from apps/gibbon/)
+#   gibbon-mysql  — Gibbon's DB (image from apps/gibbon/image/mysql/)
+#   magneto-agent — the upstream magneto-agent image used directly. Both the
+#                   Gibbon DevOps Skill payload (reference docs, playbooks,
+#                   audited scripts) and its runtime apt deps (mysql,
+#                   mysqldump, ssh, sshpass) are delivered at container
+#                   start by the upstream skill loader (chat/skills.sh),
+#                   which clones the magneto-skills Claude Code marketplace
+#                   named in MAGNETO_AGENT_SKILLS and stages the requested
+#                   plugin's payload at /clouve/skills/<plugin>/plugin/. The
+#                   loader then runs the plugin's install.sh hook to install
+#                   the apt packages that plugin needs. Skill content edits
+#                   and runtime-dep changes both flow into running
+#                   containers on the next restart, with no per-app image
+#                   rebuild. The per-skill CONTEXT.md.tpl is baked into the
+#                   gibbon image at /clouve/context/gibbon/ and pulled by
+#                   Magneto Agent at init via clouve-ops SSH
+#                   (sidecar-fetcher.sh). Appended to the rendered CLAUDE.md
+#                   as ## Skill: gibbon at session start. Locked to Claude
+#                   Code via MAGNETO_AGENT_CLIENT=claude-code.
+#
+# Differs from clv-docker-compose.yml in targeting plain docker-compose:
+# host-published ports (Gibbon on 8080, Magneto Agent on 8081 by default)
+# and the .data/ pattern used by the other apps in this repo for
+# persistent state.
 #
 # Usage:
 #     ./start.sh apps/gibbon
@@ -93,8 +106,10 @@ services:
       MAGNETO_AGENT_PASSWORD: Admin@123
       MAGNETO_AGENT_ROOT_PASSWORD: Root@123
       
-      # Pre-select Claude Code; Magneto Agent's .bash_profile skips the selector
-      # and marks the choice readonly for the session (spec §5 Q6).
+      # Pre-select Claude Code. Magneto Agent's .bash_profile honours this
+      # env var: skips the interactive selector, marks the choice readonly
+      # in every shell, and the Preferences API rejects client-change
+      # requests with HTTP 400 (spec §5 Q6). No fork of Magneto Agent needed.
       # MAGNETO_AGENT_CLIENT: claude-code
       
       # Optional: inject a pre-authenticated key at launch. When unset,
