@@ -96,7 +96,7 @@ services:
       - gibbon_network
 
   magneto-agent:
-    image: r.clv.zone/e2eorg/magneto-agent
+    image: r.clv.zone/clouve/magneto-agent
     container_name: gibbon_magneto_agent
     restart: unless-stopped
     ports:

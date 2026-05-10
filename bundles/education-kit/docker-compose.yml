@@ -271,7 +271,7 @@ services:
   # start, and CONTEXT.md.tpl files are pulled from the gibbon and moodle
   # side containers via clouve-ops SSH (sidecar-fetcher).
   magneto-agent:
-    image: r.clv.zone/e2eorg/magneto-agent:latest
+    image: r.clv.zone/clouve/magneto-agent:latest
     container_name: education_kit_magneto_agent
     restart: unless-stopped
     depends_on:
