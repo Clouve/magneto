@@ -73,7 +73,15 @@ for script in "${!SCHEDULE_MIN[@]}"; do
   ran_any=1
   log "========================================"
   log "Gibbon Cron Started: $script"
-  if /usr/local/bin/php "$script_file" >> "$LOG_FILE" 2>&1; then
+  # PHP CLI runs as www-data so any cache directories Twig materializes
+  # under /var/www/html/uploads/cache (e.g. templates/<hash>/) are owned by
+  # www-data — the same UID Apache's workers use. If we ran PHP as root
+  # here (the wrapper's UID, set by /etc/cron.d/gibbon-cron's user field),
+  # those cache files end up root:root 0755, and subsequent Apache requests
+  # crash with "Unable to create the cache directory" → HTTP 500 → kubelet
+  # kills the pod on liveness failure. The wrapper itself stays root so
+  # /var/log/gibbon-cron.state (under root-owned /var/log) keeps working.
+  if runuser -u www-data -- /usr/local/bin/php "$script_file" >> "$LOG_FILE" 2>&1; then
     log "Gibbon Cron Completed: $script"
   else
     log "Gibbon Cron Failed: $script (exit $?)"
