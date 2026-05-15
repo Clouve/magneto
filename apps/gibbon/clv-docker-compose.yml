@@ -131,3 +131,4 @@ x-clouve-agent:
       username: ''
   advanced:
     client: null
+    sidecarPullTimeout: 300
