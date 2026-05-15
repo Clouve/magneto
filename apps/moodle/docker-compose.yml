@@ -162,7 +162,7 @@ services:
       #     /etc/profile.d/clv-sidecar-env.sh, so skills can reference
       #     MOODLE_HOST, MOODLE_DB_HOST, MOODLE_DB_PASSWORD, etc. without
       #     this manifest having to hand-inject them. Comma-separated.
-      CLV_SIDECAR_HOSTS: moodle
+      CLV_SIDECAR_HOSTS: moodle,moodle-mysql
     volumes:
       - magneto_agent_home:/home
       - magneto_agent_usr:/usr

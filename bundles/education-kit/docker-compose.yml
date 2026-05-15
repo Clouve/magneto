@@ -320,7 +320,7 @@ services:
       # merge per-plugin CONTEXT.md.tpl files baked into each side
       # container's /clouve/context/ tree. Comma-separated; both apps in
       # this bundle ship per-plugin CONTEXT.md.tpl content.
-      CLV_SIDECAR_HOSTS: gibbon,moodle
+      CLV_SIDECAR_HOSTS: gibbon,gibbon-mysql,moodle,moodle-mysql
     volumes:
       - magneto_agent_home:/home
       - magneto_agent_usr:/usr
