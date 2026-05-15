@@ -1,6 +1,6 @@
 services:
   magneto-agent:
-    image: r.clv.zone/clouve/magneto-agent
+    image: r.clv.zone/clouveinc/magneto-agent
     container_name: magneto_agent_server
     restart: unless-stopped
     ports:

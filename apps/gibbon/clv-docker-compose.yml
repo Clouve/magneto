@@ -5,6 +5,7 @@ services:
     ports:
       - '80:80'
     environment:
+      GIBBON_HOST: gibbon
       DB_HOST: gibbon-mysql
       DB_NAME: gibbon
       DB_USER: gibbon
@@ -23,6 +24,7 @@ services:
       GIBBON_LOG_LEVEL: info
       GIBBON_CRON_INTERVAL: '* * * * *'
     x-clouve-environment-types:
+      GIBBON_HOST: containerReference
       DB_HOST: containerReference
       DB_NAME: static
       DB_USER: static
@@ -129,7 +131,3 @@ x-clouve-agent:
       username: ''
   advanced:
     client: null
-    isPublic: true
-    sidecarHosts:
-      - gibbon
-    sidecarHostsExclude: []

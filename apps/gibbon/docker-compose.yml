@@ -96,7 +96,7 @@ services:
       - gibbon_network
 
   magneto-agent:
-    image: r.clv.zone/clouve/magneto-agent
+    image: r.clv.zone/clouveinc/magneto-agent
     container_name: gibbon_magneto_agent
     restart: unless-stopped
     ports:
@@ -145,7 +145,7 @@ services:
       #     /etc/profile.d/clv-sidecar-env.sh, so skills can reference
       #     GIBBON_HOST, GIBBON_DB_HOST, GIBBON_DB_PASSWORD, etc. without
       #     this manifest having to hand-inject them. Comma-separated.
-      CLV_SIDECAR_HOSTS: gibbon
+      CLV_SIDECAR_HOSTS: gibbon,gibbon-mysql
     volumes:
       - magneto_agent_home:/home
       - magneto_agent_usr:/usr

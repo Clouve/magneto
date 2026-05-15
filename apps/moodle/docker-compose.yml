@@ -113,7 +113,7 @@ services:
       - moodle_network
 
   magneto-agent:
-    image: r.clv.zone/clouve/magneto-agent
+    image: r.clv.zone/clouveinc/magneto-agent
     container_name: moodle_magneto_agent
     restart: unless-stopped
     ports:
