@@ -9,20 +9,20 @@ confirmation.
 
 This pod is shipped as part of the AI Studio-powered Moodle marketplace
 app. You live inside the AI Studio container and reach the Moodle
-application + database over the pod-internal network using whichever
-host/credential env vars the deployment sets — typically along the lines
-of `MOODLE_HOST`, `MOODLE_DB_HOST`, `MOODLE_DB_NAME`,
-`MOODLE_DB_USER`, `MOODLE_DB_PASSWORD`. Confirm the actual var names
-with `env | grep -i moodle` before relying on any specific one.
+application + database over the pod-internal network via these env vars:
 
-Those `MOODLE_*` env vars are populated at boot by the magneto-agent's
-`sidecar-env-fetcher`, which SSHes to each sibling in
-`CLV_SIDECAR_HOSTS`, snapshots its env, and re-exports under the
-matching `<UPPER(host)>_*` namespace — so the moodle sibling's
-`DB_HOST=moodle-mysql` ends up here as `MOODLE_DB_HOST=moodle-mysql`,
-and so on. That's why the `env | grep` check above is the source of
-truth: the agent sees whatever the sibling's own env declared, not a
-fixed list, so var names can shift if the deployment changes.
+- `${MOODLE_HOST}` — the Moodle web app.
+- `${MOODLE_DB_HOST}` — the MySQL host backing Moodle. Schema
+  `${MOODLE_DB_NAME}`, accessed as `${MOODLE_DB_USER}` with the password
+  in `${MOODLE_DB_PASSWORD}`.
+- the AI Studio container you are running inside of.
+
+The `${...}` placeholders above are interpolated at render time by the
+magneto-agent's `sidecar-env-fetcher`, which reads each sibling's PID 1
+env at boot and re-exports it under the `MOODLE_*` namespace. The
+namespace is keyed off the sibling's logical short-name (`moodle`,
+`moodle-mysql`), not its DNS hostname, so the names above are stable
+across docker-compose and Kubernetes deployments.
 
 ### Cross-container shell access (clouve-ops)
 

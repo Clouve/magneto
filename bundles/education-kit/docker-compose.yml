@@ -321,6 +321,11 @@ services:
       # container's /clouve/context/ tree. Comma-separated; both apps in
       # this bundle ship per-plugin CONTEXT.md.tpl content.
       CLV_SIDECAR_HOSTS: gibbon,gibbon-mysql,moodle,moodle-mysql
+      # 1:1 logical short-names used to derive the <UPPER(name)>_* prefix
+      # in /etc/profile.d/clv-sidecar-env.sh. Identical to
+      # CLV_SIDECAR_HOSTS under docker-compose; the per-app docker-compose
+      # files explain the docker-vs-k8s rationale.
+      CLV_SIDECAR_NAMESPACES: gibbon,gibbon-mysql,moodle,moodle-mysql
     volumes:
       - magneto_agent_home:/home
       - magneto_agent_usr:/usr

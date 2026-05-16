@@ -157,12 +157,18 @@ services:
       # Hosts Magneto Agent SSHs to at init for two parallel pulls:
       #   - sidecar-fetcher: merges per-plugin CONTEXT.md.tpl files baked
       #     into each side container's /clouve/context/ tree.
-      #   - sidecar-env-fetcher: snapshots each sibling's env via
-      #     `printenv` and re-exports under <UPPER(host)>_* prefix into
-      #     /etc/profile.d/clv-sidecar-env.sh, so skills can reference
-      #     MOODLE_HOST, MOODLE_DB_HOST, MOODLE_DB_PASSWORD, etc. without
-      #     this manifest having to hand-inject them. Comma-separated.
+      #   - sidecar-env-fetcher: reads each sibling's PID 1 env (via
+      #     `sudo cat /proc/1/environ` over SSH, since sshd doesn't pass
+      #     PID 1's env to user sessions) and re-exports under
+      #     <UPPER(namespace)>_* prefix into /etc/profile.d/clv-sidecar-env.sh
+      #     so skills can reference MOODLE_HOST, MOODLE_DB_HOST,
+      #     MOODLE_DB_PASSWORD, etc. without this manifest having to
+      #     hand-inject them.
       CLV_SIDECAR_HOSTS: moodle,moodle-mysql
+      # 1:1 logical short-names for CLV_SIDECAR_HOSTS — see gibbon's
+      # docker-compose.yml for the full rationale. Identical to
+      # CLV_SIDECAR_HOSTS on docker-compose; diverges on Kubernetes.
+      CLV_SIDECAR_NAMESPACES: moodle,moodle-mysql
     volumes:
       - magneto_agent_home:/home
       - magneto_agent_usr:/usr

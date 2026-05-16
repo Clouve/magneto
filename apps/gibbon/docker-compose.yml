@@ -140,12 +140,21 @@ services:
       # Hosts Magneto Agent SSHs to at init for two parallel pulls:
       #   - sidecar-fetcher: merges per-plugin CONTEXT.md.tpl files baked
       #     into each side container's /clouve/context/ tree.
-      #   - sidecar-env-fetcher: snapshots each sibling's env via
-      #     `printenv` and re-exports under <UPPER(host)>_* prefix into
-      #     /etc/profile.d/clv-sidecar-env.sh, so skills can reference
-      #     GIBBON_HOST, GIBBON_DB_HOST, GIBBON_DB_PASSWORD, etc. without
-      #     this manifest having to hand-inject them. Comma-separated.
+      #   - sidecar-env-fetcher: reads each sibling's PID 1 env (via
+      #     `sudo cat /proc/1/environ` over SSH, since sshd doesn't pass
+      #     PID 1's env to user sessions) and re-exports under
+      #     <UPPER(namespace)>_* prefix into /etc/profile.d/clv-sidecar-env.sh
+      #     so skills can reference GIBBON_HOST, GIBBON_DB_HOST,
+      #     GIBBON_DB_PASSWORD, etc. without this manifest having to
+      #     hand-inject them.
       CLV_SIDECAR_HOSTS: gibbon,gibbon-mysql
+      # 1:1 logical short-names for CLV_SIDECAR_HOSTS, used to derive the
+      # <UPPER(name)>_* namespace prefix in /etc/profile.d/clv-sidecar-env.sh.
+      # On docker-compose this is identical to CLV_SIDECAR_HOSTS; on
+      # Kubernetes it stays at the short-names while CLV_SIDECAR_HOSTS gets
+      # rewritten to tkt-<id>-* — that's how `${GIBBON_HOST}` in
+      # CONTEXT.md.tpl resolves correctly across both deploy environments.
+      CLV_SIDECAR_NAMESPACES: gibbon,gibbon-mysql
     volumes:
       - magneto_agent_home:/home
       - magneto_agent_usr:/usr
