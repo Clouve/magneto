@@ -119,18 +119,29 @@ The AI Studio app runs Ubuntu 24.04 with ttyd (web terminal), nginx, and FileBro
 
 ## Known Issues
 
-### Self-signed TLS certificates break WebSocket (ttyd terminal) on Kubernetes
-AI Studio's web terminal (ttyd) relies on WebSocket (`wss://`). Browsers silently reject WebSocket connections when the TLS certificate is not trusted — the page and HTTP requests work (user accepted the cert warning), but `new WebSocket("wss://...")` fails before the request ever leaves the browser. Symptoms: the terminal iframe loads but stays blank; server logs show repeated `/token` fetches with zero `/_clv/chat/ws` entries.
+### Untrusted TLS certificates break WebSocket (ttyd terminal) on Kubernetes
+AI Studio's web terminal (ttyd) relies on WebSocket (`wss://`). Browsers silently reject WebSocket connections when the TLS certificate is not trusted — the page and HTTP requests work (user accepted the cert warning), but `new WebSocket("wss://...")` fails before the request ever leaves the browser. Symptoms: the terminal iframe loads but stays blank; the AI client never spawns (or appears to spawn-and-exit); server logs show repeated `/_clv/chat/token` fetches with zero `/_clv/chat/*/ws` entries.
 
-**Root cause on the local dev cluster:** The `letsencrypt-prod` ClusterIssuer is misconfigured as `spec.selfSigned: {}` — it issues self-signed certs despite the name.
+**Root cause on the kind / clv local cluster:** The `selfsigned` cert-issuer strategy installs three ClusterIssuers (`letsencrypt-prod`, `zerossl-prod`, `gcp-prod`) with `spec.selfSigned: {}` — each tenant ingress gets a unique self-signed leaf with no shared CA, so no amount of OS-keychain trust fixes them. Accepting the browser cert warning lets HTTP requests through but `new WebSocket("wss://...")` still rejects the connection.
 
 **Diagnosis:**
 ```bash
-# Check if the cert is self-signed (empty issuer = self-signed)
+# Check if the cert chain has no real issuer (empty issuer = self-signed leaf, no CA)
 kubectl get secret <tls-secret> -n <ns> -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -noout -issuer -subject
 
-# Verify the ClusterIssuer config (look for selfSigned: {} vs proper ACME)
-kubectl get clusterissuer letsencrypt-prod -o yaml
+# Confirm the ClusterIssuer is selfSigned and not CA-backed
+kubectl get clusterissuer letsencrypt-prod -o yaml | grep -A1 'spec:'
 ```
 
-**Fix:** Reconfigure the ClusterIssuer with real ACME (HTTP-01 or DNS-01). Docker deployments are unaffected (HTTP only, no TLS).
+**Fix (kind / clv local clusters):** Pick the `dev` cert-issuer strategy — not `selfsigned` — when bringing up the local cluster. The setup menu only prompts for the strategy during `prepare*` actions (see [strato/clusters/setup](../../strato/clusters/setup) lines 72–81, where `CERT_ISSUER_STRATEGY_ARR=("selfsigned" "dev")` is gated to actions `prepare`, `prepare-load-balancer`, and `prepare-cert-issuers`):
+```bash
+./strato/clusters/setup clv create                 # create the kind cluster
+./strato/clusters/setup clv prepare                # pick "dev" at the strategy prompt
+# (or, to re-issue on an existing cluster:)
+./strato/clusters/setup clv prepare-cert-issuers   # pick "dev"
+```
+The `dev` strategy replaces the three `selfSigned` ClusterIssuers with **real public ACME issuers** — Let's Encrypt, ZeroSSL, and Google Trust Services — that solve DNS-01 against the `clouve.app` Cloud DNS zone (so the kind cluster needs valid GCP credentials for project `clouve-develop`). The resulting leaf certs chain to publicly-trusted roots already in every browser's trust store, so `wss://` upgrades validate without any local CA-trust step. See [strato/clusters/k8s/manifests/clouve-e2e/cert-issuers/dev/](../../strato/clusters/k8s/manifests/clouve-e2e/cert-issuers/dev/) for the three issuer manifests that get copied into place by setup (lines 130–134).
+
+**Fix (real prod clusters):** Same `dev`-style ACME ClusterIssuers — see the manifests linked above for working HTTP-01 / DNS-01 examples.
+
+Docker deployments are unaffected (HTTP only, no TLS).
