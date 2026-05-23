@@ -1,19 +1,31 @@
 version: '3.8'
-# Local-dev variant of the Magneto Agent-powered Moodle app.
+# Magneto Agent-powered Moodle — local-dev variant of clv-docker-compose.yml.
 #
-# Mirrors clv-docker-compose.yml but targets plain docker-compose:
-#   - uses the upstream magneto-agent image directly. The runtime binaries the
-#     Moodle DevOps Skill shells out to (mysql, mysqldump, ssh, sshpass)
-#     are installed at container start by the moodle plugin's install.sh
-#     hook (in the magneto-skills marketplace). The skill payload itself
-#     — reference docs, playbooks, audited scripts — is delivered by the
-#     same mechanism: Magneto Agent's skill loader (chat/skills.sh) clones the
-#     marketplace specified by MAGNETO_AGENT_SKILLS and stages the requested
-#     plugin's payload at /clouve/skills/<plugin>/. Skill content edits
-#     and runtime-dep changes both flow into running containers on the
-#     next restart, with no per-app image rebuild.
-#   - host-published ports (Moodle on 8080, Magneto Agent on 8081 by default)
-#   - the named-volume pattern used by the other apps in this repo
+# Three containers in one pod:
+#   moodle        — the LMS web app (image from apps/moodle/)
+#   moodle-mysql  — Moodle's DB (image from apps/moodle/image/mysql/)
+#   magneto-agent — the upstream magneto-agent image used directly. Both the
+#                   Moodle DevOps Skill payload (reference docs, playbooks,
+#                   audited scripts) and its runtime apt deps (mysql,
+#                   mysqldump, ssh, sshpass) are delivered at container
+#                   start by the upstream skill loader (chat/skills.sh),
+#                   which clones the magneto-skills Claude Code marketplace
+#                   named in MAGNETO_AGENT_SKILLS and stages the requested
+#                   plugin's payload at /clouve/skills/<plugin>/plugin/. The
+#                   loader then runs the plugin's install.sh hook to install
+#                   the apt packages that plugin needs. Skill content edits
+#                   and runtime-dep changes both flow into running
+#                   containers on the next restart, with no per-app image
+#                   rebuild. The per-skill CONTEXT.md.tpl is baked into the
+#                   moodle image at /clouve/context/moodle/ and pulled by
+#                   Magneto Agent at init via clouve-ops SSH
+#                   (sidecar-fetcher.sh). Appended to the rendered CLAUDE.md
+#                   as ## Skill: moodle at session start. Locked to Claude
+#                   Code via MAGNETO_AGENT_CLIENT=claude-code.
+#
+# Differs from clv-docker-compose.yml in targeting plain docker-compose:
+# host-published ports (Moodle on 8080, Magneto Agent on 8081 by default)
+# and the named-volume pattern used by the other apps in this repo.
 #
 # Usage:
 #     ./start.sh apps/moodle
@@ -75,6 +87,7 @@ services:
       DB_USER: moodle
       DB_PASSWORD: moodle_password
       # Moodle Application Configuration
+      MOODLE_HOST: moodle
       MOODLE_URL: http://${TEST_DOMAIN:-t1.test.clv}:${TEST_PORT:-8080}
       MOODLE_SITE_NAME: My Moodle Site
       MOODLE_EMAIL: admin@example.com
@@ -100,7 +113,7 @@ services:
       - moodle_network
 
   magneto-agent:
-    image: r.clv.zone/e2eorg/magneto-agent
+    image: r.clv.zone/clouveinc/magneto-agent
     container_name: moodle_magneto_agent
     restart: unless-stopped
     ports:
@@ -110,8 +123,10 @@ services:
       MAGNETO_AGENT_PASSWORD: Admin@123
       MAGNETO_AGENT_ROOT_PASSWORD: Root@123
 
-      # Pre-select Claude Code; Magneto Agent's .bash_profile skips the selector
-      # and marks the choice readonly for the session (spec §5 Q6).
+      # Pre-select Claude Code. Magneto Agent's .bash_profile honours this
+      # env var: skips the interactive selector, marks the choice readonly
+      # in every shell, and the Preferences API rejects client-change
+      # requests with HTTP 400 (spec §5 Q6). No fork of Magneto Agent needed.
       # MAGNETO_AGENT_CLIENT: claude-code
 
       # Optional: inject a pre-authenticated key at launch. When unset,
@@ -134,23 +149,26 @@ services:
       # MAGNETO_AGENT_SKILLS_GIT_TOKEN: ${MAGNETO_AGENT_SKILLS_GIT_TOKEN:-}
       # MAGNETO_AGENT_SKILLS_GIT_USERNAME: ${MAGNETO_AGENT_SKILLS_GIT_USERNAME:-}
 
-      # Pod-internal Moodle targets surfaced to the skill's playbooks so
-      # they can refer to the services by env-var rather than hard-coding.
-      MOODLE_HOST: moodle
-      MOODLE_DB_HOST: moodle-mysql
-      MOODLE_DB_NAME: moodle
-      MOODLE_DB_USER: moodle
-      MOODLE_DB_PASSWORD: moodle_password
-
       # Same value as the moodle-mysql service — Claude Code authenticates
       # to moodle and moodle-mysql via `sshpass -e ssh clouve-ops@…` using
       # this password. See moodle-mysql for the full rationale.
       CLOUVE_OPS_PASSWORD: clouve_ops_dev_password
 
-      # Hosts Magneto Agent's sidecar-fetcher SSHs to at init to merge per-plugin
-      # CONTEXT.md.tpl files baked into each side container's /clouve/context/
-      # tree. Comma-separated; resolves to the moodle service in this app.
-      CLV_SIDECAR_HOSTS: moodle
+      # Hosts Magneto Agent SSHs to at init for two parallel pulls:
+      #   - sidecar-fetcher: merges per-plugin CONTEXT.md.tpl files baked
+      #     into each side container's /clouve/context/ tree.
+      #   - sidecar-env-fetcher: reads each sibling's PID 1 env (via
+      #     `sudo cat /proc/1/environ` over SSH, since sshd doesn't pass
+      #     PID 1's env to user sessions) and re-exports under
+      #     <UPPER(namespace)>_* prefix into /etc/profile.d/clv-sidecar-env.sh
+      #     so skills can reference MOODLE_HOST, MOODLE_DB_HOST,
+      #     MOODLE_DB_PASSWORD, etc. without this manifest having to
+      #     hand-inject them.
+      CLV_SIDECAR_HOSTS: moodle,moodle-mysql
+      # 1:1 logical short-names for CLV_SIDECAR_HOSTS — see gibbon's
+      # docker-compose.yml for the full rationale. Identical to
+      # CLV_SIDECAR_HOSTS on docker-compose; diverges on Kubernetes.
+      CLV_SIDECAR_NAMESPACES: moodle,moodle-mysql
     volumes:
       - magneto_agent_home:/home
       - magneto_agent_usr:/usr

@@ -9,11 +9,20 @@ confirmation.
 
 This pod is shipped as part of the AI Studio-powered Moodle marketplace
 app. You live inside the AI Studio container and reach the Moodle
-application + database over the pod-internal network using whichever
-host/credential env vars the deployment sets — typically along the lines
-of `MOODLE_HOST`, `MOODLE_DB_HOST`, `MOODLE_DB_NAME`,
-`MOODLE_DB_USER`, `MOODLE_DB_PASSWORD`. Confirm the actual var names
-with `env | grep -i moodle` before relying on any specific one.
+application + database over the pod-internal network via these env vars:
+
+- `${MOODLE_HOST}` — the Moodle web app.
+- `${MOODLE_DB_HOST}` — the MySQL host backing Moodle. Schema
+  `${MOODLE_DB_NAME}`, accessed as `${MOODLE_DB_USER}` with the password
+  in `${MOODLE_DB_PASSWORD}`.
+- the AI Studio container you are running inside of.
+
+The `${...}` placeholders above are interpolated at render time by the
+magneto-agent's `sidecar-env-fetcher`, which reads each sibling's PID 1
+env at boot and re-exports it under the `MOODLE_*` namespace. The
+namespace is keyed off the sibling's logical short-name (`moodle`,
+`moodle-mysql`), not its DNS hostname, so the names above are stable
+across docker-compose and Kubernetes deployments.
 
 ### Cross-container shell access (clouve-ops)
 

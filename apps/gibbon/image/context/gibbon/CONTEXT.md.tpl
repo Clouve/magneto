@@ -17,6 +17,15 @@ container and reach the others over the pod-internal network:
   in `${GIBBON_DB_PASSWORD}`.
 - the Magneto Agent container you are running inside of.
 
+The `${...}` placeholders above are interpolated at render time from the
+gibbon sibling's env: the magneto-agent's `sidecar-env-fetcher` reads
+each sibling's PID 1 env at boot and re-exports it under the `GIBBON_*`
+namespace. The namespace is keyed off the sibling's logical short-name
+(`gibbon`, `gibbon-mysql`), not its DNS hostname, so the var names above
+are stable across docker-compose and Kubernetes deployments — scripts
+that read `${GIBBON_HOST}` / `${GIBBON_DB_HOST}` / etc. directly from
+env can depend on these names.
+
 ### Cross-container shell access (clouve-ops)
 
 You **do** have a shell into both side containers via SSH, as the

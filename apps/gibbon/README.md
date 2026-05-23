@@ -819,7 +819,7 @@ The `clv-docker-compose.yml` file contains Clouve-specific extensions for market
 
 **`magneto-agent` container (upstream image, used directly — no Gibbon-specific image layer)**
 
-The compose files reference `r.clv.zone/e2eorg/magneto-agent:latest` directly. There is no `image/magneto-agent/Dockerfile` in this app — both the skill payload AND its runtime apt deps now live in the [`magneto-skills`](https://github.com/Clouve/magneto-skills) marketplace:
+The compose files reference `r.clv.zone/clouveinc/magneto-agent:latest` directly. There is no `image/magneto-agent/Dockerfile` in this app — both the skill payload AND its runtime apt deps now live in the [`magneto-skills`](https://github.com/Clouve/magneto-skills) marketplace:
 
 - Skill payload (reference docs, playbooks, scripts) is delivered at start by the upstream `chat/skills.sh`, which clones the marketplace named in `MAGNETO_AGENT_SKILLS=https://github.com/Clouve/magneto-skills.git?plugins=gibbon` and stages the gibbon plugin under `/clouve/skills/gibbon/plugin/`.
 - Runtime apt packages (`default-mysql-client`, `openssh-client`, `sshpass`) are installed at start by the plugin's `install.sh` hook (`plugins/gibbon/install.sh` in the marketplace repo), invoked by Magneto Agent's plugin-stager after staging. The hook is idempotent — packages that are already present (e.g. on a warm restart) are detected via `dpkg-query` and the apt-get path is skipped.

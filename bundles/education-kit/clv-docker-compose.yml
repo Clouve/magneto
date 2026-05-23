@@ -5,6 +5,7 @@ services:
     ports:
       - '80:80'
     environment:
+      GIBBON_HOST: gibbon
       DB_HOST: gibbon-mysql
       DB_NAME: gibbon
       DB_USER: gibbon
@@ -66,15 +67,8 @@ services:
           JOIN gibbonCourseClass ON (gibbonCourseClassPerson.gibbonCourseClassID = gibbonCourseClass.gibbonCourseClassID)
           WHERE gibbonCourseClassPerson.role = 'Teacher'
             AND gibbonPerson.status = 'Full';
-      # Shared per-pod password for the clouve-ops shell account. Same
-      # value reaches all five pods (gibbon, gibbon-mysql, moodle,
-      # moodle-mysql, magneto-agent): Clouve generates a random
-      # password-like string for `secret`-typed env vars and injects
-      # identical values into pods that declare the same variable name.
-      # The agent ssh's into each side container with `sshpass -e`; the
-      # side containers' start-clouve-ops-sshd.sh applies it via chpasswd.
-      CLOUVE_OPS_PASSWORD: clouve-ops-password
     x-clouve-environment-types:
+      GIBBON_HOST: containerReference
       DB_HOST: containerReference
       DB_NAME: static
       DB_USER: static
@@ -95,7 +89,6 @@ services:
       GIBBON_INTEGRATION_SQL_1: static
       GIBBON_INTEGRATION_SQL_2: static
       GIBBON_INTEGRATION_SQL_3: static
-      CLOUVE_OPS_PASSWORD: secret
     volumes:
       - gibbon-data:/var/www/html
     x-clouve-metadata:
@@ -144,14 +137,11 @@ services:
       MYSQL_USER: gibbon
       MYSQL_PASSWORD: gibbon-mysql-password
       MYSQL_ROOT_PASSWORD: gibbon-mysql-root-password
-      # Same value as the gibbon service — see its comment.
-      CLOUVE_OPS_PASSWORD: clouve-ops-password
     x-clouve-environment-types:
       MYSQL_DATABASE: static
       MYSQL_USER: static
       MYSQL_PASSWORD: secret
       MYSQL_ROOT_PASSWORD: secret
-      CLOUVE_OPS_PASSWORD: secret
     volumes:
       - gibbon-db-data:/var/lib/mysql
     x-clouve-metadata:
@@ -180,6 +170,7 @@ services:
     ports:
       - '80:80'
     environment:
+      MOODLE_HOST: moodle
       DB_HOST: moodle-mysql
       DB_NAME: moodle
       DB_USER: moodle
@@ -259,9 +250,8 @@ services:
         INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'newcoursefullname', 'name') ON DUPLICATE KEY UPDATE value = 'name';
         INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'newcourseshortname', 'nameShort') ON DUPLICATE KEY UPDATE value = 'nameShort';
         INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'newcourseidnumber', 'gibbonCourseID') ON DUPLICATE KEY UPDATE value = 'gibbonCourseID';
-      # Same value as the gibbon service — see its comment.
-      CLOUVE_OPS_PASSWORD: clouve-ops-password
     x-clouve-environment-types:
+      MOODLE_HOST: containerReference
       DB_HOST: containerReference
       DB_NAME: static
       DB_USER: static
@@ -282,7 +272,6 @@ services:
       MOODLE_INTEGRATION_SQL_1: static
       MOODLE_INTEGRATION_SQL_2: static
       MOODLE_INTEGRATION_SQL_3: static
-      CLOUVE_OPS_PASSWORD: secret
     volumes:
       - moodle-www-data:/var/www/html
       - moodle-data:/var/moodledata
@@ -335,14 +324,11 @@ services:
       MYSQL_USER: moodle
       MYSQL_PASSWORD: moodle-mysql-password
       MYSQL_ROOT_PASSWORD: moodle-mysql-root-password
-      # Same value as the gibbon service — see its comment.
-      CLOUVE_OPS_PASSWORD: clouve-ops-password
     x-clouve-environment-types:
       MYSQL_DATABASE: static
       MYSQL_USER: static
       MYSQL_PASSWORD: secret
       MYSQL_ROOT_PASSWORD: secret
-      CLOUVE_OPS_PASSWORD: secret
     volumes:
       - moodle-db-data:/var/lib/mysql
     x-clouve-metadata:
@@ -366,125 +352,6 @@ services:
       - name: moodle-db-data
         size: 10
         description: 'Volume from Docker Compose for moodle-mysql (original: moodle_db_data)'
-  # Magneto Agent — browser-based Claude Code workspace loaded with the
-  # Gibbon and Moodle DevOps Skills from the magneto-skills marketplace.
-  # Each plugin's install.sh hook apt-installs the runtime binaries the
-  # skill shells out to (mysql-client, openssh-client, sshpass) at container
-  # start, and CONTEXT.md.tpl files are pulled from the gibbon and moodle
-  # side containers via clouve-ops SSH (sidecar-fetcher).
-  magneto-agent:
-    image: magneto-agent:latest
-    ports:
-      - '80:80'
-    environment:
-      MAGNETO_AGENT_USERNAME: '{user.firstName}_{user.lastName}'
-      MAGNETO_AGENT_PASSWORD: magneto-agent-password
-      MAGNETO_AGENT_ROOT_PASSWORD: magneto-agent-root-password
-      # Activates BOTH the Gibbon and Moodle DevOps plugins from the
-      # magneto-skills Claude Code marketplace. The upstream Magneto Agent
-      # loader (chat/skills.sh) clones the marketplace at container start,
-      # stages each plugin's payload at /clouve/skills/<plugin>/plugin/,
-      # appends ## Skill: gibbon and ## Skill: moodle to ~/.claude/CLAUDE.md
-      # from the per-plugin context/<plugin>/CONTEXT.md.tpl baked into
-      # each side container's image (pulled by Magneto Agent's
-      # sidecar-fetcher at init over clouve-ops SSH), and runs each
-      # plugin's install.sh hook to apt-install the runtime binaries the
-      # skill shells out to (mysql-client, openssh-client, sshpass).
-      MAGNETO_AGENT_SKILLS: https://github.com/Clouve/magneto-skills.git?plugins=gibbon,moodle
-      # Pod-internal Gibbon hostnames + DB creds, surfaced so the gibbon
-      # skill's playbooks can refer to them by env var.
-      GIBBON_HOST: gibbon
-      GIBBON_DB_HOST: gibbon-mysql
-      GIBBON_DB_NAME: gibbon
-      GIBBON_DB_USER: gibbon
-      # Same `secret` value as the gibbon service's DB_PASSWORD — Clouve
-      # resolves secret-typed env vars to the same generated value across
-      # services when the variable name matches.
-      GIBBON_DB_PASSWORD: gibbon-mysql-password
-      # Pod-internal Moodle hostnames + DB creds, surfaced so the moodle
-      # skill's playbooks can refer to them by env var.
-      MOODLE_HOST: moodle
-      MOODLE_DB_HOST: moodle-mysql
-      MOODLE_DB_NAME: moodle
-      MOODLE_DB_USER: moodle
-      # Same `secret` value as the moodle service's DB_PASSWORD.
-      MOODLE_DB_PASSWORD: moodle-mysql-password
-      # Same value as the four other services — the agent reads this from
-      # the env at runtime to ssh into each side container via
-      # `sshpass -e ssh clouve-ops@…`.
-      CLOUVE_OPS_PASSWORD: clouve-ops-password
-      # Side containers Magneto Agent's sidecar-fetcher SSHs to at init to
-      # merge per-plugin CONTEXT.md.tpl files baked into each side
-      # container's /clouve/context/ tree. Comma-separated; both apps in
-      # this bundle ship per-plugin CONTEXT.md.tpl content.
-      CLV_SIDECAR_HOSTS: gibbon,moodle
-    x-clouve-environment-types:
-      MAGNETO_AGENT_USERNAME: applicationUsername
-      MAGNETO_AGENT_PASSWORD: applicationPassword
-      MAGNETO_AGENT_ROOT_PASSWORD: secret
-      MAGNETO_AGENT_SKILLS: static
-      GIBBON_HOST: containerReference
-      GIBBON_DB_HOST: containerReference
-      GIBBON_DB_NAME: static
-      GIBBON_DB_USER: static
-      GIBBON_DB_PASSWORD: secret
-      MOODLE_HOST: containerReference
-      MOODLE_DB_HOST: containerReference
-      MOODLE_DB_NAME: static
-      MOODLE_DB_USER: static
-      MOODLE_DB_PASSWORD: secret
-      CLOUVE_OPS_PASSWORD: secret
-      CLV_SIDECAR_HOSTS: containerReference
-    volumes:
-      - magneto-agent-home:/home
-      - magneto-agent-usr:/usr
-      - magneto-agent-opt:/opt
-      - magneto-agent-var:/var
-    x-clouve-metadata:
-      containerName: magneto-agent
-      purpose: Frontend
-      protocol: TCP
-      isPublic: true
-      memoryBase: 4
-      cpuBase: 1
-    x-clouve-bundle-metadata:
-      appVersion: 1.0.0
-      appTitle: Magneto Agent
-      appDescription: A browser-based Claude Code workspace loaded with the Gibbon and Moodle DevOps Skills. School administrators get an AI agent that can perform upgrades, module installs, backups, diagnostics, and academic-year rollover across both Gibbon and Moodle through natural-language conversation — with built-in safety gates that refuse destructive operations without explicit confirmation.
-    x-clouve-healthcheck:
-      enabled: true
-      type: HTTP
-      path: /
-      port: 80
-      initialDelay: 60
-      interval: 60
-      timeout: 60
-      failureThreshold: 15
-      successThreshold: 1
-    healthcheck:
-      test:
-        - CMD
-        - wget
-        - '--spider'
-        - '-q'
-        - http://localhost:80/
-      interval: 60s
-      timeout: 60s
-      retries: 15
-      start_period: 60s
-    x-clouve-volumes:
-      - name: magneto-agent-home
-        size: 10
-        description: Persistent volume for home directories (stored API key, Claude Code binary, shell history)
-      - name: magneto-agent-usr
-        size: 10
-        description: Persistent volume for system binaries and libraries (/usr)
-      - name: magneto-agent-opt
-        size: 10
-        description: Persistent volume for optional software (/opt)
-      - name: magneto-agent-var
-        size: 10
-        description: Persistent volume for /var (package db, cache, logs, web files, /etc overlay tarball)
 volumes:
   gibbon-data:
     driver: local
@@ -496,11 +363,13 @@ volumes:
     driver: local
   moodle-db-data:
     driver: local
-  magneto-agent-home:
-    driver: local
-  magneto-agent-usr:
-    driver: local
-  magneto-agent-opt:
-    driver: local
-  magneto-agent-var:
-    driver: local
+x-clouve-agent:
+  enabled: true
+  skills:
+    url: https://github.com/Clouve/magneto-skills.git?plugins=gibbon,moodle
+    git:
+      token: ''
+      username: ''
+  advanced:
+    client: null
+    sidecarPullTimeout: 600

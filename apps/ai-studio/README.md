@@ -6,7 +6,7 @@ This directory contains the **Clouve marketplace manifests** for the [Magneto Ag
 
 | File | Role |
 | --- | --- |
-| `docker-compose.yml` | Local dev compose — pulls `r.clv.zone/e2eorg/magneto-agent` and runs it on `localhost:8080` |
+| `docker-compose.yml` | Local dev compose — pulls `r.clv.zone/clouveinc/magneto-agent` and runs it on `localhost:8080` |
 | `clv-docker-compose.yml` | Default marketplace manifest — all three AI clients available; user picks at session start |
 | `clv-docker-compose-claude.yml` | Claude Code-locked variant (`MAGNETO_AGENT_CLIENT=claude-code`) |
 | `clv-docker-compose-gemini.yml` | Gemini CLI-locked variant (`MAGNETO_AGENT_CLIENT=gemini-cli`) |
