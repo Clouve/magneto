@@ -1,8 +1,8 @@
 FROM php:8.3-apache
 
 # Moodle version - using latest stable version
-ENV MOODLE_VERSION=501
-ENV MOODLE_RELEASE=5.1
+ENV MOODLE_VERSION=502
+ENV MOODLE_RELEASE=5.2
 ENV MOODLE_PATH=moodle/moodle-${MOODLE_RELEASE}
 
 # Setup server and install dependencies
