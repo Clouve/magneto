@@ -543,7 +543,7 @@ For successful integration, ensure:
 - ✅ **AI Agent Companion**: Browser-based Claude Code workspace (the upstream `magneto-agent` image, configured via `MAGNETO_AGENT_SKILLS`) with a Moodle DevOps Skill that can perform upgrades, plugin installs, MUC purges, backups, restores, maintenance-mode toggles, and 500-error diagnostics through natural language.
 - ✅ **Cross-Container Shell Access**: `clouve-ops` SSH operator account in `moodle` and `moodle-mysql` (passwordless sudo, password auth) — the agent has a real shell in both side containers without any shared filesystem with their data.
 - ✅ **Dynamic Configuration Updates**: Automatic synchronization of database credentials, application URL, and SSL-proxy mode.
-- ✅ **Custom Docker Images**: Built from Dockerfiles (Moodle 5.1).
+- ✅ **Custom Docker Images**: Built from Dockerfiles (Moodle 5.2).
 - ✅ **Multi-Platform Support**: amd64 and arm64 architectures.
 - ✅ **Automatic Installation**: Zero-touch Moodle installation.
 - ✅ **MySQL 8.4 Database**: With health checks and retry logic.
@@ -904,7 +904,7 @@ Moodle is a globally adopted open-source learning management system designed for
 
 ### Compatibility
 
-- **Moodle Version**: 5.1 (image baked); skill authored against 5.2
+- **Moodle Version**: 5.2
 - **PHP Version**: 8.3
 - **Database**: MariaDB 10.11+, **MySQL 8.4+** (this image), PostgreSQL 16+, MSSQL 15+, Aurora MySQL 8.0+
 - **Magneto Agent**: derived from the upstream [`Clouve/magneto-agent`](https://github.com/Clouve/magneto-agent) image — Claude Code (locked via `MAGNETO_AGENT_CLIENT=claude-code`)
