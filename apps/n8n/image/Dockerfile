@@ -14,7 +14,11 @@ RUN apk add --no-cache \
     su-exec
 
 # Stage 2: Final n8n image
-FROM docker.n8n.io/n8nio/n8n:2.14.0
+# Pulled via mirror.gcr.io (Google's Docker Hub pull-through cache) to avoid
+# docker.n8n.io's strict anonymous rate limit, which trips multi-arch buildx
+# pushes — the docker-container builder has an isolated cache and must fetch
+# manifests for both linux/amd64 and linux/arm64 on every push.
+FROM mirror.gcr.io/n8nio/n8n:2.14.0
 
 # Set labels for documentation
 LABEL maintainer="Clouve Team"
