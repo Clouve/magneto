@@ -133,14 +133,14 @@ kubectl get secret <tls-secret> -n <ns> -o jsonpath='{.data.tls\.crt}' | base64 
 kubectl get clusterissuer gcp-prod -o yaml | grep -A1 'spec:'
 ```
 
-**Fix (kind / clv local clusters):** Pick the `dev` cert-issuer strategy — not `selfsigned` — when bringing up the local cluster. The setup menu only prompts for the strategy during `prepare*` actions (see [strato/clusters/setup](../../strato/clusters/setup) lines 72–81, where `CERT_ISSUER_STRATEGY_ARR=("selfsigned" "dev")` is gated to actions `prepare`, `prepare-load-balancer`, and `prepare-cert-issuers`):
+**Fix (kind / clv local clusters):** Pick the `dev` cert-issuer strategy — not `selfsigned` — when bringing up the local cluster. The `cluster/action` dispatcher only prompts for the strategy during `setup*` actions (see [strato/cluster/action](../../strato/cluster/action) lines 64–74, where `CERT_ISSUER_STRATEGY_ARR=("selfsigned" "dev")` is gated to actions `setup`, `setup-load-balancer`, and `setup-cert-issuers`):
 ```bash
-./strato/clusters/setup clv create                 # create the kind cluster
-./strato/clusters/setup clv prepare                # pick "dev" at the strategy prompt
+./strato/cluster/action clv create                 # create the kind cluster
+./strato/cluster/action clv setup                # pick "dev" at the strategy prompt
 # (or, to re-issue on an existing cluster:)
-./strato/clusters/setup clv prepare-cert-issuers   # pick "dev"
+./strato/cluster/action clv setup-cert-issuers   # pick "dev"
 ```
-The `dev` strategy replaces the `selfSigned` `gcp-prod` ClusterIssuer with a **real public ACME issuer** — Google Trust Services (Google Public CA) — that solves DNS-01 against the `clouve.app` Cloud DNS zone (so the kind cluster needs valid GCP credentials for project `clouve-develop`). The resulting leaf certs chain to a publicly-trusted root already in every browser's trust store, so `wss://` upgrades validate without any local CA-trust step. See [strato/clusters/k8s/manifests/clouve-e2e/cert-issuers/dev/](../../strato/clusters/k8s/manifests/clouve-e2e/cert-issuers/dev/) for the issuer manifest that gets copied into place by setup (lines 130–134).
+The `dev` strategy replaces the `selfSigned` `gcp-prod` ClusterIssuer with a **real public ACME issuer** — Google Trust Services (Google Public CA) — that solves DNS-01 against the `clouve.app` Cloud DNS zone (so the kind cluster needs valid GCP credentials for project `clouve-develop`). The resulting leaf certs chain to a publicly-trusted root already in every browser's trust store, so `wss://` upgrades validate without any local CA-trust step. See [strato/cluster/k8s/manifests/clouve-e2e/cert-issuers/dev/](../../strato/cluster/k8s/manifests/clouve-e2e/cert-issuers/dev/) for the issuer manifest that gets copied into place by `cluster/action` (lines 122–127).
 
 **Fix (real prod clusters):** Same `dev`-style ACME ClusterIssuers — see the manifests linked above for working HTTP-01 / DNS-01 examples.
 
