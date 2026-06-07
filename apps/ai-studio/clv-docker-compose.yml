@@ -2,6 +2,12 @@ version: '3.8'
 
 services:
   ai-studio:
+    # When x-clouve-agent.enabled is true (see bottom of file), the thermo
+    # synthesizer mutates this Service to type: NodePort and adds an ssh
+    # AdditionalPort (22→22). The cluster surfaces SSH externally at
+    # nodes.studio.clouve.app:<assigned-NodePort> so developers can
+    # ssh -L tunnel raw-TCP traffic into the workspace. See the AI Studio
+    # dynamic port-forwarding design spec (in the clouve-app repo, docs/superpowers/specs/).
     image: ai-studio:latest
     environment:
       CLOUVE_OPS_PASSWORD: ai-studio-ops-password
