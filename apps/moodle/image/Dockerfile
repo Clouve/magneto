@@ -122,8 +122,15 @@ RUN cp /clouve/moodle/installer/clouve-ops-sshd.conf /etc/ssh/sshd_config.d/clou
 # Note: Cron configuration is done dynamically at runtime in entrypoint.sh
 # based on the MOODLE_CRON_INTERVAL environment variable
 
-# Download and extract Moodle
-ADD https://download.moodle.org/download.php/direct/stable${MOODLE_VERSION}/moodle-${MOODLE_RELEASE}.tgz ./moodle/installer/
+# Download and extract Moodle.
+# PINNED BUILD: the stable${MOODLE_VERSION} URL serves a *rolling* "latest 5.2.x"
+# tarball, so the sha256 below pins this image to ONE exact build —
+# 5.2 (Build: 20260420) / version 2026042000. If upstream publishes a newer 5.2.x
+# the build fails here (checksum mismatch) instead of silently shipping newer code
+# than tenant databases expect. To adopt a new build, bump MOODLE_VERSION/
+# MOODLE_RELEASE above and update this checksum in the same commit.
+ADD --checksum=sha256:48f0f521375006be84c227e6a595313ebcc9dc55455499b5150dcfe865782cfe \
+    https://download.moodle.org/download.php/direct/stable${MOODLE_VERSION}/moodle-${MOODLE_RELEASE}.tgz ./moodle/installer/
 RUN tar -xzf ./moodle/installer/moodle-${MOODLE_RELEASE}.tgz -C ./moodle/ && \
     mv ./moodle/moodle ./moodle/moodle-${MOODLE_RELEASE}
 

@@ -8,9 +8,25 @@ export MOODLE_INSTALL_PATH="/var/www/html"
 export MOODLE_PACKAGE_INSTALLER="/clouve/moodle/installer"
 export INSTALLED_VERSIONS_PATH="/var/www/html/clouve/installed"
 export MOODLEDATA_PATH="/var/moodledata"
+export INSTALLED_VERSION_STAMP="$INSTALLED_VERSIONS_PATH/version"
+
+# Read the integer Moodle code version ($version in version.php) from a code tree.
+# Moodle 5.1+ may nest the codebase under public/, so check there first.
+moodle_code_version() {
+  local root="$1" vf
+  for vf in "$root/public/version.php" "$root/version.php"; do
+    if [[ -f "$vf" ]]; then
+      sed -nE 's/^[[:space:]]*\$version[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p' "$vf" | head -1
+      return 0
+    fi
+  done
+}
+
+# Exact Moodle version baked into THIS image — the authoritative upgrade trigger.
+IMAGE_VERSION="$(moodle_code_version "$MOODLE_PACKAGE_PATH")"
 
 echo "TIMESTAMP=$TIMESTAMP"
-echo "MOODLE_VERSION=$MOODLE_RELEASE"
+echo "MOODLE_VERSION=$MOODLE_RELEASE (build $IMAGE_VERSION)"
 
 # Set Apache log level if specified
 if [[ $MOODLE_LOG_LEVEL ]]; then
@@ -36,8 +52,8 @@ if [[ ! -d "$INSTALLED_VERSIONS_PATH" ]]; then
 
   "$MOODLE_PACKAGE_INSTALLER"/install.sh
 
-  echo "Marking installed version $MOODLE_RELEASE ..."
-  touch "$INSTALLED_VERSIONS_PATH/$MOODLE_RELEASE"
+  echo "Marking installed version $MOODLE_RELEASE ($IMAGE_VERSION) ..."
+  echo "$IMAGE_VERSION" > "$INSTALLED_VERSION_STAMP"
   echo "$TIMESTAMP" > "$INSTALLED_VERSIONS_PATH/$MOODLE_RELEASE"
 
   echo "##################################################################"
@@ -171,15 +187,28 @@ if [[ ! -d "$INSTALLED_VERSIONS_PATH" ]]; then
   fi
 fi
 
-# Check if upgrade is needed
-if [[ ! -f "$INSTALLED_VERSIONS_PATH/$MOODLE_RELEASE" && -d "$MOODLE_PACKAGE_PATH" ]]; then
+# Check if an upgrade is needed by comparing the exact Moodle $version baked into
+# this image against the version recorded on the data volume. Keying on the exact
+# build (e.g. 2026042000) — not the coarse "5.2" release — means point-build bumps
+# are detected, and a pod restart can never silently run newer code than the DB.
+INSTALLED_VERSION="$(cat "$INSTALLED_VERSION_STAMP" 2>/dev/null || true)"
+
+# Back-compat: installs created before the version stamp existed are seeded from
+# the code currently on the volume so we don't trigger a spurious upgrade.
+if [[ -z "$INSTALLED_VERSION" && -f "$MOODLE_INSTALL_PATH/config.php" ]]; then
+  INSTALLED_VERSION="$(moodle_code_version "$MOODLE_INSTALL_PATH")"
+  [[ -n "$INSTALLED_VERSION" ]] && echo "$INSTALLED_VERSION" > "$INSTALLED_VERSION_STAMP"
+fi
+INSTALLED_VERSION="${INSTALLED_VERSION:-0}"
+
+if [[ -d "$MOODLE_PACKAGE_PATH" && -n "$IMAGE_VERSION" && "$IMAGE_VERSION" -gt "$INSTALLED_VERSION" ]]; then
   echo "##################################################################"
-  echo "UPGRADING Moodle to $MOODLE_RELEASE"
+  echo "UPGRADING Moodle $INSTALLED_VERSION -> $IMAGE_VERSION ($MOODLE_RELEASE)"
 
   "$MOODLE_PACKAGE_INSTALLER"/upgrade.sh
 
-  echo "Marking installed version $MOODLE_RELEASE ..."
-  touch "$INSTALLED_VERSIONS_PATH/$MOODLE_RELEASE"
+  echo "Marking installed version $MOODLE_RELEASE ($IMAGE_VERSION) ..."
+  echo "$IMAGE_VERSION" > "$INSTALLED_VERSION_STAMP"
   echo "$TIMESTAMP" > "$INSTALLED_VERSIONS_PATH/$MOODLE_RELEASE"
 
   echo "##################################################################"
