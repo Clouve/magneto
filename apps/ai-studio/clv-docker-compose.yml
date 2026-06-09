@@ -2,6 +2,13 @@ version: '3.8'
 services:
   ai-studio:
     image: r.clv.zone/e2eorg/ai-studio
+    # SSH-only workspace (sshd on :22) — there is no HTTP listener. The
+    # marketplace synthesizer auto-adds the ssh:22 Service port for
+    # magneto-agent access, so this is a vestigial "main" port: do NOT change
+    # it to '22:22' — the Service template renders the main port and the
+    # auto-added ssh port with no dedup, so :22 here would emit port 22 twice
+    # and produce an invalid Service. The public surface is the injected
+    # magneto-agent (the chat UI), hence isPublic:false below.
     ports:
       - '80:80'
     volumes:
@@ -11,16 +18,24 @@ services:
       - aistudiovar:/var
     x-clouve-metadata:
       containerName: ai-studio
-      purpose: Frontend
+      # Backend, not Frontend: ai-studio is an SSH-accessed app workspace the
+      # magneto-agent drives — it is not a user-facing web UI.
+      purpose: Backend
       protocol: TCP
-      isPublic: true
+      # Internal only. The agent (auto-injected, always public) is the single
+      # public container; the marketplace rule is "one public container, set
+      # the rest private". isPublic:true here wrongly minted a public NodePort +
+      # an Ingress to :80 (nothing listens there). false drops that dead Ingress;
+      # the Service + SSH NodePort the agent uses are added by the synthesizer
+      # regardless.
+      isPublic: false
       memoryBase: 1
       cpuBase: 0.5
     x-clouve-healthcheck:
       enabled: false
       type: HTTP
       path: /health
-      port: 0
+      port: 22
       initialDelay: 30
       interval: 10
       timeout: 5

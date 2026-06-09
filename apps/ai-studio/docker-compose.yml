@@ -42,7 +42,10 @@ services:
     container_name: ai_studio
     restart: unless-stopped
     ports:
-      - "${TEST_HTTP_PORT:-8080}:80"
+      # ai-studio runs sshd as its only listener (:22) — there is no HTTP
+      # server here. Publish SSH for direct dev-time poking; the Magneto Agent
+      # reaches ai-studio over the compose network, not via this host port.
+      - "${TEST_SSH_PORT:-2222}:22"
     environment:
       # Shared per-pod password for the clouve-ops shell account. The same
       # value is set on both services; the Magneto Agent container uses it to

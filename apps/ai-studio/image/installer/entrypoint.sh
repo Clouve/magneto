@@ -1,11 +1,14 @@
 #!/bin/bash
-# AI Studio entrypoint — PID 1.
+# AI Studio entrypoint.
+#
+# Invoked by the /clouve/init.sh bootstrap once it has seeded the persistent
+# volumes (see installer/init.sh). The bootstrap exec's us and we exec sshd,
+# so sshd still ends up as PID 1 — when it exits the container exits and
+# Kubernetes restarts it. Failing loudly is preferred over a
+# "running-but-unreachable" zombie.
 #
 # Unlike Moodle and other siblings where sshd runs in a background tree
 # alongside the main workload (apache/mysql), here sshd IS the workload.
-# Exec it directly as PID 1 — when sshd exits, the container exits and
-# Kubernetes restarts it. Failing loudly is preferred over a
-# "running-but-unreachable" zombie.
 #
 # Flow on each container start:
 #   1. Refuse to start if CLOUVE_OPS_PASSWORD is unset (agent can't reach
