@@ -42,7 +42,7 @@ services:
     container_name: ai_studio
     restart: unless-stopped
     ports:
-      - "${AI_STUDIO_SSH_PORT:-2222}:22"
+      - "${TEST_HTTP_PORT:-8080}:80"
     environment:
       # Shared per-pod password for the clouve-ops shell account. The same
       # value is set on both services; the Magneto Agent container uses it to
@@ -98,7 +98,7 @@ services:
       # no per-sibling CONTEXT.md.tpl), and runs each plugin's install.sh
       # hook (ai-studio installs openssh-client + sshpass; mern is a no-op).
       # The hooks are idempotent across restarts.
-      MAGNETO_AGENT_SKILLS: https://github.com/Clouve/magneto-skills.git?plugins=ai-studio,mern
+      MAGNETO_AGENT_SKILLS: https://github.com/Clouve/magneto-skills.git?plugins=ai-studio,mern#dynamic-port
       # MAGNETO_AGENT_SKILLS_GIT_TOKEN: ${MAGNETO_AGENT_SKILLS_GIT_TOKEN:-}
       # MAGNETO_AGENT_SKILLS_GIT_USERNAME: ${MAGNETO_AGENT_SKILLS_GIT_USERNAME:-}
 

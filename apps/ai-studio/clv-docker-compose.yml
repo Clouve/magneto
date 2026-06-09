@@ -1,78 +1,61 @@
 version: '3.8'
-
 services:
   ai-studio:
-    # When x-clouve-agent.enabled is true (see bottom of file), the thermo
-    # synthesizer mutates this Service to type: NodePort and adds an ssh
-    # AdditionalPort (22→22). The cluster surfaces SSH externally at
-    # nodes.studio.clouve.app:<assigned-NodePort> so developers can
-    # ssh -L tunnel raw-TCP traffic into the workspace. See the AI Studio
-    # dynamic port-forwarding design spec (in the clouve-app repo, docs/superpowers/specs/).
-    image: ai-studio:latest
-    environment:
-      CLOUVE_OPS_PASSWORD: ai-studio-ops-password
-    x-clouve-environment-types:
-      CLOUVE_OPS_PASSWORD: secret
+    image: r.clv.zone/e2eorg/ai-studio
+    ports:
+      - '80:80'
     volumes:
-      - ai-studio-home:/home
-      - ai-studio-usr:/usr
-      - ai-studio-opt:/opt
-      - ai-studio-var:/var
+      - aistudiohome:/home
+      - aistudiousr:/usr
+      - aistudioopt:/opt
+      - aistudiovar:/var
     x-clouve-metadata:
       containerName: ai-studio
-      purpose: Database
+      purpose: Frontend
       protocol: TCP
-      isPublic: false
-      memoryBase: 2
-      cpuBase: 1
-    x-clouve-bundle-metadata:
-      appVersion: '26.04'
-      appTitle: AI Studio
-      appDescription: A cloud-hosted blank Ubuntu 26.04 LTS server, operated by Clouve's AI assistant directly from your browser. Chat with the assistant; it installs software, writes code, runs services, and verifies deploys on the server for you — no manual SSH required. Includes the MERN-stack skill out of the box, so you can ask for a Node/Express + MongoDB + React app and have it built, configured, and running end-to-end. Adding more skills later (Python, Go, Docker, Kubernetes) is a one-line change to the deployment.
-      appIcon: /thermo/assets/Company/e2eorg/attachments/b104956a61c5528f-logo.png
+      isPublic: true
+      memoryBase: 1
+      cpuBase: 0.5
     x-clouve-healthcheck:
-      enabled: true
-      type: TCP
-      path: ''
-      port: 22
-      initialDelay: 10
-      interval: 30
+      enabled: false
+      type: HTTP
+      path: /health
+      port: 0
+      initialDelay: 30
+      interval: 10
       timeout: 5
-      failureThreshold: 5
+      failureThreshold: 3
       successThreshold: 1
-    healthcheck:
-      test: ['CMD', 'bash', '-c', 'exec 3<>/dev/tcp/127.0.0.1/22 && echo -e "\n" >&3 && head -c 4 <&3 | grep -q SSH']
-      interval: 30s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
     x-clouve-volumes:
-      - name: ai-studio-home
-        size: 10
-        description: Persistent volume for /home (user files, projects)
-      - name: ai-studio-usr
-        size: 10
-        description: Persistent volume for /usr (apt-installed binaries and libraries)
-      - name: ai-studio-opt
-        size: 10
-        description: Persistent volume for /opt (manually-installed software)
-      - name: ai-studio-var
-        size: 10
-        description: Persistent volume for /var (package db, cache, logs, app data, systemd state)
-
+      - name: aistudiohome
+        size: 8Gi
+        description: 'Volume from Docker Compose for ai-studio-ai-studio (original: ai_studio_home)'
+      - name: aistudiousr
+        size: 8Gi
+        description: 'Volume from Docker Compose for ai-studio-ai-studio (original: ai_studio_usr)'
+      - name: aistudioopt
+        size: 8Gi
+        description: 'Volume from Docker Compose for ai-studio-ai-studio (original: ai_studio_opt)'
+      - name: aistudiovar
+        size: 8Gi
+        description: 'Volume from Docker Compose for ai-studio-ai-studio (original: ai_studio_var)'
 volumes:
-  ai-studio-home: { driver: local }
-  ai-studio-usr:  { driver: local }
-  ai-studio-opt:  { driver: local }
-  ai-studio-var:  { driver: local }
-
+  aistudiohome:
+    driver: local
+  aistudiousr:
+    driver: local
+  aistudioopt:
+    driver: local
+  aistudiovar:
+    driver: local
 x-clouve-agent:
   enabled: true
   skills:
-    url: https://github.com/Clouve/magneto-skills.git?plugins=ai-studio,mern
+    url: https://github.com/Clouve/magneto-skills.git?plugins=ai-studio,mern#dynamic-port
     git:
       token: ''
       username: ''
   advanced:
     client: null
-    sidecarPullTimeout: 600
+    passthroughEnv:
+      CLV_SIDECAR_NAMESPACES: ai-studio
