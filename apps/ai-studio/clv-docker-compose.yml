@@ -1,16 +1,9 @@
 version: '3.8'
 services:
   ai-studio:
-    image: r.clv.zone/e2eorg/ai-studio
-    # SSH-only workspace (sshd on :22) — there is no HTTP listener. The
-    # marketplace synthesizer auto-adds the ssh:22 Service port for
-    # magneto-agent access, so this is a vestigial "main" port: do NOT change
-    # it to '22:22' — the Service template renders the main port and the
-    # auto-added ssh port with no dedup, so :22 here would emit port 22 twice
-    # and produce an invalid Service. The public surface is the injected
-    # magneto-agent (the chat UI), hence isPublic:false below.
+    image: r.clv.zone/e2eorg/ai-studio:latest
     ports:
-      - '80:80'
+      - '22:22'
     volumes:
       - aistudiohome:/home
       - aistudiousr:/usr
@@ -18,17 +11,9 @@ services:
       - aistudiovar:/var
     x-clouve-metadata:
       containerName: ai-studio
-      # Backend, not Frontend: ai-studio is an SSH-accessed app workspace the
-      # magneto-agent drives — it is not a user-facing web UI.
-      purpose: Backend
+      purpose: Frontend
       protocol: TCP
-      # Internal only. The agent (auto-injected, always public) is the single
-      # public container; the marketplace rule is "one public container, set
-      # the rest private". isPublic:true here wrongly minted a public NodePort +
-      # an Ingress to :80 (nothing listens there). false drops that dead Ingress;
-      # the Service + SSH NodePort the agent uses are added by the synthesizer
-      # regardless.
-      isPublic: false
+      isPublic: true
       memoryBase: 1
       cpuBase: 0.5
     x-clouve-healthcheck:
@@ -43,16 +28,16 @@ services:
       successThreshold: 1
     x-clouve-volumes:
       - name: aistudiohome
-        size: 8Gi
+        size: 8
         description: 'Volume from Docker Compose for ai-studio-ai-studio (original: ai_studio_home)'
       - name: aistudiousr
-        size: 8Gi
+        size: 8
         description: 'Volume from Docker Compose for ai-studio-ai-studio (original: ai_studio_usr)'
       - name: aistudioopt
-        size: 8Gi
+        size: 8
         description: 'Volume from Docker Compose for ai-studio-ai-studio (original: ai_studio_opt)'
       - name: aistudiovar
-        size: 8Gi
+        size: 8
         description: 'Volume from Docker Compose for ai-studio-ai-studio (original: ai_studio_var)'
 volumes:
   aistudiohome:
