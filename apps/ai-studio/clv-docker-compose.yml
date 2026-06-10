@@ -2,20 +2,8 @@ version: '3.8'
 services:
   ai-studio:
     image: r.clv.zone/e2eorg/ai-studio:latest
-    # :22 (sshd) is the workspace's only declared port, and it is NOT a public
-    # HTTP endpoint — it's the Magneto Agent's pod-internal path in, and the
-    # user's raw-TCP escape hatch. The workspace's public reachability is
-    # synthesizer-driven, not declared here:
-    #   - HTTP: any port a dev server binds on 0.0.0.0 (the seeded stack:
-    #     frontend 5173, API 4000, mongo-express 8081) is served through the
-    #     fleet clv-proxy at https://<port>-<workspace-id>.<base>/ behind the
-    #     Magneto Agent login. No per-pod nginx, no workspace ingress.
-    #   - Raw TCP (e.g. mongosh/Compass to MongoDB): the synthesizer makes
-    #     this Service type NodePort and publishes :22 as an "ssh" port, so
-    #     users `ssh -L` tunnel via nodes.<base>. See
-    #     docs/ai-studio-dynamic-port-forwarding-spec.md.
     ports:
-      - '22:22'
+      - '5173:5173'
     volumes:
       - aistudiohome:/home
       - aistudiousr:/usr
@@ -23,24 +11,11 @@ services:
       - aistudiovar:/var
     x-clouve-metadata:
       containerName: ai-studio
-      # Backend (a Deployment) with no ingress: the deployment's primary URL
-      # is the Magneto Agent chat, which the synthesizer always publishes;
-      # the workspace itself has no public HTTP port of its own.
-      purpose: Backend
+      purpose: Frontend
       protocol: TCP
-      isPublic: false
+      isPublic: true
       memoryBase: 2
       cpuBase: 0.5
-    # Probe sshd only — it is the agent's lifeline and supervisord's job is to
-    # keep the rest of the seeded stack (mongod, backend, frontend,
-    # mongo-express) up. Probing the dev servers here would fight the user:
-    # stopping or replacing the seed app must not get the pod killed.
-    # The block renders as BOTH liveness and readiness probes, so the shape
-    # is "ready fast, kill slow": a small initialDelay lets the Service (the
-    # agent's SSH path, clv-proxy's upstream, the NodePort tunnel) come back
-    # ~10s after an ordinary restart, while the high failureThreshold gives
-    # first boot a ~5min budget to restore the GB-scale volume snapshots
-    # (image/installer/init.sh) before liveness may kill the container.
     x-clouve-healthcheck:
       enabled: true
       type: TCP
@@ -51,6 +26,17 @@ services:
       timeout: 5
       failureThreshold: 30
       successThreshold: 1
+    healthcheck:
+      test:
+        - CMD
+        - nc
+        - '-z'
+        - localhost
+        - '22'
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
     x-clouve-volumes:
       - name: aistudiohome
         size: 8
