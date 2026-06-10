@@ -10,3 +10,4 @@ One line per non-obvious decision, newest last (convention: ISO date prefix).
 - 2026-06-10 MongoDB auth OFF; the 127.0.0.1 bind is the security boundary. Enable `security.authorization` before binding any non-loopback interface (mern skill rule).
 - 2026-06-10 mongo-express basic auth OFF on purpose — every clv-proxy port already sits behind the workspace login.
 - 2026-06-10 Backend dev runner is `node --env-file=.env --watch src/server.js` (no nodemon); restart `backend` after editing `.env`.
+- 2026-06-10 Homepage is a Clouve-branded landing page matching the Magneto Agent chat UI: same logo asset (`cdn.dev.clouve.com/assets/LogoClouve2026.svg` — renders alt text if the CDN is unreachable), same light-only color tokens (no dark mode, by design). Header pills poll `/api/v1/health` every 10 s; the notes widget stays as the live full-stack demo.

@@ -7,9 +7,12 @@ from the first message — extend it, gut it, or replace it.
 
 ## What it does
 
-A notes list. The React page fetches `/api/v1/notes`, Express reads/writes the
-`notes` collection in the `@SLUG@` database, and the page round-trips adds and
-deletes through the same route.
+A Clouve-branded landing page (logo + AI Studio badge in the header, live
+API/Mongo status pills, capability cards, how-to steps) with a working notes
+demo. The demo fetches `/api/v1/notes`, Express reads/writes the `notes`
+collection in the `@SLUG@` database, and the page round-trips adds and deletes
+through the same route — proof the whole stack is live. The header status
+pills poll `/api/v1/health` every 10 s.
 
 ## Layout
 
