@@ -62,7 +62,7 @@ volumes:
 x-clouve-agent:
   enabled: true
   skills:
-    url: https://github.com/Clouve/magneto-skills.git?plugins=ai-studio,mern#dynamic-port
+    url: https://github.com/Clouve/magneto-skills.git?plugins=ai-studio,mern#develop
     git:
       token: ''
       username: ''

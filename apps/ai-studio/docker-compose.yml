@@ -119,7 +119,7 @@ services:
       # no per-sibling CONTEXT.md.tpl), and runs each plugin's install.sh
       # hook (ai-studio installs openssh-client + sshpass; mern is a no-op).
       # The hooks are idempotent across restarts.
-      MAGNETO_AGENT_SKILLS: https://github.com/Clouve/magneto-skills.git?plugins=ai-studio,mern#dynamic-port
+      MAGNETO_AGENT_SKILLS: https://github.com/Clouve/magneto-skills.git?plugins=ai-studio,mern#develop
       # MAGNETO_AGENT_SKILLS_GIT_TOKEN: ${MAGNETO_AGENT_SKILLS_GIT_TOKEN:-}
       # MAGNETO_AGENT_SKILLS_GIT_USERNAME: ${MAGNETO_AGENT_SKILLS_GIT_USERNAME:-}
 
