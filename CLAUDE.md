@@ -26,6 +26,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ./build-uat.sh wordpress
 ```
 
+### Switch Registry Users
+Docker stores one credential per registry, and the Docker Desktop credential
+helper silently ignores overwrites — `docker login` as a new user "succeeds"
+but pushes keep using the old (project-scoped) robot. Always logout first:
+```bash
+./logout.sh                  # remove stored credential for r.clv.zone (default)
+./logout.sh my.registry.io   # ...or for another registry
+docker login r.clv.zone -u 'robot$<project>+<name>' -p '<secret>'
+```
+
 ### Start / Stop Applications
 ```bash
 # Start an app
