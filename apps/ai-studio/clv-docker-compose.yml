@@ -1,7 +1,7 @@
 version: '3.8'
 services:
   ai-studio:
-    image: r.clv.zone/e2eorg/ai-studio:latest
+    image: ai-studio:latest
     ports:
       - '5173:5173'
     volumes:
