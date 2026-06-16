@@ -1,11 +1,18 @@
 #!/bin/bash
-# AI Studio entrypoint — PID 1.
+# AI Studio entrypoint.
 #
-# Unlike Moodle and other siblings where sshd runs in a background tree
-# alongside the main workload (apache/mysql), here sshd IS the workload.
-# Exec it directly as PID 1 — when sshd exits, the container exits and
-# Kubernetes restarts it. Failing loudly is preferred over a
+# Invoked by the /clouve/init.sh bootstrap once it has seeded the persistent
+# volumes (see installer/init.sh). The bootstrap exec's us and we exec
+# supervisord, so supervisord ends up as PID 1 — when it exits the container
+# exits and Kubernetes restarts it. Failing loudly is preferred over a
 # "running-but-unreachable" zombie.
+#
+# Unlike Moodle and other siblings where one workload process is THE app,
+# this workspace runs a whole supervised stack: sshd (the Magneto Agent's
+# path in), mongod, the seed MERN project's backend + frontend dev servers,
+# and mongo-express. supervisord starts them all on every boot and restarts
+# any that die — see /etc/supervisor/supervisord.conf. There is no systemd
+# in this container.
 #
 # Flow on each container start:
 #   1. Refuse to start if CLOUVE_OPS_PASSWORD is unset (agent can't reach
@@ -15,7 +22,7 @@
 #      regenerate per pod. The agent disables StrictHostKeyChecking by
 #      convention; persisting host keys offers no security benefit here.
 #   3. Apply the per-pod operator password via chpasswd.
-#   4. exec sshd -D so it becomes PID 1.
+#   4. exec supervisord -n so it becomes PID 1 and brings up the stack.
 
 set -e
 
@@ -32,5 +39,9 @@ ssh-keygen -A >/dev/null 2>&1
 echo "$PREFIX Applying clouve-ops password from CLOUVE_OPS_PASSWORD"
 echo "clouve-ops:$CLOUVE_OPS_PASSWORD" | chpasswd
 
-echo "$PREFIX Starting sshd (PID 1) on :22"
-exec /usr/sbin/sshd -D -e
+# sshd's privilege-separation dir lives under /run (tmpfs on some platforms);
+# recreate it in case the image-baked one didn't survive the mount.
+mkdir -p /run/sshd
+
+echo "$PREFIX Starting supervisord (PID 1) — sshd, mongod, backend, frontend, mongo-express"
+exec /usr/bin/supervisord -n -c /etc/supervisor/supervisord.conf

@@ -1,10 +1,13 @@
 # Magneto Agent-powered AI Studio — local-dev variant of clv-docker-compose.yml.
 #
 # Two containers in one pod:
-#   ai-studio     — the blank Ubuntu 26.04 LTS workspace (image from apps/ai-studio/),
-#                   running sshd as PID 1. The user never reaches this directly; the
-#                   Magneto Agent SSHes in as `clouve-ops` (passwordless sudo) to
-#                   install software, write code, run services, and verify deploys.
+#   ai-studio     — the Ubuntu 26.04 LTS workspace (image from apps/ai-studio/),
+#                   pre-seeded with a running MERN starter: supervisord is PID 1
+#                   and keeps sshd, mongod, the Express API (:4000), the Vite
+#                   dev server (:5173) and mongo-express (:8081) up on every
+#                   boot. The Magneto Agent SSHes in as `clouve-ops`
+#                   (passwordless sudo) to iterate on the live app, install
+#                   software, run services, and verify deploys.
 #   magneto-agent — the upstream magneto-agent image used directly. Both the AI
 #                   Studio skill payload (operating principles, persistence rules,
 #                   SSH command shape) AND the MERN-stack knowledge layer are
@@ -42,7 +45,20 @@ services:
     container_name: ai_studio
     restart: unless-stopped
     ports:
-      - "${AI_STUDIO_SSH_PORT:-2222}:22"
+      # In a cluster deploy the seeded dev servers are reached through
+      # clv-proxy (https://<port>-<workspace-id>.<base>/); there is no
+      # clv-proxy in plain docker-compose, so publish them straight to the
+      # host for direct browser testing. SSH stays published for dev-time
+      # poking; the Magneto Agent reaches ai-studio over the compose network,
+      # not via these host ports.
+      - "${TEST_SSH_PORT:-2222}:22"
+      # Vite dev server (HMR) — the seeded React app
+      - "${TEST_FRONTEND_PORT:-5173}:5173"
+      # Express API — the seeded backend
+      - "${TEST_BACKEND_PORT:-4000}:4000"
+      # mongo-express DB browser. Host port 8082 because 8081 is taken by the
+      # magneto-agent chat UI below; in-container it stays on 8081.
+      - "${TEST_MONGO_EXPRESS_PORT:-8082}:8081"
     environment:
       # Shared per-pod password for the clouve-ops shell account. The same
       # value is set on both services; the Magneto Agent container uses it to
@@ -58,12 +74,17 @@ services:
       - ai_studio_var:/var
     networks:
       - ai_studio_network
+    # Healthy = the whole supervised stack answers: sshd accepting, the seeded
+    # API serving /api/v1/health with a live Mongo connection (the grep on
+    # its "mongo" readyState field is what actually proves mongod), and the
+    # Vite dev server serving the app. start_period covers first-boot volume
+    # seeding plus mongod + dev-server warmup.
     healthcheck:
-      test: ['CMD', 'bash', '-c', 'exec 3<>/dev/tcp/127.0.0.1/22 && echo -e "\n" >&3 && head -c 4 <&3 | grep -q SSH']
+      test: ['CMD', 'bash', '-c', 'exec 3<>/dev/tcp/127.0.0.1/22 && curl -fsS http://127.0.0.1:4000/api/v1/health | grep -q "\"mongo\":true" && curl -fsS http://127.0.0.1:5173/ >/dev/null']
       interval: 30s
-      timeout: 5s
+      timeout: 10s
       retries: 5
-      start_period: 10s
+      start_period: 90s
 
   magneto-agent:
     image: r.clv.zone/clouveinc/magneto-agent
@@ -98,7 +119,7 @@ services:
       # no per-sibling CONTEXT.md.tpl), and runs each plugin's install.sh
       # hook (ai-studio installs openssh-client + sshpass; mern is a no-op).
       # The hooks are idempotent across restarts.
-      MAGNETO_AGENT_SKILLS: https://github.com/Clouve/magneto-skills.git?plugins=ai-studio,mern
+      MAGNETO_AGENT_SKILLS: https://github.com/Clouve/magneto-skills.git?plugins=ai-studio,mern#develop
       # MAGNETO_AGENT_SKILLS_GIT_TOKEN: ${MAGNETO_AGENT_SKILLS_GIT_TOKEN:-}
       # MAGNETO_AGENT_SKILLS_GIT_USERNAME: ${MAGNETO_AGENT_SKILLS_GIT_USERNAME:-}
 
