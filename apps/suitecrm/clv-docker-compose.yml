@@ -1,7 +1,7 @@
 version: '3.8'
 services:
   suitecrm:
-    image: suitecrm:latest
+    image: suitecrm
     ports:
       - '80:80'
     environment:
@@ -63,7 +63,7 @@ services:
         size: 10
         description: Volume for SuiteCRM application files and data
   suitecrm-mariadb:
-    image: suitecrm-mariadb:latest
+    image: suitecrm-mariadb
     ports:
       - '3306:3306'
     environment:

@@ -458,13 +458,13 @@ cd magneto/dkr
 ### Image Details
 
 **Odoo Application Image:**
-- **Registry**: `r.clv.zone/e2eorg/odoo:latest`
+- **Registry**: `r.clv.zone/e2eorg/odoo`
 - **Base Image**: `odoo:17.0`
 - **Enhancements**: Custom entrypoint, bundled scripts, automatic initialization
 - **Platforms**: linux/amd64, linux/arm64
 
 **PostgreSQL Database Image:**
-- **Registry**: `r.clv.zone/e2eorg/odoo-postgres:latest`
+- **Registry**: `r.clv.zone/e2eorg/odoo-postgres`
 - **Base Image**: `postgres:16`
 - **Purpose**: Hosted in Clouve registry to avoid Docker Hub rate limits
 - **Platforms**: linux/amd64, linux/arm64

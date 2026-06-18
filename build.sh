@@ -683,7 +683,7 @@ if [ "$PUSH_IMAGES" = true ]; then
     if docker buildx build \
         --platform "$PLATFORMS" \
         --tag "$IMAGE_REGISTRY/$APP_IMAGE:$DATE_TAG" \
-        --tag "$IMAGE_REGISTRY/$APP_IMAGE:latest" \
+        --tag "$IMAGE_REGISTRY/$APP_IMAGE" \
         --provenance=false \
         --push \
         .; then
@@ -697,7 +697,7 @@ else
     if docker buildx build \
         --platform "$LOCAL_PLATFORM" \
         --tag "$IMAGE_REGISTRY/$APP_IMAGE:$DATE_TAG" \
-        --tag "$IMAGE_REGISTRY/$APP_IMAGE:latest" \
+        --tag "$IMAGE_REGISTRY/$APP_IMAGE" \
         --provenance=false \
         --load \
         .; then
@@ -739,7 +739,7 @@ if [ ${#CONTAINER_CONFIGS[@]} -gt 0 ]; then
             if docker buildx build \
                 --platform "$PLATFORMS" \
                 --tag "$IMAGE_REGISTRY/$image_name:$DATE_TAG" \
-                --tag "$IMAGE_REGISTRY/$image_name:latest" \
+                --tag "$IMAGE_REGISTRY/$image_name" \
                 --provenance=false \
                 --push \
                 "${dockerfile_args[@]}" \
@@ -754,7 +754,7 @@ if [ ${#CONTAINER_CONFIGS[@]} -gt 0 ]; then
             if docker buildx build \
                 --platform "$LOCAL_PLATFORM" \
                 --tag "$IMAGE_REGISTRY/$image_name:$DATE_TAG" \
-                --tag "$IMAGE_REGISTRY/$image_name:latest" \
+                --tag "$IMAGE_REGISTRY/$image_name" \
                 --provenance=false \
                 --load \
                 "${dockerfile_args[@]}" \
@@ -789,7 +789,7 @@ else
     echo "$DISPLAY_NAME Image Tags (Platform: $LOCAL_PLATFORM):"
 fi
 echo "  - $IMAGE_REGISTRY/$APP_IMAGE:$DATE_TAG"
-echo "  - $IMAGE_REGISTRY/$APP_IMAGE:latest"
+echo "  - $IMAGE_REGISTRY/$APP_IMAGE"
 echo ""
 
 # Show all container image tags
@@ -802,7 +802,7 @@ for config in "${CONTAINER_CONFIGS[@]}"; do
         echo "$display_name Image Tags (Platform: $LOCAL_PLATFORM):"
     fi
     echo "  - $IMAGE_REGISTRY/$image_name:$DATE_TAG"
-    echo "  - $IMAGE_REGISTRY/$image_name:latest"
+    echo "  - $IMAGE_REGISTRY/$image_name"
     echo ""
 done
 

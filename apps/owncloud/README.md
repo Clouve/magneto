@@ -23,13 +23,13 @@ The bundle follows the established Clouve patterns:
 ## Container Structure
 
 ### Main Application Container (`owncloud`)
-- **Base Image**: `owncloud/server:latest`
+- **Base Image**: `owncloud/server`
 - **Port**: 8080 (HTTP)
 - **Purpose**: Frontend application server
 - **Data Volume**: `/mnt/data` - stores all ownCloud files and configuration
 
 ### Database Container (`owncloud-mariadb`)
-- **Base Image**: `mariadb:latest`
+- **Base Image**: `mariadb`
 - **Port**: 3306
 - **Purpose**: Database server
 - **Data Volume**: `/var/lib/mysql` - stores database files

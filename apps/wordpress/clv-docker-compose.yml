@@ -1,7 +1,7 @@
 version: '3.8'
 services:
   wordpress:
-    image: wordpress:latest
+    image: wordpress
     ports:
       - '80:80'
     environment:
@@ -68,7 +68,7 @@ services:
         size: 10
         description: 'Volume from Docker Compose for wordpress-wordpress (original: wordpress_data)'
   wordpress-mariadb:
-    image: wordpress-mariadb:latest
+    image: wordpress-mariadb
     ports:
       - '3306:3306'
     environment:

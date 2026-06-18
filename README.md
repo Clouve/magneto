@@ -195,7 +195,7 @@ For database containers, you can often use a simple re-packaging Dockerfile:
 
 ```dockerfile
 # mariadb/Dockerfile
-FROM mariadb:latest
+FROM mariadb
 
 LABEL maintainer="Your Team"
 LABEL description="MariaDB database for MyApp"
@@ -634,12 +634,12 @@ Build for multiple architectures using Docker Buildx:
 
 ```bash
 # Build for local architecture only
-docker buildx build --platform linux/amd64 -t myapp:latest .
+docker buildx build --platform linux/amd64 -t myapp .
 
 # Build for multiple architectures and push
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  -t registry.example.com/myapp:latest \
+  -t registry.example.com/myapp \
   --push .
 ```
 
@@ -654,7 +654,7 @@ source ./image/build.config
 # Build main application image
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  -t "${REGISTRY}/${APP_IMAGE}:latest" \
+  -t "${REGISTRY}/${APP_IMAGE}" \
   --push \
   ./image
 
@@ -662,7 +662,7 @@ docker buildx build \
 if [ -d "./image/mariadb" ]; then
   docker buildx build \
     --platform linux/amd64,linux/arm64 \
-    -t "${REGISTRY}/${MARIADB_IMAGE}:latest" \
+    -t "${REGISTRY}/${MARIADB_IMAGE}" \
     --push \
     ./image/mariadb
 fi

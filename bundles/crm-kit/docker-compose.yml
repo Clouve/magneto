@@ -14,7 +14,7 @@ volumes:
 services:
   # LimeSurvey MariaDB Database
   limesurvey-mariadb:
-    image: r.clv.zone/e2eorg/limesurvey-mariadb:latest
+    image: r.clv.zone/e2eorg/limesurvey-mariadb
     container_name: crm_kit_limesurvey_mariadb
     restart: unless-stopped
     environment:
@@ -34,7 +34,7 @@ services:
 
   # LimeSurvey Application
   limesurvey:
-    image: r.clv.zone/e2eorg/limesurvey:latest
+    image: r.clv.zone/e2eorg/limesurvey
     container_name: crm_kit_limesurvey_app
     restart: unless-stopped
     depends_on:
@@ -82,7 +82,7 @@ services:
 
   # SuiteCRM MariaDB Database
   suitecrm-mariadb:
-    image: r.clv.zone/e2eorg/suitecrm-mariadb:latest
+    image: r.clv.zone/e2eorg/suitecrm-mariadb
     container_name: crm_kit_suitecrm_mariadb
     restart: unless-stopped
     environment:
@@ -102,7 +102,7 @@ services:
 
   # SuiteCRM Application
   suitecrm:
-    image: r.clv.zone/e2eorg/suitecrm:latest
+    image: r.clv.zone/e2eorg/suitecrm
     container_name: crm_kit_suitecrm_app
     restart: unless-stopped
     depends_on:

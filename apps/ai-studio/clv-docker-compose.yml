@@ -1,7 +1,7 @@
 version: '3.8'
 services:
   ai-studio:
-    image: ai-studio:latest
+    image: ai-studio
     ports:
       - '5173:5173'
     volumes:

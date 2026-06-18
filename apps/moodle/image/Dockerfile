@@ -38,7 +38,7 @@ RUN useradd --create-home --shell /bin/bash --comment "Clouve operator (Claude C
     chmod 0440 /etc/sudoers.d/clouve-ops
 
 # Install Composer (required for Moodle 5.1+ dependencies)
-COPY --from=composer:latest /usr/bin/composer /usr/local/bin/composer
+COPY --from=composer /usr/bin/composer /usr/local/bin/composer
 
 # Install PHP extensions required by Moodle
 ADD https://github.com/mlocati/docker-php-extension-installer/releases/latest/download/install-php-extensions /usr/local/bin/

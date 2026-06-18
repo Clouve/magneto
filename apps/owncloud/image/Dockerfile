@@ -1,7 +1,7 @@
 # Custom ownCloud Docker Image
 # Extends the official ownCloud image with custom initialization
 
-FROM owncloud/server:latest
+FROM owncloud/server
 
 # Set labels for documentation
 LABEL maintainer="Clouve Team"

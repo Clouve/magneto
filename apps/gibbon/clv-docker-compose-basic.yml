@@ -1,7 +1,7 @@
 version: '3.8'
 services:
   gibbon:
-    image: gibbon:latest
+    image: gibbon
     ports:
       - '80:80'
     environment:
@@ -81,7 +81,7 @@ services:
         size: 10
         description: 'Volume from Docker Compose for gibbon (original: gibbon_data)'
   gibbon-mysql:
-    image: gibbon-mysql:latest
+    image: gibbon-mysql
     ports:
       - '3306:3306'
     environment:

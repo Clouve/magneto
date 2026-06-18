@@ -17,7 +17,7 @@ image/
 
 ## Images
 
-### 1. Odoo Application Image (`r.clv.zone/e2eorg/odoo:latest`)
+### 1. Odoo Application Image (`r.clv.zone/e2eorg/odoo`)
 
 **Base Image:** `odoo:19.0`
 
@@ -40,7 +40,7 @@ image/
 3. Run installation script if first-time setup
 4. Start Odoo server
 
-### 2. PostgreSQL Database Image (`r.clv.zone/e2eorg/odoo-postgres:latest`)
+### 2. PostgreSQL Database Image (`r.clv.zone/e2eorg/odoo-postgres`)
 
 **Base Image:** `postgres:18`
 
@@ -64,7 +64,7 @@ image/
 ```bash
 cd magneto/dkr/apps/odoo/image
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -t r.clv.zone/e2eorg/odoo:latest \
+  -t r.clv.zone/e2eorg/odoo \
   -t r.clv.zone/e2eorg/odoo:19.0 \
   --push .
 ```
@@ -73,7 +73,7 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 ```bash
 cd magneto/dkr/apps/odoo/image/db
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -t r.clv.zone/e2eorg/odoo-postgres:latest \
+  -t r.clv.zone/e2eorg/odoo-postgres \
   -t r.clv.zone/e2eorg/odoo-postgres:18 \
   --push .
 ```
@@ -380,11 +380,11 @@ Alternatively, use `pg_upgrade` for in-place upgrades (advanced users only).
 docker login r.clv.zone
 
 # Push Odoo image
-docker push r.clv.zone/e2eorg/odoo:latest
+docker push r.clv.zone/e2eorg/odoo
 docker push r.clv.zone/e2eorg/odoo:19.0
 
 # Push PostgreSQL image
-docker push r.clv.zone/e2eorg/odoo-postgres:latest
+docker push r.clv.zone/e2eorg/odoo-postgres
 docker push r.clv.zone/e2eorg/odoo-postgres:18
 ```
 
@@ -392,8 +392,8 @@ docker push r.clv.zone/e2eorg/odoo-postgres:18
 
 ```bash
 # Pull latest versions
-docker pull r.clv.zone/e2eorg/odoo:latest
-docker pull r.clv.zone/e2eorg/odoo-postgres:latest
+docker pull r.clv.zone/e2eorg/odoo
+docker pull r.clv.zone/e2eorg/odoo-postgres
 
 # Pull specific versions
 docker pull r.clv.zone/e2eorg/odoo:19.0
