@@ -35,7 +35,7 @@ RUN apt-get update && apt-get -y upgrade && \
     && echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen && locale-gen
 
 # Install Composer (required for SuiteCRM 8 dependencies)
-COPY --from=composer:latest /usr/bin/composer /usr/local/bin/composer
+COPY --from=composer /usr/bin/composer /usr/local/bin/composer
 
 # Install PHP extensions required by SuiteCRM 8
 ADD https://github.com/mlocati/docker-php-extension-installer/releases/latest/download/install-php-extensions /usr/local/bin/

@@ -230,13 +230,13 @@ cd magneto/dkr
 ### Image Details
 
 **n8n Application Image:**
-- **Registry**: `r.clv.zone/e2eorg/n8n:latest`
+- **Registry**: `r.clv.zone/e2eorg/n8n`
 - **Base Image**: `n8nio/n8n:2.12.3`
 - **Enhancements**: Custom entrypoint, bundled scripts, automatic initialization
 - **Platforms**: linux/amd64, linux/arm64
 
 **PostgreSQL Database Image:**
-- **Registry**: `r.clv.zone/e2eorg/n8n-postgres:latest`
+- **Registry**: `r.clv.zone/e2eorg/n8n-postgres`
 - **Base Image**: `postgres:18`
 - **Purpose**: Hosted in Clouve registry to avoid Docker Hub rate limits
 - **Platforms**: linux/amd64, linux/arm64

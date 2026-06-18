@@ -1,7 +1,7 @@
 version: '3.8'
 services:
   owncloud:
-    image: owncloud:latest
+    image: owncloud
     ports:
       - '8080:8080'
     environment:
@@ -66,7 +66,7 @@ services:
         size: 10
         description: Volume for ownCloud application data and files
   owncloud-mariadb:
-    image: owncloud-mariadb:latest
+    image: owncloud-mariadb
     ports:
       - '3306:3306'
     environment:
@@ -105,7 +105,7 @@ services:
         size: 10
         description: Volume for MariaDB database data
   owncloud-redis:
-    image: owncloud-redis:latest
+    image: owncloud-redis
     ports:
       - '6379:6379'
     environment:

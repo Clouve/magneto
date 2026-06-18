@@ -2,7 +2,7 @@
 # This Dockerfile uses the official MariaDB latest image as the base
 # and is built as a multi-platform image to avoid Docker Hub rate limits
 
-FROM mariadb:latest
+FROM mariadb
 
 # Metadata
 LABEL maintainer="Clouve Platform"

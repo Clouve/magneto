@@ -4,7 +4,7 @@ version: '3.8'
 # rationale; this file is the Clouve marketplace projection of the same pod.
 services:
   moodle:
-    image: moodle:latest
+    image: moodle
     ports:
       - '80:80'
     environment:
@@ -80,7 +80,7 @@ services:
         size: 10
         description: Volume for Moodle user data files
   moodle-mysql:
-    image: moodle-mysql:latest
+    image: moodle-mysql
     ports:
       - '3306:3306'
     environment:

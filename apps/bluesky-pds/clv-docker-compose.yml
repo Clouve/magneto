@@ -1,7 +1,7 @@
 version: '3.8'
 services:
   bluesky-pds:
-    image: bluesky-pds:latest
+    image: bluesky-pds
     ports:
       - '3000:3000'
     environment:
