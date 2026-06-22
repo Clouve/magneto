@@ -285,7 +285,6 @@ services:
       appVersion: '5.2'
       appTitle: Moodle
       appDescription: Moodle is a leading open-source learning management system (LMS) that empowers schools, colleges, and universities with a flexible, scalable platform for high-quality online education. Its user-friendly interface and customizable modules enable engaging, interactive courses tailored to diverse learning styles, with robust features for course management, assessments, grading, and analytics. Strong community support and continuous updates keep Moodle secure and reliable—ideal for institutions seeking to foster collaboration, streamline administration, and improve educational outcomes. In this Education Kit bundle, Moodle is paired with Clouve's AI Assistant, bringing AI-driven course development support, intelligent learner guidance, and conversational tutoring directly into the classroom—so educators can spend less time on setup and more time teaching.
-      appIcon: /thermo/assets/Company/clouveinc327/attachments/2e5465c63e12ebd6-moodle.png
     x-clouve-healthcheck:
       enabled: true
       type: HTTP

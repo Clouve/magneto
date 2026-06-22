@@ -102,7 +102,6 @@ services:
       appVersion: 30.0.01
       appTitle: Gibbon
       appDescription: Gibbon is an intuitive, open-source school management platform designed to revolutionize the way educational institutions operate. Tailored to meet the diverse needs of schools, Gibbon offers a comprehensive suite of tools for managing administrative tasks, tracking student progress, and facilitating effective communication among teachers, students, and parents. Its user-friendly interface and customizable modules streamline operations such as timetabling, attendance, and grade reporting. By enhancing organization and efficiency, Gibbon empowers educators to focus on delivering high-quality education, fostering an enriched learning environment, and ultimately supporting student success.
-      appIcon: /thermo/assets/Company/clouveinc327/attachments/15a52686bee90504-gibbon.png
     x-clouve-healthcheck:
       enabled: true
       type: HTTP
@@ -286,7 +285,6 @@ services:
       appVersion: '5.2'
       appTitle: Moodle
       appDescription: Moodle is a leading open-source learning management system (LMS) designed to empower educational institutions with a flexible and scalable platform for delivering high-quality online education. Renowned for its user-friendly interface and extensive customization options, Moodle enables schools, colleges, and universities to create engaging, interactive courses that cater to diverse learning styles. Its robust features include course management, assessments, grading, and analytics, all designed to enhance the teaching and learning experience. With strong community support and continuous updates, Moodle ensures a secure and reliable environment, making it an ideal solution for institutions seeking to foster collaboration, streamline administration, and improve educational outcomes.
-      appIcon: /thermo/assets/Company/clouveinc327/attachments/2e5465c63e12ebd6-moodle.png
     x-clouve-healthcheck:
       enabled: true
       type: HTTP
