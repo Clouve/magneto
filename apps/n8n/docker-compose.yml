@@ -10,7 +10,7 @@ volumes:
 
 services:
   n8n-postgres:
-    image: r.clv.zone/e2eorg/n8n-postgres:latest
+    image: r.clv.zone/e2eorg/n8n-postgres
     container_name: n8n_postgres
     restart: unless-stopped
     environment:
@@ -32,7 +32,7 @@ services:
       retries: 10
 
   n8n:
-    image: r.clv.zone/e2eorg/n8n:latest
+    image: r.clv.zone/e2eorg/n8n
     container_name: n8n_app
     restart: unless-stopped
     ports:

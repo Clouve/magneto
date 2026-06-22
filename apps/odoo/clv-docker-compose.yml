@@ -1,7 +1,7 @@
 version: '3.8'
 services:
   odoo:
-    image: odoo:latest
+    image: odoo
     ports:
       - '8069:8069'
     environment:
@@ -65,7 +65,7 @@ services:
         size: 10
         description: Volume for Odoo custom addons
   odoo-postgres:
-    image: odoo-postgres:latest
+    image: odoo-postgres
     ports:
       - '5432:5432'
     environment:

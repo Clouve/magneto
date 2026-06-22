@@ -1,7 +1,7 @@
 version: '3.8'
 services:
   ai-studio:
-    image: ai-studio:latest
+    image: ai-studio
     ports:
       - '5173:5173'
     volumes:
@@ -62,7 +62,7 @@ volumes:
 x-clouve-agent:
   enabled: true
   skills:
-    url: https://github.com/Clouve/magneto-skills.git?plugins=ai-studio,mern#develop
+    url: https://github.com/Clouve/magneto-skills.git?plugins=ai-studio,mern
     git:
       token: ''
       username: ''

@@ -1,7 +1,7 @@
 version: '3.8'
 services:
   n8n:
-    image: n8n:latest
+    image: n8n
     ports:
       - '5678:5678'
     environment:
@@ -55,7 +55,6 @@ services:
       appVersion: 2.12.3
       appTitle: n8n
       appDescription: n8n is a powerful workflow automation platform that connects your apps and services to automate repetitive tasks without writing code. With over 400 native integrations, n8n enables you to build complex workflows using a visual editor, trigger automations based on events, schedules, or webhooks, and transform data between systems. Its self-hosted architecture gives you full control over your data and infrastructure. Whether you need to sync data between CRMs, automate notifications, process forms, or orchestrate complex business processes, n8n provides a flexible and extensible platform that scales with your needs.
-      appIcon: /thermo/assets/Company/clouveinc8/attachments/fe01a28dd743eb9d-logo.png
     x-clouve-healthcheck:
       enabled: true
       type: HTTP
@@ -82,7 +81,7 @@ services:
         size: 20
         description: Volume for n8n workflow data and credentials
   n8n-postgres:
-    image: n8n-postgres:latest
+    image: n8n-postgres
     ports:
       - '5432:5432'
     environment:

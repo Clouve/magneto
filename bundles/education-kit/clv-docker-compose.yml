@@ -1,7 +1,7 @@
 version: '3.8'
 services:
   gibbon:
-    image: gibbon:latest
+    image: gibbon
     ports:
       - '80:80'
     environment:
@@ -128,7 +128,7 @@ services:
         size: 10
         description: 'Volume from Docker Compose for gibbon (original: gibbon_data)'
   gibbon-mysql:
-    image: gibbon-mysql:latest
+    image: gibbon-mysql
     ports:
       - '3306:3306'
     environment:
@@ -165,7 +165,7 @@ services:
         size: 10
         description: 'Volume from Docker Compose for gibbon-mysql (original: gibbon_db_data)'
   moodle:
-    image: moodle:latest
+    image: moodle
     ports:
       - '80:80'
     environment:
@@ -285,7 +285,6 @@ services:
       appVersion: '5.2'
       appTitle: Moodle
       appDescription: Moodle is a leading open-source learning management system (LMS) that empowers schools, colleges, and universities with a flexible, scalable platform for high-quality online education. Its user-friendly interface and customizable modules enable engaging, interactive courses tailored to diverse learning styles, with robust features for course management, assessments, grading, and analytics. Strong community support and continuous updates keep Moodle secure and reliable—ideal for institutions seeking to foster collaboration, streamline administration, and improve educational outcomes. In this Education Kit bundle, Moodle is paired with Clouve's AI Assistant, bringing AI-driven course development support, intelligent learner guidance, and conversational tutoring directly into the classroom—so educators can spend less time on setup and more time teaching.
-      appIcon: /thermo/assets/Company/clouveinc327/attachments/2e5465c63e12ebd6-moodle.png
     x-clouve-healthcheck:
       enabled: true
       type: HTTP
@@ -315,7 +314,7 @@ services:
         size: 10
         description: Volume for Moodle user data files
   moodle-mysql:
-    image: moodle-mysql:latest
+    image: moodle-mysql
     ports:
       - '3306:3306'
     environment:

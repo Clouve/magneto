@@ -1,7 +1,7 @@
 version: '3.8'
 services:
   limesurvey:
-    image: limesurvey:latest
+    image: limesurvey
     ports:
       - '8080:8080'
     environment:
@@ -74,7 +74,7 @@ services:
         size: 10
         description: Volume for LimeSurvey uploaded files and surveys
   limesurvey-mariadb:
-    image: limesurvey-mariadb:latest
+    image: limesurvey-mariadb
     ports:
       - '3306:3306'
     environment:

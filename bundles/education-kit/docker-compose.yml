@@ -18,7 +18,7 @@ volumes:
 services:
   # Gibbon MySQL Database
   gibbon-mysql:
-    image: r.clv.zone/e2eorg/gibbon-mysql:latest
+    image: r.clv.zone/e2eorg/gibbon-mysql
     container_name: education_kit_gibbon_mysql
     restart: unless-stopped
     environment:
@@ -45,7 +45,7 @@ services:
 
   # Gibbon Application
   gibbon:
-    image: r.clv.zone/e2eorg/gibbon:latest
+    image: r.clv.zone/e2eorg/gibbon
     container_name: education_kit_gibbon_app
     restart: unless-stopped
     depends_on:
@@ -134,7 +134,7 @@ services:
 
   # Moodle MySQL Database
   moodle-mysql:
-    image: r.clv.zone/e2eorg/moodle-mysql:latest
+    image: r.clv.zone/e2eorg/moodle-mysql
     container_name: education_kit_moodle_mysql
     restart: unless-stopped
     environment:
@@ -156,7 +156,7 @@ services:
 
   # Moodle Application
   moodle:
-    image: r.clv.zone/e2eorg/moodle:latest
+    image: r.clv.zone/e2eorg/moodle
     container_name: education_kit_moodle_app
     restart: unless-stopped
     depends_on:
@@ -271,7 +271,7 @@ services:
   # start, and CONTEXT.md.tpl files are pulled from the gibbon and moodle
   # side containers via clouve-ops SSH (sidecar-fetcher).
   magneto-agent:
-    image: r.clv.zone/clouveinc/magneto-agent:latest
+    image: r.clv.zone/clouveinc/magneto-agent
     container_name: education_kit_magneto_agent
     restart: unless-stopped
     depends_on:
