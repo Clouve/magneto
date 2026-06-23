@@ -16,8 +16,8 @@ These applications work together to provide a comprehensive platform for custome
 ### One-Command Deployment (Recommended)
 
 ```bash
-# From magneto/dkr directory
-cd magneto/dkr
+# From magneto directory
+cd magneto
 ./start.sh crm-kit
 ```
 
@@ -27,7 +27,7 @@ cd magneto/dkr
 
 ```bash
 # From within the bundle directory
-cd magneto/dkr/bundles/crm-kit
+cd magneto/bundles/crm-kit
 
 # Start all services (will pull images automatically)
 docker-compose up -d
@@ -135,14 +135,14 @@ Database containers are internal only (`isPublic: false`).
 ### Stop the Bundle
 
 ```bash
-cd magneto/dkr/bundles/crm-kit
+cd magneto/bundles/crm-kit
 docker-compose down
 ```
 
 ### Stop and Remove All Data
 
 ```bash
-cd magneto/dkr/bundles/crm-kit
+cd magneto/bundles/crm-kit
 docker-compose down -v
 ```
 
@@ -173,7 +173,7 @@ docker-compose restart suitecrm
 Edit `docker-compose.yml` to customize environment variables for your organization:
 
 ```bash
-cd magneto/dkr/bundles/crm-kit
+cd magneto/bundles/crm-kit
 nano docker-compose.yml  # or use your preferred editor
 ```
 
@@ -348,10 +348,8 @@ You should see:
 ### Integration Documentation
 
 For detailed documentation, see:
-- **Plugin Documentation**: `magneto/dkr/apps/limesurvey/SuiteCRMIntegration/README.md`
-- **Installation Guide**: `magneto/dkr/apps/limesurvey/SuiteCRMIntegration/INSTALLATION.md`
-- **Field Mapping Guide**: `magneto/dkr/apps/limesurvey/SuiteCRMIntegration/FIELD_MAPPING_GUIDE.md`
-- **Quick Start**: `magneto/dkr/apps/limesurvey/SuiteCRMIntegration/QUICKSTART.md`
+- **Plugin Documentation**: `magneto/apps/limesurvey/image/installer/SuiteCRMIntegration/README.md`
+- **Field Mapping Guide**: `magneto/apps/limesurvey/image/installer/SuiteCRMIntegration/FIELD_MAPPING_GUIDE.md`
 
 ### Disable Integration
 

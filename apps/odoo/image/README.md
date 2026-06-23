@@ -11,7 +11,7 @@ image/
 ├── installer/
 │   ├── entrypoint.sh            # Main entrypoint script
 │   └── install.sh               # Installation/initialization script
-└── db/
+└── postgres/
     └── Dockerfile               # Custom PostgreSQL image
 ```
 
@@ -62,7 +62,7 @@ image/
 
 **Build Odoo image:**
 ```bash
-cd magneto/dkr/apps/odoo/image
+cd magneto/apps/odoo/image
 docker buildx build --platform linux/amd64,linux/arm64 \
   -t r.clv.zone/e2eorg/odoo \
   -t r.clv.zone/e2eorg/odoo:19.0 \
@@ -71,7 +71,7 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 
 **Build PostgreSQL image:**
 ```bash
-cd magneto/dkr/apps/odoo/image/db
+cd magneto/apps/odoo/image/postgres
 docker buildx build --platform linux/amd64,linux/arm64 \
   -t r.clv.zone/e2eorg/odoo-postgres \
   -t r.clv.zone/e2eorg/odoo-postgres:18 \
@@ -82,8 +82,8 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 
 The `build.config` file defines:
 - `APP_IMAGE="odoo"` - Application image name
-- `DB_IMAGE="odoo-postgres"` - Database image name
-- `DB_NAME="PostgreSQL"` - Human-readable database name
+- `POSTGRES_IMAGE="odoo-postgres"` - Database image name
+- `POSTGRES_NAME="PostgreSQL"` - Human-readable database name
 
 This configuration is used by build scripts to automate the image building process.
 
@@ -250,7 +250,7 @@ The Odoo custom images follow the same patterns as the WordPress bundle:
 
 ```bash
 # Build images locally
-cd magneto/dkr/apps/odoo
+cd magneto/apps/odoo
 docker-compose build
 
 # Start containers

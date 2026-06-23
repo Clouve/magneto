@@ -85,7 +85,7 @@ owncloud/
 To build the Docker images:
 
 ```bash
-cd magneto/dkr
+cd magneto
 ./build.sh owncloud
 ```
 
@@ -96,7 +96,7 @@ This will build both the application and database images.
 For local development and testing:
 
 ```bash
-cd magneto/dkr/apps/owncloud
+cd magneto/apps/owncloud
 docker compose up -d
 ```
 

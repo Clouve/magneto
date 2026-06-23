@@ -43,7 +43,7 @@ suitecrm/
 
 1. Build and start the containers:
    ```bash
-   cd magneto/dkr/apps/suitecrm
+   cd magneto/apps/suitecrm
    docker-compose up -d
    ```
 
