@@ -30,10 +30,10 @@ echo -e "${YELLOW}[INFO]${NC} Odoo version: 19.0"
 echo -e "${YELLOW}[INFO]${NC} Waiting for PostgreSQL to be ready..."
 
 # Extract database connection details from environment variables
-DB_HOST="${POSTGRES_DB_HOST:-db}"
+DB_HOST="${ODOO_DB_HOST:-db}"
 DB_PORT="${DB_PORT:-5432}"
-DB_USER="${POSTGRES_DB_USER:-odoo}"
-DB_PASSWORD="${POSTGRES_DB_PASSWORD:-odoo}"
+DB_USER="${ODOO_DB_USER:-odoo}"
+DB_PASSWORD="${ODOO_DB_PASSWORD:-odoo}"
 
 max_attempts=60
 attempt=0
