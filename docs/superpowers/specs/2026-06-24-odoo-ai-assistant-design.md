@@ -63,6 +63,11 @@ These were settled with the requester before design:
    master-password-gated DB manager for create/drop/backup/restore. Raw `psql` is
    read-mostly; DDL and multi-row writes are gated behind explicit confirmation
    (mirroring gibbon's "no destructive SQL without ack").
+5. **The skill is authored against the actual Odoo 19.0 source** at `.research/odoo`,
+   not generic Odoo knowledge. Every `reference/`/`playbooks/` claim is grounded in
+   specific source files (cited in the appendix). The persona facts in section F were
+   verified the same way, which corrected several initial assumptions (filestore path
+   shape, logs-to-stderr, `odoo`≡`odoo-bin`, the `admin_passwd` footgun).
 
 ## Change set
 
@@ -196,44 +201,122 @@ Mirror moodle's local-dev compose (prod is synthesized by thermo; this is parity
 New file; the subdir name `odoo` **must** equal the plugin name (the tar-merge and
 composer key off it). Use gibbon's `CONTEXT.md.tpl` as the skeleton — keep the
 safety-gate, skill-maintenance, persistence-echo, and scope-guardrail sections
-(`s/Gibbon/Odoo/`, `~/.claude/skills/odoo/`) — then make it Odoo/Postgres-specific:
+(`s/Gibbon/Odoo/`, `~/.claude/skills/odoo/`) — then make it Odoo/Postgres-specific.
+All Odoo facts below are verified against the `.research/odoo` source (Odoo 19.0
+FINAL); see the **Odoo 19.0 ground-truth** appendix for source citations.
 
 - **Topology:** `${ODOO_HOST}` (Odoo 19.0 server, port 8069),
-  `${ODOO_DB_HOST}` (PostgreSQL 18, schema `${ODOO_DB_NAME}`, user `${ODOO_DB_USER}`,
-  password `${ODOO_DB_PASSWORD}`), and the magneto-agent container.
+  `${ODOO_DB_HOST}` (PostgreSQL — image base `postgres:18`; Odoo requires PG ≥ 13 —
+  database `${ODOO_DB_NAME}`, user `${ODOO_DB_USER}`, password `${ODOO_DB_PASSWORD}`),
+  and the magneto-agent container.
+- **CLI:** `odoo` and `odoo-bin` are the **same** entrypoint (both shim
+  `odoo.cli.main()`). Subcommands: `server` (default), `shell`, `db`, `module`,
+  `neutralize`, `scaffold`, `populate`, `deploy`.
 - **DB tooling:** `psql` / `pg_dump` / `pg_restore` — **not** mysql/mysqldump.
 - **Operational posture (Odoo-native):** module install/upgrade via
-  `odoo -d <db> -u <module> --stop-after-init` and `odoo shell` (run as the `odoo`
-  user); create/drop/backup/restore via the master-password-gated DB manager. Raw
-  `psql` read-mostly; gate DDL and multi-row writes behind an explicit ack.
-- **Sacred data / never-touch:** posted accounting moves (`account.move` in `posted`
-  state), `ir_model_data` and `ir_*` config, and the filestore at
-  `/var/lib/odoo/filestore` (the DB references it by hash). A consistent backup is
-  the SQL dump **plus** a tar of the filestore.
-- **Secrets:** treat `${ODOO_MASTER_PASSWORD}` like the `ANTHROPIC_API_KEY` — never
-  print/transmit; never expose `/web/database/manager` publicly.
-- **Process/log model (NOT apache2):** Odoo is the container's main process
-  (`exec /entrypoint-original.sh odoo …`). Do **not** restart by killing PID 1; a
-  full restart is a pod/container restart, and module upgrades are separate one-shot
-  `odoo-bin` invocations. Logs go to stdout, not `/var/log/apache2`.
-- **Third-party addons:** vet before installing into `/mnt/extra-addons` (arbitrary
-  Python with full DB access).
-- **Upstream refs:** <https://www.odoo.com/documentation/> and
-  <https://github.com/odoo/odoo>; pin Odoo 19.0.
+  `odoo-bin -d <db> -u <module> --stop-after-init` (or `-i` to install; both require
+  `-d`, are CLI-only, mutate, and need `--stop-after-init` for one-shot) — or the
+  `odoo-bin module install|upgrade|uninstall -d <db>` subcommands. Data fixes via
+  `odoo shell` **with an explicit `env.cr.commit()`** (the shell rolls back before
+  *and* after the session, so uncommitted changes are silently lost). Raw `psql`
+  read-mostly; gate DDL and multi-row writes behind an explicit ack.
+- **Backups are filestore-aware (most safety-critical):** prefer
+  `odoo-bin db dump <db> <out.zip>` — it produces the canonical ZIP of `dump.sql`
+  (`pg_dump --no-owner`) + `filestore/` + `manifest.json`, is filestore-aware, and
+  **bypasses the master password**. A hand-rolled `pg_dump` alone is **incomplete**:
+  it omits the per-DB filestore (binary attachments; missing files then read back as
+  empty `b''` silently) and the manifest. The filestore lives at
+  `<data_dir>/filestore/<dbname>` = `/var/lib/odoo/filestore/<dbname>` in this image
+  (entrypoint sets `data_dir = /var/lib/odoo`), content-addressed `sha1[:2]/sha1`.
+  Restore/clone via `odoo-bin db load -n <db> <zip>` (refuses to overwrite; `-n`
+  neutralizes).
+- **Sacred / never-touch via raw SQL** (all integrity is ORM/Python-enforced, no DB
+  triggers — raw SQL corrupts silently and unrepairably): `account_move` /
+  `account_move_line` (posted entries: SHA-256 hash chain, gapless sequence, lock
+  dates, audit trail — undo only via reversal/credit note, never delete/edit);
+  `ir_model_data` (XML-ID ↔ res_id backbone); `ir_model`/`ir_model_fields`;
+  `ir_module_module.state` (recover stuck states via
+  `button_reset_state()`/`reset_modules_state()`, never hand-pick); `ir_sequence` +
+  reconciliation tables; protected `ir_config_parameter` keys
+  (`database.secret`, `database.uuid`, `web.base.url`, `base.login_cooldown_*`).
+  Module **uninstall** is irreversible (`DROP TABLE/COLUMN CASCADE` + cascade to
+  dependents) — only undo is restore-from-backup.
+- **Secrets / DB-manager hardening:** treat `${ODOO_MASTER_PASSWORD}` (Odoo's
+  `admin_passwd`, templated into `/etc/odoo/odoo.conf` by the entrypoint) like the
+  API key. The 8 `/web/database/*` routes are `auth='none'` (mutating ones
+  `csrf=False`), gated **only** by `admin_passwd` — and while it is still the default
+  `'admin'` the first submitted password is silently adopted. The real kill-switch is
+  `list_db=False` (`--no-database-list`) **plus** a pinned `db_name`/`dbfilter`; the
+  manager GET page still returns 200 with a banner when disabled, so verify lockdown
+  via the POST endpoints and block the `/web/database/` prefix at the ingress.
+- **Process/log model:** Odoo is the container's main process / PID 1 (default
+  `workers=0` threaded server, `exec /entrypoint-original.sh odoo …`). `SIGTERM` is
+  graceful (a second forces exit), `SIGHUP` re-execs — so a restart is a
+  pod/container recycle, **not** signalling PID 1; module upgrades are separate
+  one-shot `odoo-bin` invocations. Logs go to **stderr** (no `--logfile` set) — read
+  via `kubectl logs` / `docker logs`. There is no Apache/`/var/log/apache2` and the
+  systemd `/var/log/odoo` path is unused in the container.
+- **Prod→staging clones must be neutralized:** `odoo-bin neutralize -d <db>`
+  (`--stdout` to audit first) disables mail servers, all crons (except autovacuum),
+  payment providers, and webhooks, and sets `database.is_neutralized=true`.
+- **Third-party addons:** vet before installing into `/mnt/extra-addons` (already on
+  `addons_path`; runs arbitrary Python with full DB access).
+- **Upstream refs:** <https://www.odoo.com/documentation/19.0/> and
+  <https://github.com/odoo/odoo> (branch `19.0`); pin Odoo 19.0.
 
 ### G. `magneto-skills` `odoo` plugin (separate repo)
 
-- **New `plugins/odoo/`** modeled on `plugins/moodle/` and `plugins/gibbon/`:
-  - `.claude-plugin/plugin.json`;
-  - `install.sh` that apt-installs the skill's runtime deps
-    (`postgresql-client`, `openssh-client`, `sshpass`) — idempotent across restarts;
-  - `skills/odoo/` tree: `SKILL.md` (frontmatter per `magneto-skills/CLAUDE.md`),
-    `reference/` (incl. the Odoo never-touch list), `playbooks/` (upgrade, module
-    install, backup, restore, diagnose-500, rotate-credentials, harden), `scripts/`
-    (audited `backup.sh` / `verify-health.sh`, Postgres + filestore aware),
-    `learnings.md`.
+Modeled on `plugins/moodle/` and `plugins/gibbon/`, and authored **against the
+`.research/odoo` source** — every reference/playbook file is grounded in specific
+Odoo 19.0 source files (cited in the **Odoo 19.0 ground-truth** appendix), not
+generic Odoo lore. Conventions per `magneto-skills/CLAUDE.md`: plugin dir name =
+`plugin.json` `name` = `SKILL.md` frontmatter `name` = `marketplace.json` entry =
+`odoo`; the `description` is kept in sync across all three; `marketplace.json`
+`plugins[]` stays alphabetically sorted (odoo sorts **after** moodle).
+
+- **`.claude-plugin/plugin.json`** — `name`/`version`/`description`/`author` (minimal).
+- **`install.sh`** — dpkg-gated, idempotent, runs as root (copy moodle's/gibbon's
+  shape), but with `REQUIRED_PACKAGES=(postgresql-client openssh-client sshpass)`
+  (**not** `default-mysql-client`): `postgresql-client` for `psql`/`pg_dump`;
+  `openssh-client` + `sshpass` for the `clouve-ops` SSH hop.
+- **`skills/odoo/SKILL.md`** — frontmatter `name: odoo`, `description` (precise
+  "use when… do not use for…"), `type: devops`, `version`, `authoredAgainst: odoo 19.0`.
+  Body: when/when-not-to-use; the golden rules (odoo≡odoo-bin; one-shot `-i`/`-u`
+  with `--stop-after-init`; a backup is the DB dump **and** the filestore; `odoo shell`
+  needs `env.cr.commit()`; never raw-SQL accounting/`ir_model_data`; never expose
+  `/web/database/*`; restart = pod recycle); environment (`${ODOO_HOST}`,
+  `${ODOO_DB_*}`, the `clouve-ops` SSH channel); a safety-gates table; the
+  "Maintaining this skill" + persistence-echo sections; and a pointer index into
+  `reference/` + `playbooks/`.
+
+The `skills/odoo/` tree (each file derived from the cited Odoo source):
+
+| File | Grounded in |
+|---|---|
+| `reference/stack-and-runtime.md` | `odoo/release.py`, `odoo-bin`, `setup/odoo`, `odoo/cli/command.py`, `odoo/service/server.py` |
+| `reference/configuration.md` | `odoo/tools/config.py` (admin_passwd, list_db, dbfilter, proxy_mode, data_dir, addons_path, workers, logfile) |
+| `reference/data-model.md` | `addons/base/models/ir_model.py`, `ir_config_parameter.py`, `ir_module.py`, `ir_cron.py`, `res_users.py` — incl. the never-touch list |
+| `reference/file-storage.md` | `odoo/addons/base/models/ir_attachment.py`, `odoo/tools/config.py` (filestore = `<data_dir>/filestore/<dbname>`) |
+| `reference/backup-restore.md` | `odoo/service/db.py`, `odoo/cli/db.py`, `addons/web/controllers/database.py` (ZIP layout, restore detection, CLI vs HTTP) |
+| `reference/security.md` | `addons/web/controllers/database.py`, `odoo/service/db.py`, `odoo/http.py` (DB-manager hardening, proxy_mode, cookies) |
+| `reference/module-lifecycle.md` | `odoo/cli/module.py`, `odoo/modules/{loading,migration}.py`, `odoo/orm/registry.py`, `ir_module.py` |
+| `reference/accounting-integrity.md` | `addons/account/models/{account_move,account_move_line,sequence_mixin,company,account_journal}.py` |
+| `reference/neutralization.md` | `odoo/cli/neutralize.py`, `odoo/modules/neutralize.py`, `addons/base/data/neutralize.sql` |
+| `reference/observability.md` | `odoo/netsvc.py`, `odoo/tools/config.py` (stderr logging, `--log-handler MODULE:LEVEL`) |
+| `reference/shell-access.md` | `odoo/cli/shell.py` (SUPERUSER env, rollback-unless-commit) + the `clouve-ops` SSH channel |
+| `playbooks/install-or-upgrade-module.md` | `odoo/cli/module.py`, `ir_module.py` |
+| `playbooks/backup.md` | `odoo/cli/db.py`, `odoo/service/db.py` |
+| `playbooks/restore-and-clone.md` | `odoo/cli/db.py`, `odoo/modules/neutralize.py` |
+| `playbooks/harden-db-manager.md` | `odoo/tools/config.py`, `addons/web/controllers/database.py` |
+| `playbooks/recover-stuck-module-state.md` | `ir_module.py`, `odoo/modules/loading.py` |
+| `playbooks/safe-data-fix.md` | `odoo/cli/shell.py`, `account_move.py`, `ir_model.py` |
+| `scripts/backup.sh` | wraps `odoo-bin db dump`; pg_dump+filestore-tar fallback |
+| `scripts/restore.sh` | wraps `odoo-bin db load -n`; guards against overwriting a prod-named DB |
+| `scripts/check-hash-integrity.sh` | pipes `env['res.company']._check_hash_integrity()` to `odoo shell` |
+| `learnings.md` | captured operator learnings (per the dedup/edit rules) |
+
 - **Register** the plugin in `magneto-skills/.claude-plugin/marketplace.json`
-  (alongside `ai-studio`, `gibbon`, `mern`, `moodle`).
+  (alphabetically after `moodle`), `category: DevOps`, with the same `description`.
 
 ## Out of scope / non-goals
 
@@ -267,6 +350,20 @@ safety-gate, skill-maintenance, persistence-echo, and scope-guardrail sections
    safety rules. Acceptable per "full parity" decision, but noted.
 6. **Two SSH-script copies can drift** (app `installer/` vs `postgres/`). Keep them
    identical.
+7. **`admin_passwd` default-`admin` footgun.** The DB-manager routes are `auth='none'`
+   and, while `admin_passwd` is still `'admin'`, the first submitted password is
+   silently adopted. The image entrypoint templates `${ODOO_MASTER_PASSWORD}` into
+   `admin_passwd`, so the secret must always be set; the skill's harden-db-manager
+   playbook also sets `list_db=False` + pinned `db_name`/`dbfilter` and assumes the
+   `/web/database/` prefix is blocked at the ingress.
+8. **`pg_dump`-only backups silently lose data.** A backup that omits the per-DB
+   filestore at `/var/lib/odoo/filestore/<dbname>` looks complete but loses all binary
+   attachments (missing files read back as empty). The skill must prefer
+   `odoo-bin db dump` and, in the manual fallback, always tar the filestore too.
+9. **Raw-SQL accounting edits are unrepairable.** Posted `account.move` integrity is
+   ORM-only (hash chain, gapless sequence, lock dates) with no DB triggers, so a
+   single raw `UPDATE`/`DELETE` corrupts the journal's hash prefix with no repair path.
+   The persona/skill must route all accounting changes through reversals, never SQL.
 
 ## Verification
 
@@ -280,3 +377,60 @@ safety-gate, skill-maintenance, persistence-echo, and scope-guardrail sections
   substitutions), and `~/.claude/skills/odoo/SKILL.md` is present after the loader
   stages the `magneto-skills` plugin.
 - `grep -rn 'POSTGRES_DB_' apps/odoo/image/installer apps/odoo/*.yml` returns nothing.
+- In the running agent, the grounded skill works end-to-end against the live instance:
+  `odoo-bin db dump <db> /tmp/x.zip` yields a ZIP containing `dump.sql` +
+  `filestore/` + `manifest.json`; `odoo shell` ORM access works; `odoo-bin neutralize
+  --stdout -d <db>` prints the expected SQL.
+- `claude plugin validate .` passes in `magneto-skills` (or the manual checks:
+  `odoo` dir/`plugin.json`/`SKILL.md`/`marketplace.json` names all match; description
+  in sync), confirming the plugin is well-formed before publish.
+
+## Appendix — Odoo 19.0 ground-truth (source-cited)
+
+The skill and persona are built against the `.research/odoo` checkout
+(`odoo/release.py`: `version_info = (19, 0, 0, FINAL, 0)`; Python 3.10–3.14; PG ≥ 13).
+Key load-bearing facts and their sources:
+
+- **Entrypoints:** `odoo` ≡ `odoo-bin` — both shim `odoo.cli.main()` (`odoo-bin`,
+  `setup/odoo`, `setup.py:23`). Subcommands auto-register in `odoo/cli/` (`command.py`).
+- **Module lifecycle:** `-i`/`-u` require `-d`, are CLI-only, mutate, and need
+  `--stop-after-init` for one-shot (`tools/config.py:227-232,431-432`). Uninstall does
+  `DROP TABLE/COLUMN CASCADE` + cascades (`ir_model.py:2454-2626`,
+  `ir_module.py:668-680`). Stuck `to install/upgrade/remove` states recover via
+  `button_reset_state()`/`reset_modules_state()` (`ir_module.py:494-500`,
+  `modules/loading.py:611-632`) — never hand-edit `ir_module_module.state`.
+- **Backup/restore:** `dump_db` builds a ZIP = `dump.sql` (`pg_dump --no-owner`) +
+  `filestore/` + `manifest.json` (`service/db.py:262-313`); `--format dump` is
+  custom-format PG-only (no filestore). Restore is `psql -f` for ZIP, `pg_restore`
+  otherwise, with **no** version check at restore time (`service/db.py:331-382`). The
+  CLI `db` subcommand forces `list_db=True` and bypasses the master password
+  (`cli/db.py:198`). Filestore = `<data_dir>/filestore/<dbname>`
+  (`tools/config.py:1028-1029`), content-addressed `sha1[:2]/sha1`, missing files read
+  as empty `b''` (`ir_attachment.py:131-155`).
+- **DB-manager security:** 8 `/web/database/*` routes all `auth='none'`, mutating ones
+  `csrf=False`, gated only by `admin_passwd` (default `'admin'`, auto-adopts first
+  submitted) (`addons/web/controllers/database.py:59-185`, `service/db.py:60-63,510-521`,
+  `tools/config.py:207`). `list_db=False` is the real kill-switch but needs a pinned
+  `db_name`/`dbfilter` (`service/db.py:46-53`, `config.py:412-415`).
+- **Accounting inalterability:** `account.move`/`account.move.line` integrity (SHA-256
+  hash chain `restrict_mode_hash_table`, gapless `sequence.mixin`, lock dates incl.
+  irreversible `hard_lock_date`, `restrictive_audit_trail` — DE always, IN) is
+  ORM/Python-only, no DB triggers; undo is reversal/credit note `_reverse_moves`
+  (`account_move.py:3892-3898,4736-4768,5441-5485`; `company.py:559-566,994-1085`;
+  `sequence_mixin.py:17-86`).
+- **Protected `ir_config_parameter` keys:** `database.secret`, `database.uuid`,
+  `database.create_date`, `web.base.url`, `base.login_cooldown_*`
+  (`ir_config_parameter.py:18-25,110-125`); `web.base.url` auto-rewrites to the next
+  system-user login host unless `web.base.url.freeze` (`res_users.py:803-810`).
+- **Process/logging:** `workers=0` ⇒ threaded server is PID 1; `SIGTERM` graceful
+  (second forces exit), `SIGHUP` re-execs (`service/server.py:464-484,1591-1619`).
+  Default logging is StreamHandler→**stderr** (`netsvc.py:232-275`); the container
+  sets no `--logfile`, so read logs via `kubectl/docker logs`.
+- **Neutralization:** `neutralize` runs each module's `data/neutralize.sql`
+  (`cli/neutralize.py`, `modules/neutralize.py`); base disables mail servers + crons
+  (except autovacuum) + webhooks and sets `database.is_neutralized=true`.
+- **Shell:** `odoo shell` runs as SUPERUSER and `cr.rollback()` **before and after** —
+  changes need an explicit `env.cr.commit()` (`cli/shell.py:147-149`).
+
+> Full reader output (8 agents, ~564k tokens) is archived at the deep-study workflow
+> result; this appendix is the distilled, load-bearing subset.
