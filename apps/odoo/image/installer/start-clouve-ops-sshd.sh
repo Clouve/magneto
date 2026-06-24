@@ -14,7 +14,7 @@
 #      prod). Apply it to the clouve-ops user via chpasswd.
 #   3. Replace the script process with `sshd -D` so SSH is the only thing
 #      running in this background tree — when the container's main process
-#      (odoo / mysqld) exits, sshd is reaped along with it.
+#      (odoo / postgres) exits, sshd is reaped along with it.
 #
 # Idempotent: re-running on container restart re-generates host keys
 # (skipped if present), re-applies the same password, and re-execs sshd.
