@@ -30,7 +30,7 @@ per-pod password in `CLOUVE_OPS_PASSWORD` (already in your env — never echo or
 transmit it). Use `sshpass -e`:
 
 ```bash
-export SSHPASS=${CLOUVE_OPS_PASSWORD}
+export SSHPASS=$(printenv CLOUVE_OPS_PASSWORD)
 sshpass -e ssh clouve-ops@${ODOO_HOST}            # the Odoo app container
 sshpass -e ssh clouve-ops@${ODOO_DB_HOST}         # the PostgreSQL container
 sshpass -e ssh clouve-ops@${ODOO_HOST} "sudo tail -50 /var/log/..."  # one-shot
@@ -96,9 +96,9 @@ These rules apply to *every* Odoo-touching action.
    block); do not re-enable it.
 9. **A "restart" is a pod/container recycle, not a signal to PID 1.** Odoo is
    the container's main process; module upgrades are separate one-shot
-   `odoo-bin … --stop-after-init` invocations, not a restart. Logs go to
-   **stderr** (read via the platform's log view) — there is no httpd and no
-   `/var/log/httpd` here.
+   `odoo-bin … --stop-after-init` invocations, not a restart. Odoo serves
+   directly on port 8069 — there is no separate web-server daemon and no HTTP
+   access-log file; Odoo logs go to **stderr** (read via the platform's log view).
 10. **Any non-production clone must be neutralized** before use:
     `odoo-bin neutralize -d <db>` (`--stdout` to audit first) disables mail
     servers, crons, payment providers, and webhooks. Never run a clone that can
