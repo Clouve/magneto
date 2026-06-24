@@ -795,7 +795,8 @@ operator mirrors it into magneto-skills and the next image rebuild bakes it in.
 - [ ] **Step 2: Verify every `${...}` placeholder is a real, resolvable var name**
 
 Run: `grep -oE '\$\{[A-Z_]+\}' apps/odoo/image/context/odoo/CONTEXT.md.tpl | sort -u`
-Expected: only `${ODOO_HOST}`, `${ODOO_DB_HOST}`, `${ODOO_DB_NAME}`, `${ODOO_DB_USER}`, `${ODOO_DB_PASSWORD}`, `${ODOO_MASTER_PASSWORD}`, `${CLOUVE_OPS_PASSWORD}` — every one of which is set on the odoo service (`ODOO_*` after Task 7/9, `CLOUVE_OPS_PASSWORD` after Task 10) and so survives env-fetcher namespacing. No stray `${...}` (e.g. no leftover `${GIBBON_*}` / `${MOODLE_*}`).
+Expected: only the SIX safe-to-render vars `${ODOO_HOST}`, `${ODOO_DB_HOST}`, `${ODOO_DB_NAME}`, `${ODOO_DB_USER}`, `${ODOO_DB_PASSWORD}`, `${ODOO_MASTER_PASSWORD}` — all set on the odoo service (`ODOO_*` after Task 7/9). No stray `${...}` (e.g. no leftover `${GIBBON_*}` / `${MOODLE_*}`).
+**`CLOUVE_OPS_PASSWORD` must NOT appear as a `${...}` placeholder.** The persona is rendered through a single `envsubst` pass, so `${CLOUVE_OPS_PASSWORD}` would bake the per-pod SSH secret into the rendered CLAUDE.md (and contradicts the persona's own "never transmit it" rule). Reference it via `$(printenv CLOUVE_OPS_PASSWORD)` (command substitution, evaluated at shell-run time) exactly as gibbon's persona does — so `grep -c 'printenv CLOUVE_OPS_PASSWORD'` is ≥ 1 and `grep -c '\${CLOUVE_OPS_PASSWORD}'` is 0. (The DB/master passwords ARE rendered as `${...}`, matching gibbon's `${GIBBON_DB_PASSWORD}` — the agent needs them and the CLAUDE.md lives in the tenant's private agent container.)
 
 Run: `grep -ci 'gibbon\|moodle\|mysql\|apache' apps/odoo/image/context/odoo/CONTEXT.md.tpl`
 Expected: `0` (no reference-app leftovers).
