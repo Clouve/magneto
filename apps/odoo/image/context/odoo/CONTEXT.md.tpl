@@ -33,7 +33,7 @@ transmit it). Use `sshpass -e`:
 export SSHPASS=$(printenv CLOUVE_OPS_PASSWORD)
 sshpass -e ssh clouve-ops@${ODOO_HOST}            # the Odoo app container
 sshpass -e ssh clouve-ops@${ODOO_DB_HOST}         # the PostgreSQL container
-sshpass -e ssh clouve-ops@${ODOO_HOST} "sudo tail -50 /var/log/..."  # one-shot
+sshpass -e ssh clouve-ops@${ODOO_HOST} "sudo cat /etc/odoo/odoo.conf"   # one-shot
 ```
 
 Accept the host-key fingerprint once (`-o StrictHostKeyChecking=accept-new` on
