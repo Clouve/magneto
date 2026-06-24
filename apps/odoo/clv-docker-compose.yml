@@ -5,18 +5,20 @@ services:
     ports:
       - '8069:8069'
     environment:
-      POSTGRES_DB_HOST: odoo-postgres
-      POSTGRES_DB_USER: odoo
-      POSTGRES_DB_PASSWORD: odoo-postgres-password
+      ODOO_HOST: odoo
+      ODOO_DB_HOST: odoo-postgres
+      ODOO_DB_USER: odoo
+      ODOO_DB_PASSWORD: odoo-postgres-password
       ODOO_URL: http://localhost
       ODOO_DB_NAME: odoo
       ODOO_MASTER_PASSWORD: odoo-master-password
       ODOO_ADMIN_EMAIL: '{user.userEmail}'
       ODOO_ADMIN_PASSWORD: odoo-admin-password
     x-clouve-environment-types:
-      POSTGRES_DB_HOST: containerReference
-      POSTGRES_DB_USER: static
-      POSTGRES_DB_PASSWORD: secret
+      ODOO_HOST: containerReference
+      ODOO_DB_HOST: containerReference
+      ODOO_DB_USER: static
+      ODOO_DB_PASSWORD: secret
       ODOO_URL: applicationUrl
       ODOO_DB_NAME: static
       ODOO_MASTER_PASSWORD: secret
@@ -34,8 +36,8 @@ services:
       cpuBase: 1
     x-clouve-bundle-metadata:
       appVersion: '19.0'
-      appTitle: Odoo
-      appDescription: Odoo is a comprehensive, open-source suite of business applications designed to streamline and optimize every aspect of your operations. From CRM and accounting to inventory and human resources, Odoo offers an integrated solution that enhances efficiency and productivity. Its modular design allows businesses to customize and scale the platform according to their specific needs, ensuring a perfect fit for any industry. With an intuitive interface and robust features, Odoo simplifies complex processes, supports data-driven decision-making, and promotes seamless collaboration across departments. By centralizing business functions in one unified system, Odoo empowers businesses to achieve greater agility, growth, and success.
+      appTitle: Odoo with AI Assistant
+      appDescription: "Odoo is a comprehensive, open-source suite of business applications — CRM, accounting, inventory, HR and more — in one integrated, modular ERP. This edition adds a built-in AI Assistant: a browser-based Claude Code DevOps agent that operates your live Odoo instance through natural language — installing and upgrading modules, taking filestore-aware backups, diagnosing issues, and hardening the deployment — with safety gates that require explicit confirmation before any destructive or irreversible action. You own your Odoo data and your AI provider key."
     x-clouve-healthcheck:
       enabled: true
       type: HTTP
@@ -106,3 +108,13 @@ volumes:
     driver: local
   odoo-postgres-data:
     driver: local
+x-clouve-agent:
+  enabled: true
+  skills:
+    url: https://github.com/Clouve/magneto-skills.git?plugins=odoo
+    git:
+      token: ''
+      username: ''
+  advanced:
+    client: null
+    sidecarPullTimeout: 600
