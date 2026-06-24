@@ -140,6 +140,14 @@ if [ -f /clouve/odoo/installer/update-config.sh ]; then
 fi
 
 # ============================================================================
+# CLOUVE-OPS SSHD: shell channel for the Magneto Agent container's Claude Code
+# ============================================================================
+# Backgrounded — applies the per-pod CLOUVE_OPS_PASSWORD to the clouve-ops user
+# via chpasswd, then exec's sshd -D in its own background tree. Dies with the
+# container when odoo (PID 1, via the exec below) exits.
+/clouve/odoo/installer/start-clouve-ops-sshd.sh &
+
+# ============================================================================
 # STEP 5: Start Odoo
 # ============================================================================
 
