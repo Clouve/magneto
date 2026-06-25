@@ -219,11 +219,11 @@ The n8n bundle uses custom Docker images hosted in the Clouve registry. To build
 
 ```bash
 # Local build (single platform - current architecture)
-cd magneto/dkr
+cd magneto
 ./build.sh n8n
 
 # Build and push to registry (multi-platform: amd64 + arm64)
-cd magneto/dkr
+cd magneto
 ./build.sh n8n --push
 ```
 
@@ -244,7 +244,7 @@ cd magneto/dkr
 ### Image Structure
 
 ```
-magneto/dkr/apps/n8n/image/
+magneto/apps/n8n/image/
 ├── Dockerfile                    # Custom n8n image
 ├── build.config                  # Build configuration
 ├── installer/

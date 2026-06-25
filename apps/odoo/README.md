@@ -5,7 +5,7 @@ Odoo deployment for Clouve marketplace using custom Docker images. Odoo is a com
 ## Overview
 
 This bundle includes:
-- **Odoo 17.0**: Latest stable version with modern features
+- **Odoo 19.0**: Latest stable version with modern features
 - **PostgreSQL 16**: Reliable and performant database backend
 - **Custom Docker Images**: Production-ready images with automatic initialization
 - **Security Configuration**: Pre-configured master password protection
@@ -67,7 +67,7 @@ volumes:
 ## Features
 
 ### Core Features
-- **Odoo 17.0**: Latest stable version with modern features
+- **Odoo 19.0**: Latest stable version with modern features
 - **PostgreSQL 16**: Reliable and performant database backend
 - **Modular Architecture**: Install only the apps you need
 - **Automated Installation**: Easy setup on first run
@@ -284,7 +284,7 @@ docker-compose exec odoo-postgres pg_dump -U odoo postgres > backup.sql
 2. Update the image version in `docker-compose.yml`:
 ```yaml
 odoo:
-  image: odoo:18.0  # or desired version
+  image: odoo:19.0  # or desired version
 ```
 
 3. Restart the containers:
@@ -447,11 +447,11 @@ The Odoo bundle uses custom Docker images hosted in the Clouve registry. To buil
 
 ```bash
 # Local build (single platform - current architecture)
-cd magneto/dkr
+cd magneto
 ./build.sh odoo
 
 # Build and push to registry (multi-platform: amd64 + arm64)
-cd magneto/dkr
+cd magneto
 ./build.sh odoo --push
 ```
 
@@ -459,7 +459,7 @@ cd magneto/dkr
 
 **Odoo Application Image:**
 - **Registry**: `r.clv.zone/e2eorg/odoo`
-- **Base Image**: `odoo:17.0`
+- **Base Image**: `odoo:19.0`
 - **Enhancements**: Custom entrypoint, bundled scripts, automatic initialization
 - **Platforms**: linux/amd64, linux/arm64
 
@@ -472,20 +472,20 @@ cd magneto/dkr
 ### Image Structure
 
 ```
-magneto/dkr/apps/odoo/image/
+magneto/apps/odoo/image/
 ├── Dockerfile                    # Custom Odoo image
 ├── build.config                  # Build configuration
 ├── installer/
 │   ├── entrypoint.sh            # Main entrypoint script
 │   └── install.sh               # Installation script
-└── db/
+└── postgres/
     └── Dockerfile               # Custom PostgreSQL image
 ```
 
 ## Support
 
 For Odoo-specific issues, consult:
-- [Odoo Documentation](https://www.odoo.com/documentation/17.0/)
+- [Odoo Documentation](https://www.odoo.com/documentation/19.0/)
 - [Odoo Community Forums](https://www.odoo.com/forum)
 - [Odoo GitHub Repository](https://github.com/odoo/odoo)
 

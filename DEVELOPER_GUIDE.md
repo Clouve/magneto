@@ -5,7 +5,7 @@ This directory contains shared management scripts for Docker Compose application
 ## Directory Structure
 
 ```
-marketplace/dkr/
+magneto/
 ├── apps/              # Individual applications (Gibbon, Moodle, WordPress, etc.)
 ├── bundles/           # Application bundles (Education Kit, etc.)
 ├── start.sh           # Shared start script
@@ -50,10 +50,10 @@ Start any application or bundle with optional clean mode.
 
 **Usage:**
 ```bash
-# From marketplace/dkr directory (simple name)
+# From magneto directory (simple name)
 ./start.sh <app-or-bundle-name> [--cleanup]
 
-# From marketplace/dkr directory (relative path)
+# From magneto directory (relative path)
 ./start.sh <relative-path> [--cleanup]
 
 # From within an app/bundle directory
@@ -92,10 +92,10 @@ Stop any application or bundle with optional volume removal.
 
 **Usage:**
 ```bash
-# From marketplace/dkr directory (simple name)
+# From magneto directory (simple name)
 ./stop.sh <app-or-bundle-name> [--cleanup]
 
-# From marketplace/dkr directory (relative path)
+# From magneto directory (relative path)
 ./stop.sh <relative-path> [--cleanup]
 
 # From within an app/bundle directory
@@ -134,10 +134,10 @@ Display logs from any application or bundle.
 
 **Usage:**
 ```bash
-# From marketplace/dkr directory (simple name)
+# From magneto directory (simple name)
 ./logs.sh <app-or-bundle-name> [service] [options]
 
-# From marketplace/dkr directory (relative path)
+# From magneto directory (relative path)
 ./logs.sh <relative-path> [service] [options]
 
 # From within an app/bundle directory
@@ -183,10 +183,10 @@ Display status and resource usage for any application or bundle.
 
 **Usage:**
 ```bash
-# From marketplace/dkr directory (simple name)
+# From magneto directory (simple name)
 ./status.sh <app-or-bundle-name>
 
-# From marketplace/dkr directory (relative path)
+# From magneto directory (relative path)
 ./status.sh <relative-path>
 
 # From within an app/bundle directory
@@ -350,8 +350,8 @@ The `apps/` directory contains legacy versions of the management scripts that re
 ### Start an Application
 
 ```bash
-# Navigate to marketplace/dkr
-cd marketplace/dkr
+# Navigate to magneto
+cd magneto
 
 # Start WordPress
 ./start.sh wordpress
@@ -362,8 +362,8 @@ cd marketplace/dkr
 ### Start a Bundle
 
 ```bash
-# Navigate to marketplace/dkr
-cd marketplace/dkr
+# Navigate to magneto
+cd magneto
 
 # Start Education Kit
 ./start.sh education-kit
@@ -376,7 +376,7 @@ cd marketplace/dkr
 
 ```bash
 # Navigate to app directory
-cd marketplace/dkr/apps/gibbon
+cd magneto/apps/gibbon
 
 # Start
 ../../start.sh

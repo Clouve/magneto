@@ -16,8 +16,8 @@ These applications are **automatically integrated** using a multi-part environme
 ### One-Command Deployment (Recommended)
 
 ```bash
-# From marketplace/dkr directory
-cd marketplace/dkr
+# From magneto directory
+cd magneto
 ./start.sh education-kit
 ```
 
@@ -27,7 +27,7 @@ cd marketplace/dkr
 
 ```bash
 # From within the bundle directory
-cd marketplace/dkr/bundles/education-kit
+cd magneto/bundles/education-kit
 
 # Start all services (will pull images automatically)
 docker-compose up -d
@@ -39,8 +39,8 @@ docker-compose down
 ### Using Shared Management Scripts
 
 ```bash
-# From marketplace/dkr directory
-cd marketplace/dkr
+# From magneto directory
+cd magneto
 
 # Start with clean state (removes all existing data)
 ./start.sh education-kit --clean
@@ -55,7 +55,7 @@ cd marketplace/dkr
 ./stop.sh education-kit
 ```
 
-For more information on the shared management scripts, see [marketplace/dkr/README.md](../../README.md).
+For more information on the shared management scripts, see [magneto/README.md](../../README.md).
 
 ## What You Get
 
@@ -311,7 +311,7 @@ Testing connection to Gibbon database...
 ### Check Integration Logs
 
 ```bash
-cd marketplace/dkr/bundles/education-kit
+cd magneto/bundles/education-kit
 
 # View Gibbon integration logs
 docker-compose logs gibbon | grep -A 20 "GIBBON INTEGRATION SQL"
@@ -425,7 +425,7 @@ MOODLE_INTEGRATION_SQL_3: |
 Edit `docker-compose.yml` to customize environment variables for your institution:
 
 ```bash
-cd marketplace/dkr/bundles/education-kit
+cd magneto/bundles/education-kit
 nano docker-compose.yml  # or use your preferred editor
 ```
 
@@ -465,7 +465,7 @@ The bundle uses five persistent volumes:
 ### View Logs
 
 ```bash
-cd marketplace/dkr/bundles/education-kit
+cd magneto/bundles/education-kit
 
 # All services
 docker-compose logs -f
@@ -711,7 +711,7 @@ docker-compose logs moodle-mysql
 To completely reset and start over:
 
 ```bash
-cd marketplace/dkr/bundles/education-kit
+cd magneto/bundles/education-kit
 
 # WARNING: This deletes all data!
 docker-compose down -v
@@ -757,7 +757,7 @@ Before deploying to production:
 
 After deploying the Education Kit:
 
-1. ✅ **Deploy the bundle** - `cd marketplace/dkr && ./start.sh education-kit`
+1. ✅ **Deploy the bundle** - `cd magneto && ./start.sh education-kit`
 2. ✅ **Verify integration** - Check logs and database views (see "Verify Integration" section)
 3. 📚 **Configure Gibbon** - Set up school details, academic year, users, courses
 4. 📚 **Configure Moodle** - Customize site settings, themes, plugins
@@ -778,7 +778,7 @@ The Education Kit provides a **complete, integrated educational platform** with:
 ✅ **Modular design** - Easy to customize and extend
 ✅ **Idempotent** - Safe to restart - integration runs only once
 
-**Get started now**: `cd marketplace/dkr && ./start.sh education-kit`
+**Get started now**: `cd magneto && ./start.sh education-kit`
 
 ## Support
 
@@ -805,8 +805,8 @@ For issues specific to the Gibbon-Moodle integration:
 ## Additional Documentation
 
 For more detailed information about the base images:
-- **Gibbon**: See [marketplace/dkr/apps/gibbon/README.md](../../apps/gibbon/README.md)
-- **Moodle**: See [marketplace/dkr/apps/moodle/README.md](../../apps/moodle/README.md)
+- **Gibbon**: See [magneto/apps/gibbon/README.md](../../apps/gibbon/README.md)
+- **Moodle**: See [magneto/apps/moodle/README.md](../../apps/moodle/README.md)
 
 ## License
 
