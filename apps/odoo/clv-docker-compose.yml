@@ -111,7 +111,7 @@ volumes:
 x-clouve-agent:
   enabled: true
   skills:
-    url: https://github.com/Clouve/magneto-skills.git?plugins=odoo#odoo-skill
+    url: https://github.com/Clouve/magneto-skills.git?plugins=odoo
     git:
       token: ''
       username: ''
