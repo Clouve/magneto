@@ -17,12 +17,15 @@
 #   --push         Build and push multi-platform images to registry
 #   --cleanup      Remove images and buildx cache before building
 #   --all          Build all apps/bundles found in apps/ and bundles/ directories
+#   --tag <tag>    Push/build a single explicit tag instead of the default
+#                  ":<DATE>" + ":latest" pair (e.g. --tag 2025.11.20)
 #
 # Examples:
 #   ./build.sh gibbon                      # Build Gibbon multi-platform images locally (amd64 + arm64)
 #   ./build.sh gibbon --push               # Build and push Gibbon multi-platform images to registry
 #   ./build.sh gibbon --cleanup            # Remove Gibbon images, then build multi-platform locally
 #   ./build.sh gibbon --cleanup --push     # Remove Gibbon images, then build and push multi-platform
+#   ./build.sh gibbon --push --tag 2025.11.20  # Build and push ONLY the :2025.11.20 tag (no :latest/:DATE)
 #   ./build.sh apps/wordpress              # Build WordPress using relative path
 #   ./build.sh bundles/education-kit       # Build Education Kit using relative path
 #   ./build.sh --all                       # Build all apps/bundles locally
@@ -37,9 +40,9 @@ set -e
 # Helper function to display usage
 # ============================================================================
 show_usage() {
-    echo "Usage: $0 <app-or-bundle-name> [--push] [--cleanup]"
-    echo "       $0 <relative-path> [--push] [--cleanup]"
-    echo "       $0 --all [--push] [--cleanup]"
+    echo "Usage: $0 <app-or-bundle-name> [--push] [--cleanup] [--tag <tag>]"
+    echo "       $0 <relative-path> [--push] [--cleanup] [--tag <tag>]"
+    echo "       $0 --all [--push] [--cleanup] [--tag <tag>]"
     echo ""
     echo "Supported applications and bundles:"
     for dir in "$SCRIPT_DIR/apps"/*/ "$SCRIPT_DIR/bundles"/*/; do
@@ -55,12 +58,14 @@ show_usage() {
     echo "  --push         Build and push multi-platform images to registry"
     echo "  --cleanup      Remove images and buildx cache before building"
     echo "  --all          Build all apps/bundles found in apps/ and bundles/ directories"
+    echo "  --tag <tag>    Push/build a single explicit tag instead of :<DATE> + :latest"
     echo ""
     echo "Examples:"
     echo "  $0 gibbon                      # Build Gibbon multi-platform images locally"
     echo "  $0 gibbon --push               # Build and push Gibbon multi-platform images"
     echo "  $0 gibbon --cleanup            # Remove Gibbon images, then build multi-platform locally"
     echo "  $0 gibbon --cleanup --push     # Remove Gibbon images, then build and push multi-platform"
+    echo "  $0 gibbon --push --tag 2025.11.20  # Build and push ONLY the :2025.11.20 tag"
     echo "  $0 apps/wordpress              # Build WordPress using relative path"
     echo "  $0 bundles/education-kit       # Build Education Kit using relative path"
     echo "  $0 --all                       # Build all apps/bundles locally"
@@ -251,6 +256,7 @@ TARGET_DIR=""
 DISPLAY_NAME=""
 PUSH_IMAGES=false
 CLEANUP=false
+CUSTOM_TAG=""
 
 # Check if first argument is --all or --cleanup
 if [ "$1" = "--all" ]; then
@@ -317,15 +323,36 @@ elif [ "${1:0:2}" != "--" ]; then
 fi
 
 # Parse remaining options
-for arg in "$@"; do
-    case $arg in
+# Use a while loop (not for-in) so flags that take a value, like
+# `--tag <value>`, can consume the following token with an extra shift.
+while [ $# -gt 0 ]; do
+    case "$1" in
         --push)
             PUSH_IMAGES=true
-            shift
             ;;
         --cleanup)
             CLEANUP=true
+            ;;
+        --tag)
+            # Require a value, and reject the next token if it is another
+            # flag (or missing) — tags never start with "--".
+            if [ -z "${2:-}" ] || [ "${2:0:2}" = "--" ]; then
+                echo "Error: --tag requires a value (e.g. --tag 2025.11.20)"
+                echo ""
+                show_usage
+                exit 1
+            fi
+            CUSTOM_TAG="$2"
             shift
+            ;;
+        --tag=*)
+            CUSTOM_TAG="${1#--tag=}"
+            if [ -z "$CUSTOM_TAG" ]; then
+                echo "Error: --tag requires a value (e.g. --tag=2025.11.20)"
+                echo ""
+                show_usage
+                exit 1
+            fi
             ;;
         --all)
             echo "Error: --all must be the first argument"
@@ -334,12 +361,13 @@ for arg in "$@"; do
             exit 1
             ;;
         *)
-            echo "Unknown argument: $arg"
+            echo "Unknown argument: $1"
             echo ""
             show_usage
             exit 1
             ;;
     esac
+    shift
 done
 
 # If --all mode, build all targets
@@ -411,6 +439,9 @@ if [ "$BUILD_ALL" = true ]; then
         if [ "$PUSH_IMAGES" = true ]; then
             BUILD_CMD="$BUILD_CMD --push"
         fi
+        if [ -n "$CUSTOM_TAG" ]; then
+            BUILD_CMD="$BUILD_CMD --tag $CUSTOM_TAG"
+        fi
 
         # Temporarily disable exit on error for this command
         set +e
@@ -463,6 +494,36 @@ IMAGE_REGISTRY="${REGISTRY:-r.clv.zone/e2eorg}"
 DATE_TAG=$(date +%Y.%m.%d)
 PLATFORMS="linux/amd64,linux/arm64"
 LOCAL_PLATFORM="linux/$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"
+
+# ============================================================================
+# Tag selection helpers
+# ============================================================================
+# Default behavior tags two refs per image: ":<DATE>" and the bare ":latest".
+# When --tag <value> is supplied it overrides both with a single explicit tag.
+#
+# tag_args_for populates the TAG_ARGS array with the docker buildx --tag flags
+# for a given base image reference (registry/repo, no tag).
+tag_args_for() {
+    local base="$1"
+    TAG_ARGS=()
+    if [ -n "$CUSTOM_TAG" ]; then
+        TAG_ARGS+=(--tag "$base:$CUSTOM_TAG")
+    else
+        TAG_ARGS+=(--tag "$base:$DATE_TAG")
+        TAG_ARGS+=(--tag "$base")
+    fi
+}
+
+# print_tags_for echoes the same tags as human-readable summary lines.
+print_tags_for() {
+    local base="$1"
+    if [ -n "$CUSTOM_TAG" ]; then
+        echo "  - $base:$CUSTOM_TAG"
+    else
+        echo "  - $base:$DATE_TAG"
+        echo "  - $base"
+    fi
+}
 
 # ============================================================================
 # Determine target image directory
@@ -678,12 +739,12 @@ fi
 TOTAL_STEPS=$((1 + ${#CONTAINER_CONFIGS[@]}))
 
 echo "Step 1/$TOTAL_STEPS: Building $DISPLAY_NAME image from Dockerfile for platforms: $PLATFORMS..."
+tag_args_for "$IMAGE_REGISTRY/$APP_IMAGE"
 if [ "$PUSH_IMAGES" = true ]; then
     echo "Building and pushing multi-platform image..."
     if docker buildx build \
         --platform "$PLATFORMS" \
-        --tag "$IMAGE_REGISTRY/$APP_IMAGE:$DATE_TAG" \
-        --tag "$IMAGE_REGISTRY/$APP_IMAGE" \
+        "${TAG_ARGS[@]}" \
         --provenance=false \
         --push \
         .; then
@@ -696,8 +757,7 @@ else
     echo "Building image for local platform ($LOCAL_PLATFORM) and loading into Docker..."
     if docker buildx build \
         --platform "$LOCAL_PLATFORM" \
-        --tag "$IMAGE_REGISTRY/$APP_IMAGE:$DATE_TAG" \
-        --tag "$IMAGE_REGISTRY/$APP_IMAGE" \
+        "${TAG_ARGS[@]}" \
         --provenance=false \
         --load \
         .; then
@@ -733,13 +793,13 @@ if [ ${#CONTAINER_CONFIGS[@]} -gt 0 ]; then
         fi
 
         echo "Step $STEP_NUM/$TOTAL_STEPS: Building $display_name image from Dockerfile for platforms: $PLATFORMS..."
+        tag_args_for "$IMAGE_REGISTRY/$image_name"
 
         if [ "$PUSH_IMAGES" = true ]; then
             echo "Building and pushing multi-platform $display_name image..."
             if docker buildx build \
                 --platform "$PLATFORMS" \
-                --tag "$IMAGE_REGISTRY/$image_name:$DATE_TAG" \
-                --tag "$IMAGE_REGISTRY/$image_name" \
+                "${TAG_ARGS[@]}" \
                 --provenance=false \
                 --push \
                 "${dockerfile_args[@]}" \
@@ -753,8 +813,7 @@ if [ ${#CONTAINER_CONFIGS[@]} -gt 0 ]; then
             echo "Building $display_name image for local platform ($LOCAL_PLATFORM) and loading into Docker..."
             if docker buildx build \
                 --platform "$LOCAL_PLATFORM" \
-                --tag "$IMAGE_REGISTRY/$image_name:$DATE_TAG" \
-                --tag "$IMAGE_REGISTRY/$image_name" \
+                "${TAG_ARGS[@]}" \
                 --provenance=false \
                 --load \
                 "${dockerfile_args[@]}" \
@@ -788,8 +847,7 @@ if [ "$PUSH_IMAGES" = true ]; then
 else
     echo "$DISPLAY_NAME Image Tags (Platform: $LOCAL_PLATFORM):"
 fi
-echo "  - $IMAGE_REGISTRY/$APP_IMAGE:$DATE_TAG"
-echo "  - $IMAGE_REGISTRY/$APP_IMAGE"
+print_tags_for "$IMAGE_REGISTRY/$APP_IMAGE"
 echo ""
 
 # Show all container image tags
@@ -801,8 +859,7 @@ for config in "${CONTAINER_CONFIGS[@]}"; do
     else
         echo "$display_name Image Tags (Platform: $LOCAL_PLATFORM):"
     fi
-    echo "  - $IMAGE_REGISTRY/$image_name:$DATE_TAG"
-    echo "  - $IMAGE_REGISTRY/$image_name"
+    print_tags_for "$IMAGE_REGISTRY/$image_name"
     echo ""
 done
 
