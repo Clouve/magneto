@@ -93,9 +93,9 @@ This configuration is used by build scripts to automate the image building proce
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `POSTGRES_DB_HOST` | PostgreSQL hostname | `db` |
-| `POSTGRES_DB_USER` | PostgreSQL username | `odoo` |
-| `POSTGRES_DB_PASSWORD` | PostgreSQL password | `odoo` |
+| `ODOO_DB_HOST` | PostgreSQL hostname | `db` |
+| `ODOO_DB_USER` | PostgreSQL username | `odoo` |
+| `ODOO_DB_PASSWORD` | PostgreSQL password | `odoo` |
 | `DB_PORT` | PostgreSQL port | `5432` |
 | `ODOO_DB_NAME` | Odoo database name | `odoo` |
 | `ODOO_ADMIN_EMAIL` | Admin user email (used as login) | `admin@example.com` |
@@ -288,7 +288,7 @@ docker-compose ps odoo-postgres
 docker exec odoo_app psql -h odoo-postgres -U odoo -d postgres -c "SELECT 1"
 
 # Check environment variables
-docker exec odoo_app env | grep -E "POSTGRES_DB_HOST|POSTGRES_DB_USER|POSTGRES_DB_PASSWORD"
+docker exec odoo_app env | grep -E "ODOO_DB_HOST|ODOO_DB_USER|ODOO_DB_PASSWORD"
 ```
 
 ### Initialization Problems
