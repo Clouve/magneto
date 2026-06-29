@@ -15,10 +15,10 @@ set -e
 echo -e "${YELLOW}[INFO]${NC} Updating Odoo configuration from environment variables..."
 
 # Database connection details
-DB_HOST="${POSTGRES_DB_HOST:-db}"
+DB_HOST="${ODOO_DB_HOST:-db}"
 DB_PORT="${DB_PORT:-5432}"
-DB_USER="${POSTGRES_DB_USER:-odoo}"
-DB_PASSWORD="${POSTGRES_DB_PASSWORD:-odoo}"
+DB_USER="${ODOO_DB_USER:-odoo}"
+DB_PASSWORD="${ODOO_DB_PASSWORD:-odoo}"
 DB_NAME="${ODOO_DB_NAME:-odoo}"
 
 # Odoo URL configuration
