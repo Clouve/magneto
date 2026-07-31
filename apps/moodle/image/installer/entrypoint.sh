@@ -57,134 +57,170 @@ if [[ ! -d "$INSTALLED_VERSIONS_PATH" ]]; then
   echo "$TIMESTAMP" > "$INSTALLED_VERSIONS_PATH/$MOODLE_RELEASE"
 
   echo "##################################################################"
+fi
 
-  # ============================================================================
-  # MOODLE INTEGRATION SQL FROM ENVIRONMENT VARIABLES
-  # ============================================================================
-  # Execute SQL from MOODLE_INTEGRATION_SQL_* environment variables
-  # This allows bundles to inject SQL without mounting scripts (marketplace compatible)
-  # Supports multi-part SQL via MOODLE_INTEGRATION_SQL_1, MOODLE_INTEGRATION_SQL_2, etc.
+# ============================================================================
+# MOODLE INTEGRATION SQL FROM ENVIRONMENT VARIABLES
+# ============================================================================
+# Execute SQL from MOODLE_INTEGRATION_SQL_* environment variables
+# This allows bundles to inject SQL without mounting scripts (marketplace compatible)
+# Supports multi-part SQL via MOODLE_INTEGRATION_SQL_1, MOODLE_INTEGRATION_SQL_2, etc.
+#
+# Runs on every startup until it has succeeded once (marker-gated below) — not
+# only on fresh install — so a seed that missed its window (e.g. Gibbon still
+# installing when this pod first booted) retries on the next restart instead of
+# being lost forever.
 
-  # Check if any integration SQL parts are defined
-  if [[ -n "$MOODLE_INTEGRATION_SQL_1" ]]; then
-    echo "##################################################################"
-    echo "MOODLE INTEGRATION SQL FROM ENVIRONMENT VARIABLES"
-    echo "##################################################################"
+# MySQL string-literal escaping for values substituted into the integration SQL.
+sql_escape() {
+  local v="$1" bs="\\" q="'"
+  v="${v//"$bs"/"$bs$bs"}"
+  v="${v//"$q"/"$bs$q"}"
+  printf '%s' "$v"
+}
 
-    # Check if integration is enabled
-    if [[ "$ENABLE_GIBBON_INTEGRATION" != "true" ]]; then
-      echo "ℹ ENABLE_GIBBON_INTEGRATION is not set to 'true', skipping integration setup"
+# Check if any integration SQL parts are defined
+if [[ -n "$MOODLE_INTEGRATION_SQL_1" ]]; then
+  echo "##################################################################"
+  echo "MOODLE INTEGRATION SQL FROM ENVIRONMENT VARIABLES"
+  echo "##################################################################"
+
+  # Check if integration is enabled
+  if [[ "$ENABLE_GIBBON_INTEGRATION" != "true" ]]; then
+    echo "ℹ ENABLE_GIBBON_INTEGRATION is not set to 'true', skipping integration setup"
+  else
+    # Check if integration was already completed
+    if [[ -f "$INSTALLED_VERSIONS_PATH/.gibbon-integration-setup" ]]; then
+      echo "ℹ Gibbon integration already configured (marker file exists), skipping"
     else
-      # Check if integration was already completed
-      if [[ -f "$INSTALLED_VERSIONS_PATH/.gibbon-integration-setup" ]]; then
-        echo "ℹ Gibbon integration already configured (marker file exists), skipping"
+      # Verify required environment variables
+      if [[ -z "$GIBBON_DB_HOST" ]] || [[ -z "$GIBBON_DB_NAME" ]] || [[ -z "$GIBBON_DB_USER" ]] || [[ -z "$GIBBON_DB_PASSWORD" ]]; then
+        echo "✗ Error: Missing required Gibbon database environment variables"
+        echo "  Required: GIBBON_DB_HOST, GIBBON_DB_NAME, GIBBON_DB_USER, GIBBON_DB_PASSWORD"
+        echo "  Continuing with startup..."
       else
-        # Verify required environment variables
-        if [[ -z "$GIBBON_DB_HOST" ]] || [[ -z "$GIBBON_DB_NAME" ]] || [[ -z "$GIBBON_DB_USER" ]] || [[ -z "$GIBBON_DB_PASSWORD" ]]; then
-          echo "✗ Error: Missing required Gibbon database environment variables"
-          echo "  Required: GIBBON_DB_HOST, GIBBON_DB_NAME, GIBBON_DB_USER, GIBBON_DB_PASSWORD"
+        echo "Waiting for Gibbon database to be ready..."
+
+        # Wait for Gibbon database to be accessible
+        max_attempts=60
+        attempt=0
+        while [ $attempt -lt $max_attempts ]; do
+          if mysqladmin ping -h"$GIBBON_DB_HOST" --skip-ssl --silent 2>/dev/null; then
+            echo "✓ Gibbon database is ready"
+            break
+          fi
+          attempt=$((attempt + 1))
+          echo "  Waiting for Gibbon database... (attempt $attempt/$max_attempts)"
+          sleep 2
+        done
+
+        if [ $attempt -eq $max_attempts ]; then
+          echo "✗ Error: Gibbon database did not become ready in time"
           echo "  Continuing with startup..."
         else
-          echo "Waiting for Gibbon database to be ready..."
+          # Wait for Gibbon integration views to be created
+          echo "Waiting for Gibbon integration views to be created..."
+          view_check_attempts=30
+          view_attempt=0
+          views_ready=false
 
-          # Wait for Gibbon database to be accessible
-          max_attempts=60
-          attempt=0
-          while [ $attempt -lt $max_attempts ]; do
-            if mysqladmin ping -h"$GIBBON_DB_HOST" --skip-ssl --silent 2>/dev/null; then
-              echo "✓ Gibbon database is ready"
+          while [ $view_attempt -lt $view_check_attempts ]; do
+            if mysql --skip-ssl -h "$GIBBON_DB_HOST" -u "$GIBBON_DB_USER" -p"$GIBBON_DB_PASSWORD" "$GIBBON_DB_NAME" \
+               -e "SELECT 1 FROM moodleUser LIMIT 1;" 2>/dev/null >/dev/null; then
+              echo "✓ Gibbon integration views are ready"
+              views_ready=true
               break
             fi
-            attempt=$((attempt + 1))
-            echo "  Waiting for Gibbon database... (attempt $attempt/$max_attempts)"
+            view_attempt=$((view_attempt + 1))
+            echo "  Waiting for Gibbon integration views... (attempt $view_attempt/$view_check_attempts)"
             sleep 2
           done
 
-          if [ $attempt -eq $max_attempts ]; then
-            echo "✗ Error: Gibbon database did not become ready in time"
+          if [[ "$views_ready" != "true" ]]; then
+            echo "✗ Error: Gibbon integration views not found"
+            echo "  Make sure the Gibbon container has ENABLE_MOODLE_INTEGRATION=true"
             echo "  Continuing with startup..."
           else
-            # Wait for Gibbon integration views to be created
-            echo "Waiting for Gibbon integration views to be created..."
-            view_check_attempts=30
-            view_attempt=0
-            views_ready=false
+            echo "Configuring Moodle External Database plugins..."
 
-            while [ $view_attempt -lt $view_check_attempts ]; do
-              if mysql --skip-ssl -h "$GIBBON_DB_HOST" -u "$GIBBON_DB_USER" -p"$GIBBON_DB_PASSWORD" "$GIBBON_DB_NAME" \
-                 -e "SELECT 1 FROM moodleUser LIMIT 1;" 2>/dev/null >/dev/null; then
-                echo "✓ Gibbon integration views are ready"
-                views_ready=true
+            # Concatenate all SQL parts in order
+            echo "Collecting SQL parts..."
+            > /tmp/moodle-integration.sql  # Create empty file
+
+            part_num=1
+            while true; do
+              var_name="MOODLE_INTEGRATION_SQL_${part_num}"
+              var_value="${!var_name}"
+
+              if [[ -z "$var_value" ]]; then
                 break
               fi
-              view_attempt=$((view_attempt + 1))
-              echo "  Waiting for Gibbon integration views... (attempt $view_attempt/$view_check_attempts)"
-              sleep 2
-            done
 
-            if [[ "$views_ready" != "true" ]]; then
-              echo "✗ Error: Gibbon integration views not found"
-              echo "  Make sure the Gibbon container has ENABLE_MOODLE_INTEGRATION=true"
-              echo "  Continuing with startup..."
-            else
-              echo "Configuring Moodle External Database plugins..."
+              echo "  Found part $part_num"
 
-              # Concatenate all SQL parts in order
-              echo "Collecting SQL parts..."
-              > /tmp/moodle-integration.sql  # Create empty file
-
-              part_num=1
-              while true; do
-                var_name="MOODLE_INTEGRATION_SQL_${part_num}"
-                var_value="${!var_name}"
-
-                if [[ -z "$var_value" ]]; then
-                  break
-                fi
-
-                echo "  Found part $part_num"
-                echo "$var_value" >> /tmp/moodle-integration.sql
-                echo "" >> /tmp/moodle-integration.sql  # Add newline between parts
-                part_num=$((part_num + 1))
+              # The bundle manifest ships ${GIBBON_DB_*} placeholders in the
+              # SQL so the connection settings resolve per deployment (on
+              # Kubernetes the host is ticket-prefixed and the password is a
+              # generated secret). Expand exactly these variables — no other
+              # $ in the SQL is touched.
+              for gibbon_var in GIBBON_DB_HOST GIBBON_DB_NAME GIBBON_DB_USER GIBBON_DB_PASSWORD; do
+                placeholder='${'"$gibbon_var"'}'
+                replacement="$(sql_escape "${!gibbon_var}")"
+                var_value="${var_value//"$placeholder"/"$replacement"}"
               done
 
-              echo "✓ Collected $((part_num - 1)) SQL part(s)"
+              echo "$var_value" >> /tmp/moodle-integration.sql
+              echo "" >> /tmp/moodle-integration.sql  # Add newline between parts
+              part_num=$((part_num + 1))
+            done
 
-              # Execute SQL to configure Moodle
-              echo "Executing SQL to configure Moodle plugins..."
-              if mysql --skip-ssl -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" < /tmp/moodle-integration.sql 2>&1; then
-                echo "✓ Moodle integration configured successfully"
+            echo "✓ Collected $((part_num - 1)) SQL part(s)"
 
-                # Test connection to Gibbon database
-                echo "Testing connection to Gibbon database..."
-                if mysql --skip-ssl -h "$GIBBON_DB_HOST" -u "$GIBBON_DB_USER" -p"$GIBBON_DB_PASSWORD" "$GIBBON_DB_NAME" \
-                   -e "SELECT COUNT(*) as user_count FROM moodleUser;" 2>/dev/null; then
-                  echo "✓ Moodle can successfully connect to Gibbon database"
-                else
-                  echo "⚠ Warning: Connection test to Gibbon database failed"
-                fi
+            # Execute SQL to configure Moodle
+            echo "Executing SQL to configure Moodle plugins..."
+            if mysql --skip-ssl -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" < /tmp/moodle-integration.sql 2>&1; then
+              echo "✓ Moodle integration configured successfully"
 
-                # Mark integration as completed
-                touch "$INSTALLED_VERSIONS_PATH/.gibbon-integration-setup"
-                echo "$TIMESTAMP" > "$INSTALLED_VERSIONS_PATH/.gibbon-integration-setup"
-
-                echo "✓ Moodle-to-Gibbon integration setup completed successfully!"
+              # Test connection to Gibbon database
+              echo "Testing connection to Gibbon database..."
+              if mysql --skip-ssl -h "$GIBBON_DB_HOST" -u "$GIBBON_DB_USER" -p"$GIBBON_DB_PASSWORD" "$GIBBON_DB_NAME" \
+                 -e "SELECT COUNT(*) as user_count FROM moodleUser;" 2>/dev/null; then
+                echo "✓ Moodle can successfully connect to Gibbon database"
               else
-                echo "✗ Error: Failed to configure Moodle integration"
-                rm -f /tmp/moodle-integration.sql
-                echo "  Continuing with startup..."
+                echo "⚠ Warning: Connection test to Gibbon database failed"
               fi
 
-              # Cleanup
+              # Mark integration as completed
+              touch "$INSTALLED_VERSIONS_PATH/.gibbon-integration-setup"
+              echo "$TIMESTAMP" > "$INSTALLED_VERSIONS_PATH/.gibbon-integration-setup"
+
+              # When the seed ran on a restart (not a fresh install), Moodle's
+              # MUC cache may still hold the pre-integration config — purge so
+              # the new plugin config takes effect immediately. File ownership
+              # is normalized by the moodledata chown further down.
+              for purge_cli in "$MOODLE_INSTALL_PATH/public/admin/cli/purge_caches.php" "$MOODLE_INSTALL_PATH/admin/cli/purge_caches.php"; do
+                if [[ -f "$purge_cli" ]]; then
+                  php "$purge_cli" || echo "⚠ Warning: cache purge failed (continuing)"
+                  break
+                fi
+              done
+
+              echo "✓ Moodle-to-Gibbon integration setup completed successfully!"
+            else
+              echo "✗ Error: Failed to configure Moodle integration"
               rm -f /tmp/moodle-integration.sql
+              echo "  Continuing with startup..."
             fi
+
+            # Cleanup
+            rm -f /tmp/moodle-integration.sql
           fi
         fi
       fi
     fi
-
-    echo "##################################################################"
   fi
+
+  echo "##################################################################"
 fi
 
 # Check if an upgrade is needed by comparing the exact Moodle $version baked into
