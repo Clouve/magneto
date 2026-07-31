@@ -81,7 +81,9 @@ for script in "${!SCHEDULE_MIN[@]}"; do
   # crash with "Unable to create the cache directory" → HTTP 500 → kubelet
   # kills the pod on liveness failure. The wrapper itself stays root so
   # /var/log/gibbon-cron.state (under root-owned /var/log) keeps working.
-  if runuser -u www-data -- /usr/local/bin/php "$script_file" >> "$LOG_FILE" 2>&1; then
+  # Absolute path: cron's default PATH (/usr/bin:/bin) does not include /usr/sbin,
+  # so a bare `runuser` fails with exit 127 and no task ever runs.
+  if /usr/sbin/runuser -u www-data -- /usr/local/bin/php "$script_file" >> "$LOG_FILE" 2>&1; then
     log "Gibbon Cron Completed: $script"
   else
     log "Gibbon Cron Failed: $script (exit $?)"
