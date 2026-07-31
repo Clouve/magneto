@@ -99,7 +99,7 @@ services:
       memoryBase: 1
       cpuBase: 1
     x-clouve-bundle-metadata:
-      appVersion: 30.0.01
+      appVersion: 30.0.1
       appTitle: Gibbon
       appDescription: Gibbon is an intuitive, open-source school management platform designed to revolutionize the way educational institutions operate. Tailored to meet the diverse needs of schools, Gibbon offers a comprehensive suite of tools for managing administrative tasks, tracking student progress, and facilitating effective communication among teachers, students, and parents. Its user-friendly interface and customizable modules streamline operations such as timetabling, attendance, and grade reporting. By enhancing organization and efficiency, Gibbon empowers educators to focus on delivering high-quality education, fostering an enriched learning environment, and ultimately supporting student success. In this Education Kit bundle, Gibbon is paired with Clouve's AI Assistant, adding intelligent automation and conversational support that helps administrators and educators move faster on everyday tasks—from drafting communications to navigating records and configuring the platform.
     x-clouve-healthcheck:
