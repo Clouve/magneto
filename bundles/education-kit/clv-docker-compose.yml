@@ -99,7 +99,7 @@ services:
       memoryBase: 1
       cpuBase: 1
     x-clouve-bundle-metadata:
-      appVersion: 30.0.01
+      appVersion: 30.0.1
       appTitle: Gibbon
       appDescription: Gibbon is an intuitive, open-source school management platform designed to revolutionize the way educational institutions operate. Tailored to meet the diverse needs of schools, Gibbon offers a comprehensive suite of tools for managing administrative tasks, tracking student progress, and facilitating effective communication among teachers, students, and parents. Its user-friendly interface and customizable modules streamline operations such as timetabling, attendance, and grade reporting. By enhancing organization and efficiency, Gibbon empowers educators to focus on delivering high-quality education, fostering an enriched learning environment, and ultimately supporting student success. In this Education Kit bundle, Gibbon is paired with Clouve's AI Assistant, adding intelligent automation and conversational support that helps administrators and educators move faster on everyday tasks—from drafting communications to navigating records and configuring the platform.
     x-clouve-healthcheck:
@@ -198,17 +198,17 @@ services:
         ON DUPLICATE KEY UPDATE value = IF(value NOT LIKE '%database%', CONCAT(value,',database'), value);
       MOODLE_INTEGRATION_SQL_2: |
         -- Database connection settings
-        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'host', 'gibbon-mysql') ON DUPLICATE KEY UPDATE value = 'gibbon-mysql';
-        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'name', 'gibbon') ON DUPLICATE KEY UPDATE value = 'gibbon';
-        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'user', 'gibbon') ON DUPLICATE KEY UPDATE value = 'gibbon';
-        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'pass', 'gibbon_password') ON DUPLICATE KEY UPDATE value = 'gibbon_password';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'host', '${GIBBON_DB_HOST}') ON DUPLICATE KEY UPDATE value = '${GIBBON_DB_HOST}';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'name', '${GIBBON_DB_NAME}') ON DUPLICATE KEY UPDATE value = '${GIBBON_DB_NAME}';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'user', '${GIBBON_DB_USER}') ON DUPLICATE KEY UPDATE value = '${GIBBON_DB_USER}';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'pass', '${GIBBON_DB_PASSWORD}') ON DUPLICATE KEY UPDATE value = '${GIBBON_DB_PASSWORD}';
         INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'type', 'mysql') ON DUPLICATE KEY UPDATE value = 'mysql';
         -- User table and field mappings
         INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'table', 'moodleUser') ON DUPLICATE KEY UPDATE value = 'moodleUser';
         INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'fielduser', 'username') ON DUPLICATE KEY UPDATE value = 'username';
         INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'passtype', 'internal') ON DUPLICATE KEY UPDATE value = 'internal';
         -- User synchronization settings
-        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'removeuser', '2') ON DUPLICATE KEY UPDATE value = '2';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'removeuser', '1') ON DUPLICATE KEY UPDATE value = '1';
         INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'updateusers', '1') ON DUPLICATE KEY UPDATE value = '1';
         -- First name field mapping
         INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'field_map_firstname', 'preferredName') ON DUPLICATE KEY UPDATE value = 'preferredName';
@@ -227,10 +227,10 @@ services:
         INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('auth_db', 'field_lock_email', 'locked') ON DUPLICATE KEY UPDATE value = 'locked';
       MOODLE_INTEGRATION_SQL_3: |
         -- Database connection settings
-        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'dbhost', 'gibbon-mysql') ON DUPLICATE KEY UPDATE value = 'gibbon-mysql';
-        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'dbname', 'gibbon') ON DUPLICATE KEY UPDATE value = 'gibbon';
-        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'dbuser', 'gibbon') ON DUPLICATE KEY UPDATE value = 'gibbon';
-        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'dbpass', 'gibbon_password') ON DUPLICATE KEY UPDATE value = 'gibbon_password';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'dbhost', '${GIBBON_DB_HOST}') ON DUPLICATE KEY UPDATE value = '${GIBBON_DB_HOST}';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'dbname', '${GIBBON_DB_NAME}') ON DUPLICATE KEY UPDATE value = '${GIBBON_DB_NAME}';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'dbuser', '${GIBBON_DB_USER}') ON DUPLICATE KEY UPDATE value = '${GIBBON_DB_USER}';
+        INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'dbpass', '${GIBBON_DB_PASSWORD}') ON DUPLICATE KEY UPDATE value = '${GIBBON_DB_PASSWORD}';
         INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'dbtype', 'mysqli') ON DUPLICATE KEY UPDATE value = 'mysqli';
         INSERT INTO mdl_config_plugins (plugin, name, value) VALUES ('enrol_database', 'dbencoding', 'utf-8') ON DUPLICATE KEY UPDATE value = 'utf-8';
         -- Local field mappings (Moodle side)
