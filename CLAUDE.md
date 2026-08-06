@@ -93,10 +93,11 @@ Each app in `apps/` contains:
 - `image/installer/entrypoint.sh` — Container initialization logic
 - Optional: `image/<db>/Dockerfile` for custom database containers
 
-### Two Docker Compose Files Per App
-The key distinction between the two compose files:
+### Compose Files Per App
+The key distinction between the compose files:
 - **`docker-compose.yml`**: Uses `.data/` volume mounts for local persistence, supports `TEST_DOMAIN`/`TEST_PORT` env var substitution for URL testing
 - **`clv-docker-compose.yml`**: Marketplace manifest — no host volume mounts, uses Clouve-specific YAML extensions for orchestration metadata
+- **`clv-docker-compose-basic.yml`** (optional): the AI-disabled twin of the marketplace manifest. Agent-capable apps (wordpress, moodle, gibbon, odoo; also `bundles/education-kit/`) publish TWO marketplace listings from the same images: the regular manifest (`x-clouve-agent: enabled: true`, appTitle "`<App> with AI Assistant`") and the basic one (no `x-clouve-agent` block, plain appTitle). The twins must stay in lock-step — identical except for the header comment, `appTitle`, `appDescription`, and the `x-clouve-agent` block. A single image pair serves both: the `clouve-ops` sshd in the images starts only when the platform injects `CLOUVE_OPS_PASSWORD` (agent-enabled deployments), so basic-listing deployments run exactly like pre-agent ones.
 
 ### Clouve Metadata Extensions
 The `clv-docker-compose.yml` files use custom YAML extensions to describe how the marketplace orchestrates the app:

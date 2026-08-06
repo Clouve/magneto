@@ -63,6 +63,26 @@ else
 fi
 
 # ============================================================================
+# CLOUVE-OPS SSHD: shell channel for the magneto-agent container's Claude Code
+# ============================================================================
+# Backgrounded — applies the per-pod password from CLOUVE_OPS_PASSWORD
+# (same value on all three services) to the clouve-ops user via chpasswd,
+# then exec's sshd -D inside its own background tree. Dies with the
+# container when apache (PID 1) exits. Started here — after STEP 1, before
+# the DB wait — so one call covers both `exec apache2-foreground` paths
+# below and the magneto-agent's sidecar-fetcher can pull the persona while
+# WordPress is still installing. Exits harmlessly (logged) when
+# CLOUVE_OPS_PASSWORD is unset, i.e. on agent-less deployments.
+#
+# ORDERING IS LOAD-BEARING: this must come AFTER Step 1's kill/wait. The
+# temporary apache2-foreground run above is SIGTERM'd, and its mpm_prefork
+# shutdown reaps every process in the container — verified empirically:
+# an sshd (and even unrelated canary processes) started before that
+# window die at the kill, including in their own setsid session. Only
+# processes started after the shutdown survive.
+/clouve/wordpress/installer/start-clouve-ops-sshd.sh &
+
+# ============================================================================
 # STEP 2: Wait for database to be ready
 # ============================================================================
 
