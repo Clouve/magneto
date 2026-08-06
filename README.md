@@ -53,6 +53,7 @@ apps/
     ├── logo.png                     # Application logo (recommended: 256x256)
     ├── docker-compose.yml           # Development/testing configuration
     ├── clv-docker-compose.yml       # Marketplace manifest with metadata
+    ├── clv-docker-compose-basic.yml # Optional: AI-disabled twin manifest (see below)
     └── image/                       # Custom Docker image build files
         ├── Dockerfile               # Main application Dockerfile
         ├── build.config             # Build configuration variables
@@ -291,6 +292,27 @@ TEST_DOMAIN=newdomain.test TEST_PORT=9090 docker-compose up -d
 ## Marketplace Manifest Configuration
 
 The marketplace manifest (`clv-docker-compose.yml`) extends standard Docker Compose with metadata extensions.
+
+### Basic (AI-disabled) Twin Manifest (`clv-docker-compose-basic.yml`)
+
+Agent-capable apps ship a second marketplace manifest so clients can choose
+between two published listings: the regular one (AI Assistant enabled — the
+manifest carries an `x-clouve-agent: enabled: true` block and an
+"`<App> with AI Assistant`" `appTitle`) and the basic one (no `x-clouve-agent`
+block, plain `appTitle`). Currently: `apps/wordpress`, `apps/moodle`,
+`apps/gibbon`, `apps/odoo`, and `bundles/education-kit`.
+
+Rules:
+
+- The two files must stay in **lock-step**: identical except for the header
+  comment, `appTitle`, `appDescription`, and the `x-clouve-agent` block. Any
+  service, env var, healthcheck, or volume change lands in both.
+- **One image pair serves both listings.** The images ship the `clouve-ops`
+  sshd, but it starts only when the platform injects `CLOUVE_OPS_PASSWORD`
+  (which happens on agent-enabled deployments only), so deployments from the
+  basic listing behave exactly like pre-agent ones.
+- Each listing is published independently on the marketplace (the platform has
+  no notion of the pairing — the filename is a packaging-repo convention only).
 
 ### Container Metadata (`x-clouve-metadata`)
 

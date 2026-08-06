@@ -1,9 +1,9 @@
 version: '3.8'
-# Magneto Agent-powered WordPress — marketplace manifest.
+# Stock WordPress — marketplace manifest (AI Assistant disabled).
 # See docker-compose.yml for the architectural overview and per-env-var
 # rationale; this file is the Clouve marketplace projection of the same pod.
-# The AI-disabled marketplace variant lives in clv-docker-compose-basic.yml —
-# the two files are identical except for the header, appTitle, appDescription,
+# The AI-enabled marketplace variant lives in clv-docker-compose.yml — the
+# two files are identical except for the header, appTitle, appDescription,
 # and the x-clouve-agent block. Keep them in lock-step.
 services:
   wordpress:
@@ -45,8 +45,8 @@ services:
       cpuBase: 1
     x-clouve-bundle-metadata:
       appVersion: 6.9.0
-      appTitle: WordPress with AI Assistant
-      appDescription: A cloud-hosted WordPress content management system paired with a browser-based AI Assistant workspace that knows how to safely operate it. Site owners and editors launch the app, provide an AI provider API key, and get both a live WordPress site and an AI agent that can perform backups, restores, plugin and theme management, site URL changes, admin-credential rotation, cache and transient cleanup, security hardening, and 500-error/white-screen diagnostics through natural-language conversation — with built-in safety gates that refuse destructive operations without explicit confirmation. WordPress remains a stock upstream install; the AI Assistant workspace (Magneto Agent) is loaded with a WordPress DevOps Skill containing reference docs, playbooks, and audited scripts scoped to this instance. The tenant owns the AI provider API key and the WordPress data; Clouve hosts the containers.
+      appTitle: WordPress
+      appDescription: WordPress is a versatile, open-source content management system that empowers businesses to create professional, dynamic websites with ease. Renowned for its user-friendly interface and extensive library of themes and plugins, WordPress allows businesses to customize their sites to reflect their unique brand identity and meet specific functional needs. Its built-in SEO tools, responsive design capabilities, and robust security features ensure optimal performance and visibility on search engines. Whether for blogging, e-commerce, or corporate websites, WordPress enhances online presence, drives engagement, and supports business growth by providing a scalable and adaptable platform for all digital content needs.
       adminPath: /wp-admin
     x-clouve-healthcheck:
       enabled: true
@@ -115,12 +115,3 @@ volumes:
     driver: local
   dbdata:
     driver: local
-x-clouve-agent:
-  enabled: true
-  skills:
-    url: https://github.com/Clouve/magneto-skills.git?plugins=wordpress
-    git:
-      token: ''
-      username: ''
-  advanced:
-    client: null
