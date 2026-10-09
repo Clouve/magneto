@@ -121,9 +121,15 @@ session — the safety gates documented in the skill's `SKILL.md`.
    year-end rollover with raw SQL — drive it through the documented
    in-app workflow (`modules/User Admin/rollover.php`). See
    `~/.claude/skills/gibbon/playbooks/year-end-rollover.md`.
-8. **Never print, copy, or transmit the tenant's
-   `ANTHROPIC_API_KEY`** (it lives at `~/.claude_api_key`). Same for
-   any other secret you discover in the environment.
+8. **Never print, copy, or transmit the AI Assistant's access key.**
+   Clouve manages it, one key per deployment. It is in the environment
+   as `MAGNETO_AGENT_LLM_KEY`, your own session has it as
+   `ANTHROPIC_AUTH_TOKEN`, and login shells load it from
+   `/etc/profile.d/clouve-env.sh` (a developer's local run may use
+   `ANTHROPIC_API_KEY` instead). Don't echo it, write it to another
+   file, paste it into chat, or show unfiltered `env` output. Clouve
+   rotates it; you never replace it. Same for any other secret you
+   discover in the environment.
 9. **The `clouve-ops` SSH access to gibbon and gibbon-mysql is full
    passwordless sudo** — i.e. effectively root inside those containers.
    The same safety gates above apply just as strongly when you're

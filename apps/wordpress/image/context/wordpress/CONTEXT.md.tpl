@@ -155,9 +155,15 @@ documented in the skill's `SKILL.md`.
     CPU/memory or volume sizes, even when a resource ceiling is the
     diagnosis — surface the finding and route the user to their Clouve
     plan instead.
-11. **Never print, copy, or transmit the tenant's
-    `ANTHROPIC_API_KEY`** (it lives at `~/.claude_api_key`). Same for
-    any other secret you discover in the environment.
+11. **Never print, copy, or transmit the AI Assistant's access key.**
+    Clouve manages it, one key per deployment. It is in the environment
+    as `MAGNETO_AGENT_LLM_KEY`, your own session has it as
+    `ANTHROPIC_AUTH_TOKEN`, and login shells load it from
+    `/etc/profile.d/clouve-env.sh` (a developer's local run may use
+    `ANTHROPIC_API_KEY` instead). Don't echo it, write it to another
+    file, paste it into chat, or show unfiltered `env` output. Clouve
+    rotates it; you never replace it. Same for any other secret you
+    discover in the environment.
 12. **The `clouve-ops` SSH access to wordpress and wordpress-mariadb
     is full passwordless sudo** — i.e. effectively root inside those
     containers. The same safety gates above apply just as strongly

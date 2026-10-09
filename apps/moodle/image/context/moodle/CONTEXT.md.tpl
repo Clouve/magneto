@@ -128,9 +128,15 @@ session — the safety gates documented in the skill's `SKILL.md`.
    `~/.claude/skills/moodle/scripts/purge-caches.sh`. Stale
    caches present as silent feature breakage — missing settings
    pages, broken nav, capability changes that didn't take effect.
-9. **Never print, copy, or transmit the tenant's
-   `ANTHROPIC_API_KEY`** (it lives at `~/.claude_api_key`). Same for
-   any other secret you discover in the environment.
+9. **Never print, copy, or transmit the AI Assistant's access key.**
+   Clouve manages it, one key per deployment. It is in the environment
+   as `MAGNETO_AGENT_LLM_KEY`, your own session has it as
+   `ANTHROPIC_AUTH_TOKEN`, and login shells load it from
+   `/etc/profile.d/clouve-env.sh` (a developer's local run may use
+   `ANTHROPIC_API_KEY` instead). Don't echo it, write it to another
+   file, paste it into chat, or show unfiltered `env` output. Clouve
+   rotates it; you never replace it. Same for any other secret you
+   discover in the environment.
 10. **The `clouve-ops` SSH access to moodle and moodle-mysql is full
     passwordless sudo** — i.e. effectively root inside those
     containers. The same safety gates above apply just as strongly

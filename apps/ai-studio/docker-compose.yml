@@ -23,8 +23,7 @@
 #                   is baked into the ai-studio image at /clouve/context/ai-studio/
 #                   and pulled by Magneto Agent at init via clouve-ops SSH
 #                   (sidecar-fetcher.sh). Appended to the rendered CLAUDE.md as
-#                   ## Skill: ai-studio at session start. Locked to Claude Code
-#                   via MAGNETO_AGENT_CLIENT=claude-code (optional; commented).
+#                   ## Skill: ai-studio at session start.
 #
 # Differs from clv-docker-compose.yml in targeting plain docker-compose: host-
 # published ports (Magneto Agent on 8081, ai-studio SSH on 2222 for direct dev-time
@@ -38,7 +37,9 @@
 # or:
 #     docker compose up
 #
-# Set ANTHROPIC_API_KEY in your shell to skip the in-terminal key prompt.
+# For AI Assistant model access, export MAGNETO_AGENT_LLM_BASE_URL and
+# MAGNETO_AGENT_LLM_KEY (or ANTHROPIC_API_KEY) in your shell first; see the
+# magneto-agent service below.
 services:
   ai-studio:
     image: r.clv.zone/e2eorg/ai-studio
@@ -97,16 +98,17 @@ services:
       MAGNETO_AGENT_PASSWORD: Admin@123
       MAGNETO_AGENT_ROOT_PASSWORD: Root@123
 
-      # Pre-select Claude Code. Magneto Agent's .bash_profile honours this
-      # env var: skips the interactive selector, marks the choice readonly
-      # in every shell, and the Preferences API rejects client-change
-      # requests with HTTP 400 (spec §5 Q6). No fork of Magneto Agent needed.
-      # MAGNETO_AGENT_CLIENT: claude-code
-
-      # Optional: inject a pre-authenticated key at launch. When unset,
-      # Magneto Agent prompts for it on the first interactive session and
-      # validates against api.anthropic.com/v1/models before storing.
-      # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # AI Assistant model access, for local runs only. A Clouve
+      # deployment gets a managed key from the platform and never reads
+      # these. Export one option in your shell before ./start.sh:
+      #   - MAGNETO_AGENT_LLM_BASE_URL + MAGNETO_AGENT_LLM_KEY: a LiteLLM
+      #     gateway URL and a key it issued, or
+      #   - ANTHROPIC_API_KEY: your own Anthropic API key.
+      # With neither set, the agent shows "The AI Assistant isn't
+      # available yet". There is no key screen.
+      MAGNETO_AGENT_LLM_BASE_URL: ${MAGNETO_AGENT_LLM_BASE_URL:-}
+      MAGNETO_AGENT_LLM_KEY: ${MAGNETO_AGENT_LLM_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
 
       # Activates the ai-studio (workspace) and mern (knowledge-layer) plugins
       # from the magneto-skills Claude Code marketplace. The Magneto Agent

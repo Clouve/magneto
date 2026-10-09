@@ -37,7 +37,7 @@ services:
     x-clouve-bundle-metadata:
       appVersion: '19.0'
       appTitle: Odoo with AI Assistant
-      appDescription: "Odoo is a comprehensive, open-source suite of business applications — CRM, accounting, inventory, HR and more — in one integrated, modular ERP. This edition adds a built-in AI Assistant: a browser-based Claude Code DevOps agent that operates your live Odoo instance through natural language — installing and upgrading modules, taking filestore-aware backups, diagnosing issues, and hardening the deployment — with safety gates that require explicit confirmation before any destructive or irreversible action. You own your Odoo data and your AI provider key."
+      appDescription: "Odoo is a comprehensive, open-source suite of business applications — CRM, accounting, inventory, HR and more — in one integrated, modular ERP. This edition adds a built-in AI Assistant: a browser-based DevOps agent that operates your live Odoo instance through natural language — installing and upgrading modules, taking filestore-aware backups, diagnosing issues, and hardening the deployment — with safety gates that require explicit confirmation before any destructive or irreversible action. The AI Assistant's monthly price includes an AI usage allowance, and you can buy more usage at any time or switch the assistant off and back on after install. You don't need an API key or an account with an AI provider. You own your Odoo data."
     x-clouve-healthcheck:
       enabled: true
       type: HTTP
@@ -116,5 +116,4 @@ x-clouve-agent:
       token: ''
       username: ''
   advanced:
-    client: null
     sidecarPullTimeout: 600
