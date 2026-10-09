@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Magneto** is a Docker Compose-based system for packaging containerized applications (WordPress, Moodle, Gibbon, LimeSurvey, Odoo, OwnCloud, SuiteCRM, Bluesky PDS, AI Studio) for deployment in Kubernetes-based marketplace environments. It provides standardized structures for single applications and multi-application bundles.
+**Magneto** is a Docker Compose-based system for packaging containerized applications (WordPress, Moodle, Gibbon, LimeSurvey, Odoo, OwnCloud, SuiteCRM, AI Studio) for deployment in Kubernetes-based marketplace environments. It provides standardized structures for single applications and multi-application bundles.
 
 ## Common Commands
 
