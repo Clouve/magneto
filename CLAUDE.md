@@ -119,7 +119,7 @@ The `clv-docker-compose.yml` files use custom YAML extensions to describe how th
 - **`x-clouve-healthcheck`**: HTTP/TCP/command-based health checks for the marketplace
 - **`x-clouve-bundle-metadata`**: App title, version, icon path, description
 - **`x-clouve-volumes`**: Volume sizing and human-readable descriptions
-- **`x-clouve-agent`**: AI Assistant opt-in for agent-capable apps: `enabled`, optional `quota` (the monthly AI usage allowance in USD of model usage, one value for every tier; positive, at most 10000, two decimals; left out means Clouve's admin default), `skills.url` (plus optional `skills.git`), and optional `advanced.sidecarPullTimeout` / `advanced.passthroughEnv`. There is no `advanced.client` (one built-in client; uploads reject any value other than `null` or `claude-code`) and no API key: Clouve manages model access with one key per deployment. Spec: README.md, "AI Assistant (`x-clouve-agent`)".
+- **`x-clouve-agent`**: AI Assistant opt-in for agent-capable apps: `enabled`, `skills.url` (plus optional `skills.git`), and optional `advanced.sidecarPullTimeout` / `advanced.passthroughEnv`. There is no `advanced.client` (one built-in client; uploads reject any value other than `null` or `claude-code`) and no API key: Clouve manages model access with one key per deployment. `quota` is retired (Clouve sets the usage allowance; uploads ignore it); the publisher's AI Assistant fee is a pricing setting in the publish wizard, not a manifest field. Spec: README.md, "AI Assistant (`x-clouve-agent`)".
 
 Template variables available in manifest values: `{user.userEmail}`, `{user.firstName}`, `{org.name}`
 

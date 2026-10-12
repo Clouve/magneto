@@ -323,7 +323,6 @@ deployment itself, so the manifest never declares that service.
 ```yaml
 x-clouve-agent:
   enabled: true
-  quota: 25          # optional: monthly AI usage allowance, USD of model usage
   skills:
     url: https://github.com/Clouve/magneto-skills.git?plugins=moodle
     git:
@@ -336,17 +335,21 @@ x-clouve-agent:
 | Field | Meaning |
 | --- | --- |
 | `enabled` | `true` offers the AI Assistant on this listing. The basic twin leaves the whole block out. |
-| `quota` | Optional. The monthly AI usage allowance each deployment gets, in US dollars of model usage. One value covers every plan tier. It must be a positive number no higher than 10000, with at most two decimals. Leave it out to use Clouve's default, which the publish wizard prefills. |
 | `skills.url` | Required when `enabled` is true. The skills marketplace repo, with a non-empty `?plugins=` filter and an optional `#branch`. |
 | `skills.git.token` / `skills.git.username` | Optional credentials for a private skills repo. |
 | `advanced.sidecarPullTimeout` | Optional, in seconds (at most 1800). How long the agent waits at init to pull each sibling's persona and env over `clouve-ops` SSH. Raise it for siblings with a slow first install, as Moodle, Gibbon and Odoo do here. |
 | `advanced.passthroughEnv` | Optional map of extra env vars for the agent container. It is an escape hatch; `apps/ai-studio` uses it. |
 
-Clouve prices the AI Assistant from `quota`: each tier's AI Assistant fee plus
-the allowance at Clouve's markup. Customers see that price on the listing and at
-checkout, never the allowance in dollars, and they can buy more usage for the
-current month when it runs out. The AI Assistant is optional at install and can
-be switched off and on again later.
+The AI Assistant's monthly price is Clouve's platform fee for the tier plus the
+publisher's own AI Assistant fee ($0 to $500 a month), which the publisher sets
+on the publish wizard's pricing step and earns. Clouve sets the monthly usage
+allowance that comes with it and sells extra usage at cost. Customers see one
+price on the listing and at checkout, never the allowance in dollars or the
+split, and they can buy more usage for the current month when it runs out. The
+AI Assistant is optional at install and can be switched off and on again later.
+
+`quota` is retired: Clouve sets the allowance now, so an upload ignores a
+leftover `quota` field instead of rejecting it.
 
 The AI Assistant has one built-in client, so there is no `advanced.client`
 field. An upload ignores a leftover `client: null` or `client: claude-code` and
