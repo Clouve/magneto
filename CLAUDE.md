@@ -20,7 +20,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Build and push to registry
 ./build.sh wordpress --push
 
+# Rebuild from scratch, uploading every layer fresh (prunes the builder's cache first)
+./build.sh wordpress --push --prune
+
 # Environment-specific builds
+./build-e2e.sh wordpress     # r.clv.zone/e2eorg (the local kind cluster's Harbor)
 ./build-dev.sh wordpress
 ./build-prod.sh wordpress
 ./build-uat.sh wordpress
@@ -35,6 +39,18 @@ but pushes keep using the old (project-scoped) robot. Always logout first:
 ./logout.sh my.registry.io   # ...or for another registry
 docker login r.clv.zone -u 'robot$<project>+<name>' -p '<secret>'
 ```
+
+### Push Failures on r.clv.zone
+- **`unexpected status from HEAD request ... 401 Unauthorized`**: the robot belongs to
+  another Harbor project. Robots are project-scoped and `build-e2e.sh` pushes to
+  `e2eorg`, so use a `robot$e2eorg+...` login (issued on app.clouve.dev to ca@clouve.com).
+- **`unknown: blob sha256:... not found`**, with only never-pushed images succeeding:
+  Harbor's database was recreated but its storage kept older repositories (a rebuilt
+  kind cluster that reused the shared e2e bucket). BuildKit remembers which repositories
+  already hold each layer and asks Harbor to mount it from there instead of uploading;
+  the new database has never seen the layer, so Harbor rejects the mount. Fix: add
+  `--prune` (full rebuild, then every layer is uploaded). strato's `setup-harbor` now
+  gives each new kind cluster its own storage folder, so this shouldn't recur there.
 
 ### Start / Stop Applications
 ```bash
@@ -76,6 +92,12 @@ export MAGNETO_AGENT_LLM_BASE_URL=https://llm.example.com MAGNETO_AGENT_LLM_KEY=
 ./test.sh apps/wordpress
 ./test.sh apps/wordpress custom.domain.com custom2.domain.com 8090
 ./test.sh apps/limesurvey
+```
+
+### Testing build.sh
+```bash
+# --prune flag: stubbed docker, builds and pushes nothing, no daemon needed
+bash tests/build-prune.test.sh
 ```
 
 ## Architecture

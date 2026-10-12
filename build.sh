@@ -7,15 +7,19 @@
 # This script can build any Docker application or bundle that has an image directory
 #
 # Usage Modes:
-#   1. From parent directory with name: ./build.sh <app-or-bundle-name> [--push] [--cleanup]
-#   2. From parent directory with path: ./build.sh <relative-path> [--push] [--cleanup]
-#   3. From app/bundle directory: ../build.sh [--push] [--cleanup]
-#   4. From app/bundle directory: ../../build.sh [--push] [--cleanup]
-#   5. Build all: ./build.sh --all [--push] [--cleanup]
+#   1. From parent directory with name: ./build.sh <app-or-bundle-name> [--push] [--cleanup] [--prune]
+#   2. From parent directory with path: ./build.sh <relative-path> [--push] [--cleanup] [--prune]
+#   3. From app/bundle directory: ../build.sh [--push] [--cleanup] [--prune]
+#   4. From app/bundle directory: ../../build.sh [--push] [--cleanup] [--prune]
+#   5. Build all: ./build.sh --all [--push] [--cleanup] [--prune]
 #
 # Options:
 #   --push         Build and push multi-platform images to registry
 #   --cleanup      Remove images and buildx cache before building
+#   --prune        Prune the build cache of the builder this build uses (with
+#                  --push: multiplatform-builder) first, so every layer is
+#                  rebuilt and uploaded fresh. Fixes pushes failing with
+#                  "unknown: blob sha256:... not found"
 #   --all          Build all apps/bundles found in apps/ and bundles/ directories
 #   --tag <tag>    Push/build a single explicit tag instead of the default
 #                  ":<DATE>" + ":latest" pair (e.g. --tag 2025.11.20)
@@ -26,6 +30,7 @@
 #   ./build.sh gibbon --cleanup            # Remove Gibbon images, then build multi-platform locally
 #   ./build.sh gibbon --cleanup --push     # Remove Gibbon images, then build and push multi-platform
 #   ./build.sh gibbon --push --tag 2025.11.20  # Build and push ONLY the :2025.11.20 tag (no :latest/:DATE)
+#   ./build.sh gibbon --push --prune       # Rebuild Gibbon from scratch and upload every layer fresh
 #   ./build.sh apps/wordpress              # Build WordPress using relative path
 #   ./build.sh bundles/education-kit       # Build Education Kit using relative path
 #   ./build.sh --all                       # Build all apps/bundles locally
@@ -40,9 +45,9 @@ set -e
 # Helper function to display usage
 # ============================================================================
 show_usage() {
-    echo "Usage: $0 <app-or-bundle-name> [--push] [--cleanup] [--tag <tag>]"
-    echo "       $0 <relative-path> [--push] [--cleanup] [--tag <tag>]"
-    echo "       $0 --all [--push] [--cleanup] [--tag <tag>]"
+    echo "Usage: $0 <app-or-bundle-name> [--push] [--cleanup] [--prune] [--tag <tag>]"
+    echo "       $0 <relative-path> [--push] [--cleanup] [--prune] [--tag <tag>]"
+    echo "       $0 --all [--push] [--cleanup] [--prune] [--tag <tag>]"
     echo ""
     echo "Supported applications and bundles:"
     for dir in "$SCRIPT_DIR/apps"/*/ "$SCRIPT_DIR/bundles"/*/; do
@@ -57,6 +62,8 @@ show_usage() {
     echo "Options:"
     echo "  --push         Build and push multi-platform images to registry"
     echo "  --cleanup      Remove images and buildx cache before building"
+    echo "  --prune        Prune the build cache of the builder this build uses first, so every"
+    echo "                 layer is rebuilt and uploaded fresh (fixes 'blob ... not found' pushes)"
     echo "  --all          Build all apps/bundles found in apps/ and bundles/ directories"
     echo "  --tag <tag>    Push/build a single explicit tag instead of :<DATE> + :latest"
     echo ""
@@ -65,6 +72,7 @@ show_usage() {
     echo "  $0 gibbon --push               # Build and push Gibbon multi-platform images"
     echo "  $0 gibbon --cleanup            # Remove Gibbon images, then build multi-platform locally"
     echo "  $0 gibbon --cleanup --push     # Remove Gibbon images, then build and push multi-platform"
+    echo "  $0 gibbon --push --prune       # Rebuild Gibbon from scratch and upload every layer fresh"
     echo "  $0 gibbon --push --tag 2025.11.20  # Build and push ONLY the :2025.11.20 tag"
     echo "  $0 apps/wordpress              # Build WordPress using relative path"
     echo "  $0 bundles/education-kit       # Build Education Kit using relative path"
@@ -238,6 +246,53 @@ cleanup_images() {
 }
 
 # ============================================================================
+# Helper function to name the buildx builder this build uses
+# ============================================================================
+# - Push builds need multi-platform output, so they use the docker-container
+#   driver (created on first use as "multiplatform-builder").
+# - Local builds (--load) only need the host platform, so they use the default
+#   docker driver. Crucially, the default driver shares its image cache with
+#   the host daemon, which is required when one of our Dockerfiles uses
+#   FROM <local-image> — locally-built images only exist in the host
+#   daemon's cache, not in the docker-container driver's isolated cache.
+#   The "default" builder is hard-bound to the "default" context and errors
+#   out if the user is on Docker Desktop's "desktop-linux" context (or any
+#   other), so we pick the builder bound to the *current* context.
+resolve_builder_name() {
+    if [ "$PUSH_IMAGES" = true ]; then
+        echo "multiplatform-builder"
+        return 0
+    fi
+    local current_context
+    current_context="$(docker context show 2>/dev/null || echo default)"
+    if docker buildx inspect "$current_context" &> /dev/null; then
+        echo "$current_context"
+    else
+        echo "default"
+    fi
+}
+
+# ============================================================================
+# Helper function to prune a buildx builder's cache (--prune)
+# ============================================================================
+# Drops every cache record, so the next build starts from scratch. It also
+# drops BuildKit's memory of which registry repositories already hold each
+# layer. With that memory a push asks the registry to mount a layer from one
+# of those repositories instead of uploading it, and Harbor rejects the mount
+# ("unknown: blob sha256:... not found") when its database was recreated but
+# its storage kept the old repositories (e.g. a rebuilt kind cluster).
+prune_builder_cache() {
+    local builder="$1"
+    echo "Pruning build cache of buildx builder '$builder'..."
+    if docker buildx prune --builder "$builder" --all --force; then
+        echo "✓ Build cache of '$builder' pruned; every layer will be rebuilt"
+        return 0
+    fi
+    echo "✗ Failed to prune build cache of '$builder'"
+    return 1
+}
+
+# ============================================================================
 # Parse command line arguments
 # ============================================================================
 # Determine script directory early for usage function
@@ -256,19 +311,25 @@ TARGET_DIR=""
 DISPLAY_NAME=""
 PUSH_IMAGES=false
 CLEANUP=false
+PRUNE=false
 CUSTOM_TAG=""
 
 # Check if first argument is --all or --cleanup
 if [ "$1" = "--all" ]; then
     BUILD_ALL=true
     shift
-elif [ "$1" = "--cleanup" ]; then
-    # --cleanup cannot be used as the first argument alone
-    echo "Error: --cleanup must be used with an app/bundle name or --all"
+elif [ "$1" = "--cleanup" ] || [ "$1" = "--prune" ]; then
+    # --cleanup / --prune cannot be used as the first argument alone
+    echo "Error: $1 must be used with an app/bundle name or --all"
     echo ""
     echo "Examples:"
-    echo "  $0 gibbon --cleanup            # Remove Gibbon images, then build"
-    echo "  $0 --all --cleanup             # Remove all images, then build all apps/bundles"
+    if [ "$1" = "--cleanup" ]; then
+        echo "  $0 gibbon --cleanup            # Remove Gibbon images, then build"
+        echo "  $0 --all --cleanup             # Remove all images, then build all apps/bundles"
+    else
+        echo "  $0 gibbon --push --prune       # Prune the push builder's cache, then build and push Gibbon"
+        echo "  $0 --all --push --prune        # Prune it once, then build and push all apps/bundles"
+    fi
     echo ""
     show_usage
     exit 1
@@ -332,6 +393,9 @@ while [ $# -gt 0 ]; do
             ;;
         --cleanup)
             CLEANUP=true
+            ;;
+        --prune)
+            PRUNE=true
             ;;
         --tag)
             # Require a value, and reject the next token if it is another
@@ -408,6 +472,19 @@ if [ "$BUILD_ALL" = true ]; then
         echo ""
     fi
 
+    # Prune the builder's cache once here, not once per target
+    if [ "$PRUNE" = true ]; then
+        PRUNE_BUILDER="$(resolve_builder_name)"
+        if docker buildx inspect "$PRUNE_BUILDER" &> /dev/null; then
+            if ! prune_builder_cache "$PRUNE_BUILDER"; then
+                exit 1
+            fi
+        else
+            echo "⊘ Builder '$PRUNE_BUILDER' does not exist yet; nothing to prune"
+        fi
+        echo ""
+    fi
+
     # Discover all targets
     ALL_TARGETS=($(discover_targets))
 
@@ -434,7 +511,7 @@ if [ "$BUILD_ALL" = true ]; then
         echo ""
 
         # Build the target by recursively calling this script
-        # Note: Don't pass --cleanup to recursive calls since we already cleaned up
+        # Note: Don't pass --cleanup or --prune to recursive calls since we already did them
         BUILD_CMD="$0 $target"
         if [ "$PUSH_IMAGES" = true ]; then
             BUILD_CMD="$BUILD_CMD --push"
@@ -627,34 +704,19 @@ if ! docker buildx version &> /dev/null; then
     exit 1
 fi
 
-# Pick the builder based on whether we're pushing.
-#
-# - Push builds need multi-platform output, so they use the docker-container
-#   driver (created on first use as "multiplatform-builder").
-# - Local builds (--load) only need the host platform, so they use the default
-#   docker driver. Crucially, the default driver shares its image cache with
-#   the host daemon, which is required when one of our Dockerfiles uses
-#   FROM <local-image> — locally-built images only exist in the host
-#   daemon's cache, not in the docker-container driver's isolated cache.
-if [ "$PUSH_IMAGES" = true ]; then
-    BUILDX_BUILDER="multiplatform-builder"
-    if ! docker buildx inspect "$BUILDX_BUILDER" &> /dev/null; then
-        echo "Creating buildx builder '$BUILDX_BUILDER' with docker-container driver..."
-        docker buildx create --name "$BUILDX_BUILDER" --driver docker-container --bootstrap
+# Pick the builder based on whether we're pushing (see resolve_builder_name).
+BUILDX_BUILDER="$(resolve_builder_name)"
+if [ "$PUSH_IMAGES" = true ] && ! docker buildx inspect "$BUILDX_BUILDER" &> /dev/null; then
+    echo "Creating buildx builder '$BUILDX_BUILDER' with docker-container driver..."
+    docker buildx create --name "$BUILDX_BUILDER" --driver docker-container --bootstrap
+fi
+docker buildx use "$BUILDX_BUILDER"
+
+if [ "$PRUNE" = true ]; then
+    if ! prune_builder_cache "$BUILDX_BUILDER"; then
+        exit 1
     fi
-    docker buildx use "$BUILDX_BUILDER"
-else
-    # Local builds: pick a docker-driver builder bound to the *current*
-    # docker context. The "default" builder is hard-bound to the "default"
-    # context and errors out if the user is on Docker Desktop's
-    # "desktop-linux" context (or any other), so we resolve dynamically.
-    CURRENT_CONTEXT="$(docker context show 2>/dev/null || echo default)"
-    if docker buildx inspect "$CURRENT_CONTEXT" &> /dev/null; then
-        BUILDX_BUILDER="$CURRENT_CONTEXT"
-    else
-        BUILDX_BUILDER="default"
-    fi
-    docker buildx use "$BUILDX_BUILDER"
+    echo ""
 fi
 
 # Navigate to the app image directory
