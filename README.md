@@ -335,7 +335,7 @@ x-clouve-agent:
 | Field | Meaning |
 | --- | --- |
 | `enabled` | `true` offers the AI Assistant on this listing. The basic twin leaves the whole block out. |
-| `skills.url` | Required when `enabled` is true. The skills marketplace repo, with a non-empty `?plugins=` filter and an optional `#branch`. |
+| `skills.url` | Optional. The skills marketplace repo, with a non-empty `?plugins=` filter and an optional `#branch`. Left out, the agent starts with its base context and no skills plugins. |
 | `skills.git.token` / `skills.git.username` | Optional credentials for a private skills repo. |
 | `advanced.sidecarPullTimeout` | Optional, in seconds (at most 1800). How long the agent waits at init to pull each sibling's persona and env over `clouve-ops` SSH. Raise it for siblings with a slow first install, as Moodle, Gibbon and Odoo do here. |
 | `advanced.passthroughEnv` | Optional map of extra env vars for the agent container. It is an escape hatch; `apps/ai-studio` uses it. |
