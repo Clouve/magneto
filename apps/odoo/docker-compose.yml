@@ -89,6 +89,17 @@ services:
       MAGNETO_AGENT_USERNAME: admin
       MAGNETO_AGENT_PASSWORD: Admin@123
       MAGNETO_AGENT_ROOT_PASSWORD: Root@123
+      # AI Assistant model access, for local runs only. A Clouve
+      # deployment gets a managed key from the platform and never reads
+      # these. Export one option in your shell before ./start.sh:
+      #   - MAGNETO_AGENT_LLM_BASE_URL + MAGNETO_AGENT_LLM_KEY: a LiteLLM
+      #     gateway URL and a key it issued, or
+      #   - ANTHROPIC_API_KEY: your own Anthropic API key.
+      # With neither set, the agent shows "The AI Assistant isn't
+      # available yet". There is no key screen.
+      MAGNETO_AGENT_LLM_BASE_URL: ${MAGNETO_AGENT_LLM_BASE_URL:-}
+      MAGNETO_AGENT_LLM_KEY: ${MAGNETO_AGENT_LLM_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       # Activates the odoo DevOps plugin from the magneto-skills marketplace.
       # The loader clones it at start, stages skills/odoo/, and runs the
       # plugin's install.sh (postgresql-client, openssh-client, sshpass).

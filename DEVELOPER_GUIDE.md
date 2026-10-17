@@ -303,7 +303,6 @@ Individual applications in the `apps/` directory:
 - **moodle** - Moodle Learning Management System with MySQL 8.0
 - **wordpress** - WordPress CMS with MariaDB (supports dynamic URL updates)
 - **limesurvey** - LimeSurvey Survey Platform with MariaDB (supports dynamic URL updates)
-- **bluesky-pds** - Bluesky Personal Data Server
 
 Each application has:
 - `docker-compose.yml` - Local development configuration with environment variable substitution support

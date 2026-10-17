@@ -314,6 +314,53 @@ Rules:
 - Each listing is published independently on the marketplace (the platform has
   no notion of the pairing — the filename is a packaging-repo convention only).
 
+### AI Assistant (`x-clouve-agent`)
+
+An agent-capable manifest adds a top-level `x-clouve-agent` block. The
+platform reads it at upload and adds the `magneto-agent` container to the
+deployment itself, so the manifest never declares that service.
+
+```yaml
+x-clouve-agent:
+  enabled: true
+  skills:
+    url: https://github.com/Clouve/magneto-skills.git?plugins=moodle
+    git:
+      token: ''
+      username: ''
+  advanced:
+    sidecarPullTimeout: 600
+```
+
+| Field | Meaning |
+| --- | --- |
+| `enabled` | `true` offers the AI Assistant on this listing. The basic twin leaves the whole block out. |
+| `skills.url` | Optional. The skills marketplace repo, with a non-empty `?plugins=` filter and an optional `#branch`. Left out, the agent starts with its base context and no skills plugins. |
+| `skills.git.token` / `skills.git.username` | Optional credentials for a private skills repo. |
+| `advanced.sidecarPullTimeout` | Optional, in seconds (at most 1800). How long the agent waits at init to pull each sibling's persona and env over `clouve-ops` SSH. Raise it for siblings with a slow first install, as Moodle, Gibbon and Odoo do here. |
+| `advanced.passthroughEnv` | Optional map of extra env vars for the agent container. It is an escape hatch; `apps/ai-studio` uses it. |
+
+The AI Assistant's monthly price is Clouve's platform fee for the tier plus the
+publisher's own AI Assistant fee ($0 to $500 a month), which the publisher sets
+on the publish wizard's pricing step and earns. Clouve sets the monthly usage
+allowance that comes with it and sells extra usage at cost. Customers see one
+price on the listing and at checkout, never the allowance in dollars or the
+split, and they can buy more usage for the current month when it runs out. The
+AI Assistant is optional at install and can be switched off and on again later.
+
+`quota` is retired: Clouve sets the allowance now, so an upload ignores a
+leftover `quota` field instead of rejecting it.
+
+The AI Assistant has one built-in client, so there is no `advanced.client`
+field. An upload ignores a leftover `client: null` or `client: claude-code` and
+rejects any other value. Manifests carry no API key and no model settings:
+Clouve manages model access with one key per deployment.
+
+For local runs, an app's `docker-compose.yml` passes model access through from
+the developer's shell (`MAGNETO_AGENT_LLM_BASE_URL` + `MAGNETO_AGENT_LLM_KEY`, or
+`ANTHROPIC_API_KEY`). The full schema and the upload/download round trip are in
+thermo's `docs/OPTIONAL_MAGNETO_AGENT.md`.
+
 ### Container Metadata (`x-clouve-metadata`)
 
 ```yaml

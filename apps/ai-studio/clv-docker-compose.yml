@@ -67,6 +67,5 @@ x-clouve-agent:
       token: ''
       username: ''
   advanced:
-    client: null
     passthroughEnv:
       CLV_SIDECAR_NAMESPACES: ai-studio

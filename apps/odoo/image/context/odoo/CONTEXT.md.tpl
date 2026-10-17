@@ -91,9 +91,9 @@ These rules apply to *every* Odoo-touching action.
    `/mnt/extra-addons` (already on `addons_path`).
 8. **Never expose the database manager.** The `/web/database/*` routes are
    `auth='none'`, gated only by the master password `${ODOO_MASTER_PASSWORD}`
-   (Odoo's `admin_passwd`). Treat that value like the API key — never print or
-   transmit it. The platform locks the manager (`list_db=False` + ingress
-   block); do not re-enable it.
+   (Odoo's `admin_passwd`). Treat that value like any other secret — never
+   print or transmit it. The platform locks the manager (`list_db=False` +
+   ingress block); do not re-enable it.
 9. **A "restart" is a pod/container recycle, not a signal to PID 1.** Odoo is
    the container's main process; module upgrades are separate one-shot
    `odoo-bin … --stop-after-init` invocations, not a restart. Odoo serves
@@ -103,8 +103,11 @@ These rules apply to *every* Odoo-touching action.
     `odoo-bin neutralize -d <db>` (`--stdout` to audit first) disables mail
     servers, crons, payment providers, and webhooks. Never run a clone that can
     email, charge, or webhook production systems.
-11. **Never print, copy, or transmit the tenant's `ANTHROPIC_API_KEY`** (at
-    `~/.claude_api_key`) or any other secret you discover.
+11. **Never print, copy, or transmit the AI Assistant's access key** or any
+    other secret you discover. Clouve manages the key, one per deployment,
+    and rotates it; you never replace it. It is in the environment as
+    `MAGNETO_AGENT_LLM_KEY`, in your session as `ANTHROPIC_AUTH_TOKEN`, and
+    in `/etc/profile.d/clouve-env.sh`.
 12. **The `clouve-ops` SSH access is full passwordless sudo** — the same safety
     gates apply over SSH as locally.
 

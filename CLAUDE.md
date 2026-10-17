@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Magneto** is a Docker Compose-based system for packaging containerized applications (WordPress, Moodle, Gibbon, LimeSurvey, Odoo, OwnCloud, SuiteCRM, Bluesky PDS, AI Studio) for deployment in Kubernetes-based marketplace environments. It provides standardized structures for single applications and multi-application bundles.
+**Magneto** is a Docker Compose-based system for packaging containerized applications (WordPress, Moodle, Gibbon, LimeSurvey, Odoo, OwnCloud, SuiteCRM, AI Studio) for deployment in Kubernetes-based marketplace environments. It provides standardized structures for single applications and multi-application bundles.
 
 ## Common Commands
 
@@ -20,7 +20,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Build and push to registry
 ./build.sh wordpress --push
 
+# Rebuild from scratch, uploading every layer fresh (prunes the builder's cache first)
+./build.sh wordpress --push --prune
+
 # Environment-specific builds
+./build-e2e.sh wordpress     # r.clv.zone/e2eorg (the local kind cluster's Harbor)
 ./build-dev.sh wordpress
 ./build-prod.sh wordpress
 ./build-uat.sh wordpress
@@ -36,6 +40,18 @@ but pushes keep using the old (project-scoped) robot. Always logout first:
 docker login r.clv.zone -u 'robot$<project>+<name>' -p '<secret>'
 ```
 
+### Push Failures on r.clv.zone
+- **`unexpected status from HEAD request ... 401 Unauthorized`**: the robot belongs to
+  another Harbor project. Robots are project-scoped and `build-e2e.sh` pushes to
+  `e2eorg`, so use a `robot$e2eorg+...` login (issued on app.clouve.dev to ca@clouve.com).
+- **`unknown: blob sha256:... not found`**, with only never-pushed images succeeding:
+  Harbor's database was recreated but its storage kept older repositories (a rebuilt
+  kind cluster that reused the shared e2e bucket). BuildKit remembers which repositories
+  already hold each layer and asks Harbor to mount it from there instead of uploading;
+  the new database has never seen the layer, so Harbor rejects the mount. Fix: add
+  `--prune` (full rebuild, then every layer is uploaded). strato's `setup-harbor` now
+  gives each new kind cluster its own storage folder, so this shouldn't recur there.
+
 ### Start / Stop Applications
 ```bash
 # Start an app
@@ -50,6 +66,12 @@ docker login r.clv.zone -u 'robot$<project>+<name>' -p '<secret>'
 
 # Stop and remove persistent data
 ./stop.sh wordpress --cleanup
+
+# Agent-enabled apps: give the local AI Assistant model access from your shell.
+# Local runs only; Clouve deployments use a managed key and never read these.
+export MAGNETO_AGENT_LLM_BASE_URL=https://llm.example.com MAGNETO_AGENT_LLM_KEY=<litellm-key>
+# ...or: export ANTHROPIC_API_KEY=<your-anthropic-key>
+./start.sh wordpress
 ```
 
 ### Monitoring & Debugging
@@ -70,6 +92,12 @@ docker login r.clv.zone -u 'robot$<project>+<name>' -p '<secret>'
 ./test.sh apps/wordpress
 ./test.sh apps/wordpress custom.domain.com custom2.domain.com 8090
 ./test.sh apps/limesurvey
+```
+
+### Testing build.sh
+```bash
+# --prune flag: stubbed docker, builds and pushes nothing, no daemon needed
+bash tests/build-prune.test.sh
 ```
 
 ## Architecture
@@ -113,6 +141,7 @@ The `clv-docker-compose.yml` files use custom YAML extensions to describe how th
 - **`x-clouve-healthcheck`**: HTTP/TCP/command-based health checks for the marketplace
 - **`x-clouve-bundle-metadata`**: App title, version, icon path, description
 - **`x-clouve-volumes`**: Volume sizing and human-readable descriptions
+- **`x-clouve-agent`**: AI Assistant opt-in for agent-capable apps: `enabled`, `skills.url` (plus optional `skills.git`), and optional `advanced.sidecarPullTimeout` / `advanced.passthroughEnv`. There is no `advanced.client` (one built-in client; uploads reject any value other than `null` or `claude-code`) and no API key: Clouve manages model access with one key per deployment. `quota` is retired (Clouve sets the usage allowance; uploads ignore it); the publisher's AI Assistant fee is a pricing setting in the publish wizard, not a manifest field. Spec: README.md, "AI Assistant (`x-clouve-agent`)".
 
 Template variables available in manifest values: `{user.userEmail}`, `{user.firstName}`, `{org.name}`
 

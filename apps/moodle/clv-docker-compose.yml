@@ -50,7 +50,7 @@ services:
     x-clouve-bundle-metadata:
       appVersion: '5.2'
       appTitle: Moodle with AI Assistant
-      appDescription: A cloud-hosted Moodle Learning Management System paired with a browser-based AI Assistant workspace that knows how to safely operate it. School administrators and instructional designers launch the app, provide an AI provider API key, and get both a live Moodle instance and an AI agent that can perform upgrades, plugin installs, MUC purges, backups, restores, maintenance-mode toggles, and 500-error diagnostics through natural-language conversation — with built-in safety gates that refuse destructive operations without explicit confirmation. Moodle remains a stock upstream install; the AI Assistant workspace (Magneto Agent) is loaded with a Moodle DevOps Skill containing reference docs, playbooks, and audited scripts scoped to this instance. The tenant owns the AI provider API key and the Moodle data; Clouve hosts the containers.
+      appDescription: A cloud-hosted Moodle Learning Management System paired with a browser-based AI Assistant workspace that knows how to safely operate it. School administrators and instructional designers launch the app and get both a live Moodle instance and an AI agent that can perform upgrades, plugin installs, MUC purges, backups, restores, maintenance-mode toggles, and 500-error diagnostics through natural-language conversation — with built-in safety gates that refuse destructive operations without explicit confirmation. Moodle remains a stock upstream install; the AI Assistant workspace (Magneto Agent) is loaded with a Moodle DevOps Skill containing reference docs, playbooks, and audited scripts scoped to this instance. The AI Assistant's monthly price includes an AI usage allowance, and you can buy more usage at any time or switch the assistant off and back on after install. You don't need an API key or an account with an AI provider. The tenant owns the Moodle data; Clouve hosts the containers.
     x-clouve-healthcheck:
       enabled: true
       type: HTTP
@@ -131,5 +131,4 @@ x-clouve-agent:
       token: ''
       username: ''
   advanced:
-    client: null
     sidecarPullTimeout: 600

@@ -4,7 +4,7 @@ Moodle deployment for the Clouve marketplace, packaged as a three-container app:
 
 - **`moodle`** — the Moodle Learning Management System web app (PHP 8.3 + Apache).
 - **`moodle-mysql`** — MySQL 8.4, the database backing Moodle.
-- **`magneto-agent`** — a browser-based [Magneto Agent](https://github.com/Clouve/magneto-agent) workspace (the upstream image, used directly — no Moodle-specific image layer) pre-bundled with Claude Code, a Moodle DevOps Skill, and SSH access into the other two containers as a `clouve-ops` operator account. This is what makes the app self-driving: a school administrator drops in an Anthropic API key, lands in a terminal, and gets an agent that can perform upgrades, plugin installs, MUC purges, backups, restores, maintenance-mode toggles, and 500-error diagnostics through natural-language conversation — with safety gates that refuse destructive operations without explicit confirmation.
+- **`magneto-agent`** — a browser-based [Magneto Agent](https://github.com/Clouve/magneto-agent) workspace (the upstream image, used directly — no Moodle-specific image layer) pre-bundled with Claude Code, a Moodle DevOps Skill, and SSH access into the other two containers as a `clouve-ops` operator account. This is what makes the app self-driving: a school administrator opens the AI Assistant and gets an agent that can perform upgrades, plugin installs, MUC purges, backups, restores, maintenance-mode toggles, and 500-error diagnostics through natural-language conversation — with safety gates that refuse destructive operations without explicit confirmation.
 
 Moodle is a free and open-source learning management system written in PHP and distributed under the GNU General Public License.
 
@@ -29,9 +29,12 @@ Moodle is a free and open-source learning management system written in PHP and d
 ## Quick Start
 
 ```bash
-# Optional but recommended: pre-set the Anthropic API key so the Magneto
-# Agent terminal doesn't have to prompt for it on first session.
-export ANTHROPIC_API_KEY=sk-ant-...
+# Give the local AI Assistant model access (local runs only; a Clouve
+# deployment gets a managed key). Either a LiteLLM URL and a key it issued:
+export MAGNETO_AGENT_LLM_BASE_URL=https://llm.example.com
+export MAGNETO_AGENT_LLM_KEY=<litellm-key>
+# ...or your own Anthropic API key instead:
+# export ANTHROPIC_API_KEY=<your-anthropic-key>
 
 # Start all three containers from the repo root
 ./start.sh apps/moodle
@@ -61,8 +64,7 @@ The Magneto Agent companion runs alongside Moodle and gives you a browser-based 
 - **Login Username**: admin
 - **Login Password**: Admin@123
 - **Root Password** (for `su -` inside the Magneto Agent container): Root@123
-- **AI Client**: Claude Code (locked via `MAGNETO_AGENT_CLIENT=claude-code` — the in-terminal selector is skipped, the choice is `readonly` in every shell, and the Preferences API rejects client-change requests)
-- **API Key**: Anthropic key required. If `ANTHROPIC_API_KEY` is set in the container env, Claude Code installs and authenticates on the first terminal session; otherwise you'll be prompted in-terminal with live validation against `api.anthropic.com`.
+- **Model access**: the AI Assistant runs Claude Code with the key from your shell (`MAGNETO_AGENT_LLM_BASE_URL` + `MAGNETO_AGENT_LLM_KEY`, or `ANTHROPIC_API_KEY`; see [Quick Start](#quick-start)). With neither set, it shows "The AI Assistant isn't available yet". There is no key screen, and a Clouve deployment always uses a Clouve-managed key.
 
 ## Magneto Agent Companion (Claude Code + Moodle DevOps Skill)
 
@@ -252,9 +254,9 @@ Set on the `magneto-agent` service in `docker-compose.yml` / `clv-docker-compose
 - `MAGNETO_AGENT_USERNAME` — Login user for the Magneto Agent terminal (default: `admin`).
 - `MAGNETO_AGENT_PASSWORD` — Login password for the Magneto Agent terminal (default: `Admin@123`).
 - `MAGNETO_AGENT_ROOT_PASSWORD` — Root password inside the Magneto Agent container, used by `su -` (default: `Root@123`).
-- `MAGNETO_AGENT_CLIENT` — Locks the AI client to a specific value. Set to `claude-code` here so the in-terminal client selector is skipped, the choice is `readonly`, and the Preferences API rejects client-change requests.
 - `MAGNETO_AGENT_SKILLS` — Marketplace URL with `?plugins=` query. Set to `https://github.com/Clouve/magneto-skills.git?plugins=moodle` to activate the Moodle DevOps skill.
-- `ANTHROPIC_API_KEY` — Tenant-supplied Anthropic API key. If set, Claude Code installs and authenticates on the first terminal session; if unset, the user is prompted in-terminal with live validation against `api.anthropic.com`. Stored to `$HOME/.claude_api_key` after the first successful validation.
+- `MAGNETO_AGENT_LLM_BASE_URL` / `MAGNETO_AGENT_LLM_KEY` — Model access for the AI Assistant: a LiteLLM gateway URL and a key it issued. In a Clouve deployment the platform sets both (one budget-capped key per deployment, from a Kubernetes Secret). In `docker-compose.yml` they pass through from your shell, for local runs only.
+- `ANTHROPIC_API_KEY` — Local-development alternative: your own Anthropic API key, passed through from your shell. A Clouve deployment never sets it.
 - `MOODLE_HOST` / `MOODLE_DB_HOST` / `MOODLE_DB_NAME` / `MOODLE_DB_USER` / `MOODLE_DB_PASSWORD` — Pod-internal pointers surfaced into the Magneto Agent container so the agent's `CLAUDE.md` and the skill's playbooks can refer to the side containers by env var rather than hard-coded names. In `clv-docker-compose.yml` the host vars are typed `containerReference` and the password is `secret`.
 - `CLOUVE_OPS_PASSWORD` — Per-pod password for the `clouve-ops` SSH operator account. Same value is set on all three services (typed `secret` in the marketplace manifest).
 - `CLV_SIDECAR_HOSTS` — Comma-separated list of side-container hostnames the Magneto Agent's sidecar-fetcher SSHs to at init to merge per-plugin `CONTEXT.md.tpl` files. Resolves to `moodle` in this app.
@@ -813,7 +815,7 @@ Before deploying to production:
    - `MYSQL_ROOT_PASSWORD` - MySQL root password
    - `MAGNETO_AGENT_PASSWORD` - Login password for the Magneto Agent terminal
    - `MAGNETO_AGENT_ROOT_PASSWORD` - Root password inside the Magneto Agent container
-   - `ANTHROPIC_API_KEY` - Tenant-supplied; do not commit it to source control. In the marketplace this is typed `userConfigurable` so each tenant supplies their own.
+   - AI keys: never commit `MAGNETO_AGENT_LLM_KEY` or `ANTHROPIC_API_KEY` to source control. On the marketplace the platform gives each deployment a managed key; the manifest carries none.
 
 2. **Configure Application**:
    - `MOODLE_URL` - Set to your production domain (e.g., `https://moodle.school.edu`); SSL-proxy mode is enabled automatically when this starts with `https://`.
@@ -907,7 +909,7 @@ Moodle is a globally adopted open-source learning management system designed for
 - **Moodle Version**: 5.2
 - **PHP Version**: 8.3
 - **Database**: MariaDB 10.11+, **MySQL 8.4+** (this image), PostgreSQL 16+, MSSQL 15+, Aurora MySQL 8.0+
-- **Magneto Agent**: derived from the upstream [`Clouve/magneto-agent`](https://github.com/Clouve/magneto-agent) image — Claude Code (locked via `MAGNETO_AGENT_CLIENT=claude-code`)
+- **Magneto Agent**: derived from the upstream [`Clouve/magneto-agent`](https://github.com/Clouve/magneto-agent) image — Claude Code (Clouve-managed model access in a deployment; your own key for local runs)
 - **Docker Compose**: 3.8+
 - **Kubernetes**: Compatible with ConfigMaps and Secrets
 
