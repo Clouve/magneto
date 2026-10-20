@@ -100,6 +100,14 @@ export MAGNETO_AGENT_LLM_BASE_URL=https://llm.example.com MAGNETO_AGENT_LLM_KEY=
 bash tests/build-prune.test.sh
 ```
 
+### Testing the AI Assistant personas
+```bash
+# Renders every apps/<app>/image/context/<app>/CONTEXT.md.tpl with envsubst, as the Magneto Agent does, using
+# Kubernetes-style hosts (tkt-7-<app>): each persona must give the SSH command for ${<APP>_HOST}, never write the
+# clouve-ops password into the text, and AI Studio's must say the user's work is on the workspace. Needs envsubst.
+bash tests/persona-hosts.test.sh
+```
+
 ## Architecture
 
 ### Project Layout
