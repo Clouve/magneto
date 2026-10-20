@@ -15,7 +15,8 @@ container and reach the others over the pod-internal network:
   `/mnt/extra-addons`. Running **Odoo 19.0**.
 - `${ODOO_DB_HOST}` — PostgreSQL (the `odoo-postgres` image, base `postgres:18`;
   Odoo requires PG ≥ 13). Database `${ODOO_DB_NAME}`, accessed as
-  `${ODOO_DB_USER}` with the password in `${ODOO_DB_PASSWORD}`.
+  `${ODOO_DB_USER}`. The password is in the `ODOO_DB_PASSWORD` variable:
+  pass it as `$(printenv ODOO_DB_PASSWORD)` and never print it.
 - the Magneto Agent container you are running inside of.
 
 The `${...}` placeholders are interpolated at render time from the odoo
@@ -33,14 +34,16 @@ transmit it). Use `sshpass -e`:
 export SSHPASS=$(printenv CLOUVE_OPS_PASSWORD)
 sshpass -e ssh clouve-ops@${ODOO_HOST}            # the Odoo app container
 sshpass -e ssh clouve-ops@${ODOO_DB_HOST}         # the PostgreSQL container
-sshpass -e ssh clouve-ops@${ODOO_HOST} "sudo cat /etc/odoo/odoo.conf"   # one-shot
+sshpass -e ssh clouve-ops@${ODOO_HOST} "sudo grep -vE '^[[:space:]]*(db_password|admin_passwd)[[:space:]]*=' /etc/odoo/odoo.conf"   # config, passwords left out
 ```
 
 Accept the host-key fingerprint once (`-o StrictHostKeyChecking=accept-new` on
-the first run). Use this channel for things that must run inside the target:
-`odoo-bin` invocations as the `odoo` user, inspecting `/etc/odoo/odoo.conf`,
-the filestore at `/var/lib/odoo/filestore/${ODOO_DB_NAME}`, postgres config,
-disk usage. Routine SQL goes through the TCP `psql` client from this container.
+the first run; without it `sshpass` exits with status 6 and prints nothing).
+Use this channel for things that must run inside the target: `odoo` commands
+(run them with `sudo` and the config), inspecting `/etc/odoo/odoo.conf` (its
+`db_password` and `admin_passwd` lines are secrets: never print them), the
+filestore at `/var/lib/odoo/filestore/${ODOO_DB_NAME}`, postgres config, disk
+usage. Routine SQL goes through the TCP `psql` client from this container.
 
 The Odoo DevOps Skill is mounted at `~/.claude/skills/odoo/` (its `SKILL.md`
 is the entry point). Read it before non-trivial operations — it carries the
@@ -58,15 +61,22 @@ These rules apply to *every* Odoo-touching action.
 1. **A complete backup is the PostgreSQL dump *and* the filestore.** The DB
    references attachments on disk by sha1 hash at
    `/var/lib/odoo/filestore/${ODOO_DB_NAME}`; a `pg_dump` alone silently loses
-   them (missing files read back as empty). Prefer the filestore-aware
-   `odoo-bin db dump ${ODOO_DB_NAME} <out.zip>` (produces dump.sql + filestore/
-   + manifest.json). Use the audited `~/.claude/skills/odoo/scripts/backup.sh`.
+   them (missing files read back as empty). Take it by piping the skill's own
+   script into the Odoo container, where it runs `odoo db dump` and checks the
+   ZIP holds dump.sql, manifest.json and the filestore:
+   `sshpass -e ssh -o StrictHostKeyChecking=accept-new clouve-ops@${ODOO_HOST} "sudo bash -s -- ${ODOO_DB_NAME}" < /clouve/skills/odoo/plugin/skills/odoo/scripts/backup.sh`
+   By hand, inside the Odoo container:
+   `sudo ODOO_RC=/etc/odoo/odoo.conf odoo db dump ${ODOO_DB_NAME} <out.zip>`
+   (`odoo db` reads its config from `ODOO_RC`; it takes no `-c` after `dump`).
 2. **Back up before any module install/upgrade, migration, or DDL.**
 3. **Operate Odoo-native, not by raw SQL.** `odoo` and `odoo-bin` are the same
-   command. Module changes: `odoo-bin -d ${ODOO_DB_NAME} -u <module>
-   --stop-after-init` (or `-i` to install) — both require `-d`, are CLI-only,
-   and need `--stop-after-init` for one-shot. Data fixes: `odoo shell -d
-   ${ODOO_DB_NAME}` — but it **rolls back unless you `env.cr.commit()`**.
+   command; over the clouve-ops channel run it with `sudo` and the config.
+   Install or upgrade a module while Odoo keeps serving (it reloads its
+   registry by itself):
+   `sudo odoo module install -c /etc/odoo/odoo.conf -d ${ODOO_DB_NAME} <module>`
+   (or `module upgrade`). Data fixes:
+   `sudo odoo shell -c /etc/odoo/odoo.conf -d ${ODOO_DB_NAME}`
+   (it **rolls back unless you `env.cr.commit()`**).
 4. **No destructive SQL without an explicit ack.** `DROP`, `TRUNCATE`,
    schema-altering `ALTER`, and any multi-row `UPDATE`/`DELETE` are gated. Run
    `SELECT COUNT(*)` first, report the count, and only proceed after the user
@@ -88,21 +98,29 @@ These rules apply to *every* Odoo-touching action.
 7. **Refuse to install third-party addons from untrusted sources** without
    reading their `__manifest__.py` and top-level Python first — addons run
    arbitrary Python in the Odoo container with full DB access. They go in
-   `/mnt/extra-addons` (already on `addons_path`).
+   `/mnt/extra-addons`, which `addons_path` names as the pattern
+   `/mnt/extra-addons*`: Odoo loads the folder at its next start once a module
+   is in it, so restart Odoo (rule 9) after copying new code in, before
+   installing.
 8. **Never expose the database manager.** The `/web/database/*` routes are
-   `auth='none'`, gated only by the master password `${ODOO_MASTER_PASSWORD}`
-   (Odoo's `admin_passwd`). Treat that value like any other secret — never
-   print or transmit it. The platform locks the manager (`list_db=False` +
+   `auth='none'`, gated only by the master password (Odoo's `admin_passwd`,
+   held in the `ODOO_MASTER_PASSWORD` variable). Treat that value like any
+   other secret: never print or transmit it. The platform locks the manager (`list_db=False` +
    ingress block); do not re-enable it.
-9. **A "restart" is a pod/container recycle, not a signal to PID 1.** Odoo is
-   the container's main process; module upgrades are separate one-shot
-   `odoo-bin … --stop-after-init` invocations, not a restart. Odoo serves
-   directly on port 8069 — there is no separate web-server daemon and no HTTP
-   access-log file; Odoo logs go to **stderr** (read via the platform's log view).
+9. **Restart Odoo inside its container, with `SIGHUP`.** Odoo is the
+   container's main process (PID 1) and re-executes itself in place, in the
+   same container and back within seconds, on
+   `grep -q odoo /proc/1/cmdline && sudo kill -HUP 1` over the clouve-ops
+   channel. Installing or upgrading a module needs no restart; new code in
+   `/mnt/extra-addons` does. Never send `SIGTERM` or `SIGKILL` to PID 1 (the
+   container stops with it), and never ask the customer for a restart: their
+   dashboard has no restart button. Odoo serves directly on port 8069 — there
+   is no separate web-server daemon and no HTTP access-log file; Odoo logs go
+   to **stderr** (read via the platform's log view).
 10. **Any non-production clone must be neutralized** before use:
-    `odoo-bin neutralize -d <db>` (`--stdout` to audit first) disables mail
-    servers, crons, payment providers, and webhooks. Never run a clone that can
-    email, charge, or webhook production systems.
+    `sudo odoo neutralize -c /etc/odoo/odoo.conf -d <db>` (`--stdout` to audit
+    first) disables mail servers, crons, payment providers, and webhooks.
+    Never run a clone that can email, charge, or webhook production systems.
 11. **Never print, copy, or transmit the AI Assistant's access key** or any
     other secret you discover. Clouve manages the key, one per deployment,
     and rotates it; you never replace it. It is in the environment as

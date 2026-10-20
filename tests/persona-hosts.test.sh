@@ -14,7 +14,13 @@
 # This test renders every persona the way the agent does, with Kubernetes-style
 # hosts, and checks that:
 #   - it gives the SSH command for its own app host (clouve-ops@<host>);
-#   - the rendered text never contains the clouve-ops password;
+#   - the rendered text never contains a password: not the clouve-ops one, and
+#     not the app's database or Odoo master password, even with the plain
+#     envsubst of agents built before 2026-10-20, which filled in every variable
+#     that was set (a persona names the variable that holds a password, never
+#     ${THE_VARIABLE});
+#   - no manifest-style placeholder ({user.firstName}, {org.name}) is left:
+#     those are filled in only in clv-docker-compose.yml values, never here;
 #   - the AI Studio persona says the user's work is on the workspace, never in
 #     the agent's own container (the assistant once searched its own container
 #     for the starter project and gave up).
@@ -49,6 +55,9 @@ SENTINEL_PW="pw-sentinel-5c1d0b7e"
 # sets, like a login shell that has the agent's sibling env.
 render() {
   env -i PATH="$PATH" "$2=$3" CLOUVE_OPS_PASSWORD="$SENTINEL_PW" USERNAME=Test_User \
+    GIBBON_DB_PASSWORD="$SENTINEL_PW-gibbon-db" MOODLE_DB_PASSWORD="$SENTINEL_PW-moodle-db" \
+    ODOO_DB_PASSWORD="$SENTINEL_PW-odoo-db" ODOO_MASTER_PASSWORD="$SENTINEL_PW-odoo-master" \
+    WORDPRESS_DB_PASSWORD="$SENTINEL_PW-wordpress-db" ROOT_PASSWORD="$SENTINEL_PW-root" \
     envsubst < "$1"
 }
 
@@ -65,6 +74,17 @@ for tpl in "$APPS_DIR"/*/image/context/*/CONTEXT.md.tpl; do
   assert_contains "$app: SSH command names the app host" "$out" "clouve-ops@$host"
   assert_not_contains "$app: no bare-name SSH host" "$out" "clouve-ops@$app "
   assert_not_contains "$app: clouve-ops password stays out of the text" "$out" "$SENTINEL_PW"
+  assert_not_contains "$app: no manifest-style {user.*} placeholder" "$out" "{user."
+  assert_not_contains "$app: no manifest-style {org.*} placeholder" "$out" "{org."
+  case "$app" in
+    gibbon|moodle|odoo|wordpress)
+      dbvar="$(printf '%s' "$app" | tr '[:lower:]-' '[:upper:]_')_DB_PASSWORD"
+      assert_contains "$app: names the variable that holds the database password" "$out" "\`$dbvar\`"
+      ;;
+  esac
+  if [ "$app" = "odoo" ]; then
+    assert_contains "odoo: names the variable that holds the master password" "$out" "\`ODOO_MASTER_PASSWORD\`"
+  fi
 
   if [ "$app" = "ai-studio" ]; then
     assert_contains "ai-studio: the starter project is placed on the workspace host" "$out" \

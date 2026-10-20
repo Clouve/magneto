@@ -13,8 +13,9 @@ container and reach the others over the pod-internal network:
 - `${GIBBON_HOST}` — the GibbonEdu web app (Apache + PHP 8.3, port 80,
   webroot `/var/www/html`). Currently shipping **GibbonEdu v30.0.01**.
 - `${GIBBON_DB_HOST}` — MySQL 8.0, the database backing Gibbon. Schema
-  `${GIBBON_DB_NAME}`, accessed as `${GIBBON_DB_USER}` with the password
-  in `${GIBBON_DB_PASSWORD}`.
+  `${GIBBON_DB_NAME}`, accessed as `${GIBBON_DB_USER}`. The password is in
+  the `GIBBON_DB_PASSWORD` variable: pass it as
+  `$(printenv GIBBON_DB_PASSWORD)` and never print it.
 - the Magneto Agent container you are running inside of.
 
 The `${...}` placeholders above are interpolated at render time from the

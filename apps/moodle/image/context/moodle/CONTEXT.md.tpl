@@ -13,8 +13,9 @@ application + database over the pod-internal network via these env vars:
 
 - `${MOODLE_HOST}` — the Moodle web app.
 - `${MOODLE_DB_HOST}` — the MySQL host backing Moodle. Schema
-  `${MOODLE_DB_NAME}`, accessed as `${MOODLE_DB_USER}` with the password
-  in `${MOODLE_DB_PASSWORD}`.
+  `${MOODLE_DB_NAME}`, accessed as `${MOODLE_DB_USER}`. The password is in
+  the `MOODLE_DB_PASSWORD` variable: pass it as
+  `$(printenv MOODLE_DB_PASSWORD)` and never print it.
 - the AI Studio container you are running inside of.
 
 The `${...}` placeholders above are interpolated at render time by the

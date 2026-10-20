@@ -103,9 +103,25 @@ bash tests/build-prune.test.sh
 ### Testing the AI Assistant personas
 ```bash
 # Renders every apps/<app>/image/context/<app>/CONTEXT.md.tpl with envsubst, as the Magneto Agent does, using
-# Kubernetes-style hosts (tkt-7-<app>): each persona must give the SSH command for ${<APP>_HOST}, never write the
-# clouve-ops password into the text, and AI Studio's must say the user's work is on the workspace. Needs envsubst.
+# Kubernetes-style hosts (tkt-7-<app>): each persona must give the SSH command for ${<APP>_HOST}, never write a
+# password into the text (clouve-ops, database or Odoo master: name the variable, never ${THE_VARIABLE}), leave no
+# {user.*}/{org.*} placeholder, and AI Studio's must say the user's work is on the workspace. Needs envsubst.
 bash tests/persona-hosts.test.sh
+```
+
+### Testing the Gibbon image
+```bash
+# school-year.sh: the Current school year comes from the install date, not the seed data (no MySQL or Docker needed)
+bash tests/gibbon-school-year.test.sh
+```
+
+### Testing the Odoo image
+```bash
+# addons_path names /mnt/extra-addons as a pattern, so an empty folder logs no warning
+bash tests/odoo-addons-path.test.sh
+# The Odoo persona's commands run as written: the config on every odoo command, backup.sh piped into
+# the Odoo container, restarts by SIGHUP to PID 1, nothing that prints odoo.conf's passwords
+bash tests/odoo-persona-commands.test.sh
 ```
 
 ## Architecture

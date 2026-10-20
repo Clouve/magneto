@@ -101,6 +101,12 @@ The application uses three Docker volumes:
 
 ## Installing Custom Addons
 
+Custom modules go in `/mnt/extra-addons`, which has its own volume (`odoo_addons` here, `odoo-addons` in the
+Clouve listing). The entrypoint lists the folder in `addons_path` as the pattern `/mnt/extra-addons*`. Odoo
+expands the pattern each time it starts: while no module is in the folder it skips it without a warning, and
+once a module folder (with `__init__.py` and `__manifest__.py`) is there, Odoo loads it. So restart Odoo after
+adding the first module, before you look for it in Apps.
+
 To install custom Odoo addons:
 
 1. Place your addon directories in a local folder (e.g., `./addons`)
@@ -117,6 +123,13 @@ volumes:
 ```bash
 docker-compose down
 docker-compose up -d
+```
+
+   If the modules are already in the volume, restarting Odoo inside its container is enough. Odoo is the
+   container's main process and re-executes itself on `SIGHUP`:
+
+```bash
+docker-compose exec odoo kill -HUP 1
 ```
 
 4. In Odoo, go to Apps → Update Apps List → Install your custom addon
@@ -249,13 +262,15 @@ docker-compose up -d
 **Symptom**: Custom modules not visible in Odoo Apps
 
 **Solution**:
-1. Verify the addons are in the correct directory structure
+1. Verify the addons are in the correct directory structure: each module is its own folder directly inside
+   `/mnt/extra-addons`, holding `__init__.py` and `__manifest__.py`
 2. Update the apps list in Odoo (Apps → Update Apps List)
 3. Check file permissions on the addons directory:
    ```bash
    docker-compose exec odoo ls -la /mnt/extra-addons
    ```
-4. Restart Odoo container:
+4. Restart Odoo container. Odoo checks the `/mnt/extra-addons*` entry in `addons_path` only when it starts,
+   so the first module in the folder stays invisible until then:
    ```bash
    docker-compose restart odoo
    ```
@@ -335,7 +350,7 @@ db_host = odoo-postgres
 db_port = 5432
 db_user = odoo
 db_password = strong_db_password
-addons_path = /usr/lib/python3/dist-packages/odoo/addons,/mnt/extra-addons
+addons_path = /usr/lib/python3/dist-packages/odoo/addons,/mnt/extra-addons*
 data_dir = /var/lib/odoo
 logfile = /var/log/odoo/odoo.log
 log_level = info

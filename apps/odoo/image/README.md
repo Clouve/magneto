@@ -128,7 +128,9 @@ This configuration is used by build scripts to automate the image building proce
    - Verifies PostgreSQL connection using `psql`
    - Creates necessary directories with proper permissions
    - Sets up Odoo data directory (`/var/lib/odoo`)
-   - Sets up addons directory (`/mnt/extra-addons`)
+   - Sets up addons directory (`/mnt/extra-addons`), the custom-modules volume. The `odoo.conf` that the
+     entrypoint writes on every start lists it in `addons_path` as the pattern `/mnt/extra-addons*`, so Odoo
+     skips it without a warning while it holds no module and loads it at the next start once one is there
 
 4. **Marker File Creation**
    - Creates `.odoo_initialized` marker file
