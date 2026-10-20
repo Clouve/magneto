@@ -12,8 +12,9 @@ application + database over the pod-internal network via these env vars:
 
 - `${WORDPRESS_HOST}` — the WordPress web app (Apache on :80).
 - `${WORDPRESS_DB_HOST}` — the MariaDB host backing WordPress. Schema
-  `${WORDPRESS_DB_NAME}`, accessed as `${WORDPRESS_DB_USER}` with the
-  password in `${WORDPRESS_DB_PASSWORD}`.
+  `${WORDPRESS_DB_NAME}`, accessed as `${WORDPRESS_DB_USER}`. The password
+  is in the `WORDPRESS_DB_PASSWORD` variable: pass it as
+  `$(printenv WORDPRESS_DB_PASSWORD)` and never print it.
 - the Magneto Agent container you are running inside of.
 
 The `${...}` placeholders above are interpolated at render time by the

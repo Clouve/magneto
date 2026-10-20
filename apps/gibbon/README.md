@@ -270,6 +270,13 @@ docker exec gibbon_mysql mysql -u gibbon -pgibbon_password gibbon -sN -e \
 - `GIBBON_ORGANISATION_INITIALS` - Organization initials
 - `DEMO_DATA` - Include demo data (Y/N)
 - `GIBBON_LOG_LEVEL` - Apache log level (debug, info, warn, error)
+- `GIBBON_TIMEZONE` - The school's time zone (default `America/Los_Angeles`); it also sets the install date the school years are worked out from
+
+Gibbon's seed data marks 2025-2026 as the Current school year whatever the date. So after the first install,
+`installer/school-year.sh` sets the years from the install date: the year that contains the date is Current (in the
+summer gap between two years, the coming year is), earlier years are Past and later ones Upcoming. If the date is past
+every seeded year, the missing years are added, and one Upcoming year always follows Current, because Gibbon's rollover
+needs one. Added years have no terms. The step runs only on a fresh volume, so existing installs keep their years.
 
 ### Scheduled Tasks Configuration
 - `GIBBON_CRON_INTERVAL` - Crontab schedule for the Gibbon scheduled-tasks runner (default: `* * * * *`). See [Scheduled Tasks](#scheduled-tasks).

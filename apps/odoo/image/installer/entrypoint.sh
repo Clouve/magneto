@@ -82,8 +82,10 @@ db_password = $DB_PASSWORD
 ; Data directory
 data_dir = $ODOO_DATA_DIR
 
-; Addons path
-addons_path = /usr/lib/python3/dist-packages/odoo/addons,/mnt/extra-addons
+; Addons path. /mnt/extra-addons (its own volume, for custom modules) is
+; written as a pattern: Odoo expands it at every start and skips it without a
+; warning while no module is in it, then loads it once one is.
+addons_path = /usr/lib/python3/dist-packages/odoo/addons,/mnt/extra-addons*
 
 ; Master password for database manager
 ; This password protects database management operations (create, delete, backup, restore)
