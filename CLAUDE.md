@@ -115,6 +115,15 @@ bash tests/persona-hosts.test.sh
 bash tests/gibbon-school-year.test.sh
 ```
 
+### Testing the Moodle image
+```bash
+# upgrade.sh keeps the plugins that admins added through Moodle's UI when a newer Moodle replaces the code tree. It
+# holds back, in clouve/upgrade-stash/, the ones the new Moodle ships itself or whose version.php says they won't work
+# with it, and all of them if Moodle's upgrade fails twice with them in place. A start that is cut off runs the
+# upgrade again. Needs Docker: it runs in php:8.3-apache, the image's base.
+bash tests/moodle-upgrade-plugins.test.sh
+```
+
 ### Testing the Odoo image
 ```bash
 # addons_path names /mnt/extra-addons as a pattern, so an empty folder logs no warning
