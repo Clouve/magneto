@@ -19,6 +19,13 @@
 #     envsubst of agents built before 2026-10-20, which filled in every variable
 #     that was set (a persona names the variable that holds a password, never
 #     ${THE_VARIABLE});
+#   - it fetches the clouve-ops password, the app's database password and
+#     Odoo's master password with ${NAME:-$(clv-secret NAME)}, and never reads
+#     one with printenv. An older agent has NAME in its environment and no
+#     clv-secret. A new agent has clv-secret and no NAME. A persona ships in a
+#     sibling image pinned to a dated tag, and the agent runs :latest, so it
+#     can meet either one. Only the two-part form works on both: a plain
+#     $(clv-secret NAME) fails on the older agent;
 #   - no manifest-style placeholder ({user.firstName}, {org.name}) is left:
 #     those are filled in only in clv-docker-compose.yml values, never here;
 #   - the AI Studio persona says the user's work is on the workspace, never in
@@ -46,6 +53,12 @@ assert_contains() { if grep -qF -- "$3" <<< "$2"; then pass "$1"; else
   fail "$1"; printf '       wanted: %q\n' "$3"; fi; }
 assert_not_contains() { if ! grep -qF -- "$3" <<< "$2"; then pass "$1"; else
   fail "$1"; printf '       did NOT want: %q\n' "$3"; fi; }
+# assert_not_matches <label> <text> <ere>: passes when no part of the text matches.
+assert_not_matches() { local hit; hit="$(grep -oE -- "$3" <<< "$2")"; if [ -z "$hit" ]; then pass "$1"; else
+  fail "$1"; printf '       did NOT want: %q\n' "$hit"; fi; }
+
+# two_part NAME: prints ${NAME:-$(clv-secret NAME)}, the form a persona fetches a password with.
+two_part() { printf '${%s:-$(clv-secret %s)}' "$1" "$1"; }
 
 command -v envsubst >/dev/null || { echo "envsubst not found (install gettext-base)"; exit 1; }
 
@@ -76,15 +89,28 @@ for tpl in "$APPS_DIR"/*/image/context/*/CONTEXT.md.tpl; do
   assert_not_contains "$app: clouve-ops password stays out of the text" "$out" "$SENTINEL_PW"
   assert_not_contains "$app: no manifest-style {user.*} placeholder" "$out" "{user."
   assert_not_contains "$app: no manifest-style {org.*} placeholder" "$out" "{org."
+  assert_contains "$app: exports SSHPASS from the two-part form of the clouve-ops password" "$out" \
+    "export SSHPASS=\"$(two_part CLOUVE_OPS_PASSWORD)\""
+  # printenv CLOUVE_OPS_PASSWORD, printenv <APP>_DB_PASSWORD, printenv ODOO_MASTER_PASSWORD: none of them.
+  assert_not_matches "$app: never reads a password with printenv" "$out" 'printenv[[:space:]]+[A-Z0-9_]*PASSWORD'
   case "$app" in
     gibbon|moodle|odoo|wordpress)
       dbvar="$(printf '%s' "$app" | tr '[:lower:]-' '[:upper:]_')_DB_PASSWORD"
       assert_contains "$app: names the variable that holds the database password" "$out" "\`$dbvar\`"
+      assert_contains "$app: fetches the database password in the two-part form" "$out" "$(two_part "$dbvar")"
       ;;
   esac
   if [ "$app" = "odoo" ]; then
     assert_contains "odoo: names the variable that holds the master password" "$out" "\`ODOO_MASTER_PASSWORD\`"
+    assert_contains "odoo: fetches the master password in the two-part form" "$out" "$(two_part ODOO_MASTER_PASSWORD)"
   fi
+  # Every clv-secret call sits inside the two-part form for its own name. Take those out and none is left.
+  rest="$out"
+  for name in $(grep -oE '\$\(clv-secret [A-Za-z0-9_]+\)' <<< "$out" | sed -E 's/^.* ([A-Za-z0-9_]+)\)$/\1/' | sort -u); do
+    form="$(two_part "$name")"
+    rest="${rest//"$form"/}"
+  done
+  assert_not_matches "$app: no clv-secret call outside the two-part form" "$rest" '\$\(clv-secret [A-Za-z0-9_]+\)'
 
   if [ "$app" = "ai-studio" ]; then
     assert_contains "ai-studio: the starter project is placed on the workspace host" "$out" \

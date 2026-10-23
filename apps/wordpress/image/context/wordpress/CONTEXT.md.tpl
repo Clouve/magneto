@@ -13,8 +13,9 @@ application + database over the pod-internal network via these env vars:
 - `${WORDPRESS_HOST}` — the WordPress web app (Apache on :80).
 - `${WORDPRESS_DB_HOST}` — the MariaDB host backing WordPress. Schema
   `${WORDPRESS_DB_NAME}`, accessed as `${WORDPRESS_DB_USER}`. The password
-  is in the `WORDPRESS_DB_PASSWORD` variable: pass it as
-  `$(printenv WORDPRESS_DB_PASSWORD)` and never print it.
+  is named `WORDPRESS_DB_PASSWORD`: pass it as
+  `${WORDPRESS_DB_PASSWORD:-$(clv-secret WORDPRESS_DB_PASSWORD)}` and never
+  print it.
 - the Magneto Agent container you are running inside of.
 
 The `${...}` placeholders above are interpolated at render time by the
@@ -38,15 +39,17 @@ everything** — treat it as effective root inside those containers,
 gated only by the safety rules in this document and the WordPress
 DevOps Skill.
 
-Authenticate with the per-pod password held in the env var named
-`CLOUVE_OPS_PASSWORD`. The variable is already in your shell env (do
-not echo or transmit it). Use `sshpass -e`, which reads the password
-from `SSHPASS` rather than the command line, so it never lands in
-shell history or `ps`:
+Authenticate with the per-pod password named `CLOUVE_OPS_PASSWORD`. On
+current agents it isn't in your environment, so a command fetches it with
+`${CLOUVE_OPS_PASSWORD:-$(clv-secret CLOUVE_OPS_PASSWORD)}`. That form
+also works on older agents, which still have it in the environment. Never
+run `clv-secret CLOUVE_OPS_PASSWORD` on its own or print it. Use
+`sshpass -e`, which reads the password from `SSHPASS` rather than the
+command line, so it never lands in shell history or `ps`:
 
 ```bash
 # Make the per-pod password available to sshpass (do this once per shell):
-export SSHPASS=$(printenv CLOUVE_OPS_PASSWORD)
+export SSHPASS="${CLOUVE_OPS_PASSWORD:-$(clv-secret CLOUVE_OPS_PASSWORD)}"
 
 # Open an interactive shell in the wordpress container
 sshpass -e ssh clouve-ops@${WORDPRESS_HOST}

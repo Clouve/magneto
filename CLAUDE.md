@@ -104,8 +104,10 @@ bash tests/build-prune.test.sh
 ```bash
 # Renders every apps/<app>/image/context/<app>/CONTEXT.md.tpl with envsubst, as the Magneto Agent does, using
 # Kubernetes-style hosts (tkt-7-<app>): each persona must give the SSH command for ${<APP>_HOST}, never write a
-# password into the text (clouve-ops, database or Odoo master: name the variable, never ${THE_VARIABLE}), leave no
-# {user.*}/{org.*} placeholder, and AI Studio's must say the user's work is on the workspace. Needs envsubst.
+# password into the text (clouve-ops, database or Odoo master: name the variable and fetch it with
+# ${NAME:-$(clv-secret NAME)}, which works on an agent with clv-secret and on one without, never
+# ${THE_VARIABLE} or printenv), leave no {user.*}/{org.*} placeholder, and AI Studio's must say the user's work
+# is on the workspace. Needs envsubst.
 bash tests/persona-hosts.test.sh
 ```
 
@@ -113,6 +115,15 @@ bash tests/persona-hosts.test.sh
 ```bash
 # school-year.sh: the Current school year comes from the install date, not the seed data (no MySQL or Docker needed)
 bash tests/gibbon-school-year.test.sh
+```
+
+### Testing the Moodle image
+```bash
+# upgrade.sh keeps the plugins that admins added through Moodle's UI when a newer Moodle replaces the code tree. It
+# holds back, in clouve/upgrade-stash/, the ones the new Moodle ships itself or whose version.php says they won't work
+# with it, and all of them if Moodle's upgrade fails twice with them in place. A start that is cut off runs the
+# upgrade again. Needs Docker: it runs in php:8.3-apache, the image's base.
+bash tests/moodle-upgrade-plugins.test.sh
 ```
 
 ### Testing the Odoo image

@@ -15,8 +15,8 @@ container and reach the others over the pod-internal network:
   `/mnt/extra-addons`. Running **Odoo 19.0**.
 - `${ODOO_DB_HOST}` — PostgreSQL (the `odoo-postgres` image, base `postgres:18`;
   Odoo requires PG ≥ 13). Database `${ODOO_DB_NAME}`, accessed as
-  `${ODOO_DB_USER}`. The password is in the `ODOO_DB_PASSWORD` variable:
-  pass it as `$(printenv ODOO_DB_PASSWORD)` and never print it.
+  `${ODOO_DB_USER}`. The password is named `ODOO_DB_PASSWORD`: pass it as
+  `${ODOO_DB_PASSWORD:-$(clv-secret ODOO_DB_PASSWORD)}` and never print it.
 - the Magneto Agent container you are running inside of.
 
 The `${...}` placeholders are interpolated at render time from the odoo
@@ -27,11 +27,14 @@ sibling's env by the magneto-agent's `sidecar-env-fetcher`.
 You **do** have a shell into both side containers via SSH, as the `clouve-ops`
 operator account (passwordless sudo — effectively root, gated only by the
 safety rules in this document and the Odoo DevOps Skill). Authenticate with the
-per-pod password in `CLOUVE_OPS_PASSWORD` (already in your env — never echo or
-transmit it). Use `sshpass -e`:
+per-pod password named `CLOUVE_OPS_PASSWORD`. On current agents it isn't in
+your environment, so a command fetches it with
+`${CLOUVE_OPS_PASSWORD:-$(clv-secret CLOUVE_OPS_PASSWORD)}`. That form also
+works on older agents, which still have it in the environment. Never run
+`clv-secret CLOUVE_OPS_PASSWORD` on its own or print it. Use `sshpass -e`:
 
 ```bash
-export SSHPASS=$(printenv CLOUVE_OPS_PASSWORD)
+export SSHPASS="${CLOUVE_OPS_PASSWORD:-$(clv-secret CLOUVE_OPS_PASSWORD)}"
 sshpass -e ssh clouve-ops@${ODOO_HOST}            # the Odoo app container
 sshpass -e ssh clouve-ops@${ODOO_DB_HOST}         # the PostgreSQL container
 sshpass -e ssh clouve-ops@${ODOO_HOST} "sudo grep -vE '^[[:space:]]*(db_password|admin_passwd)[[:space:]]*=' /etc/odoo/odoo.conf"   # config, passwords left out
@@ -104,7 +107,8 @@ These rules apply to *every* Odoo-touching action.
    installing.
 8. **Never expose the database manager.** The `/web/database/*` routes are
    `auth='none'`, gated only by the master password (Odoo's `admin_passwd`,
-   held in the `ODOO_MASTER_PASSWORD` variable). Treat that value like any
+   named `ODOO_MASTER_PASSWORD`). Where a command needs it, pass
+   `${ODOO_MASTER_PASSWORD:-$(clv-secret ODOO_MASTER_PASSWORD)}`. Treat that value like any
    other secret: never print or transmit it. The platform locks the manager (`list_db=False` +
    ingress block); do not re-enable it.
 9. **Restart Odoo inside its container, with `SIGHUP`.** Odoo is the

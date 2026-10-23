@@ -13,9 +13,10 @@ container and reach the others over the pod-internal network:
 - `${GIBBON_HOST}` — the GibbonEdu web app (Apache + PHP 8.3, port 80,
   webroot `/var/www/html`). Currently shipping **GibbonEdu v30.0.01**.
 - `${GIBBON_DB_HOST}` — MySQL 8.0, the database backing Gibbon. Schema
-  `${GIBBON_DB_NAME}`, accessed as `${GIBBON_DB_USER}`. The password is in
-  the `GIBBON_DB_PASSWORD` variable: pass it as
-  `$(printenv GIBBON_DB_PASSWORD)` and never print it.
+  `${GIBBON_DB_NAME}`, accessed as `${GIBBON_DB_USER}`. The password is
+  named `GIBBON_DB_PASSWORD`: pass it as
+  `${GIBBON_DB_PASSWORD:-$(clv-secret GIBBON_DB_PASSWORD)}` and never print
+  it.
 - the Magneto Agent container you are running inside of.
 
 The `${...}` placeholders above are interpolated at render time from the
@@ -36,17 +37,19 @@ sudo for everything** — treat it as effective root inside those
 containers, gated only by the safety rules in this document and the
 Gibbon DevOps Skill.
 
-Authenticate with the per-pod password held in the env var named
-`CLOUVE_OPS_PASSWORD` — the same value is set on all three pods,
-applied to the `clouve-ops` user via `chpasswd` on each side
-container's start. The variable is already in your shell env (do not
-echo or transmit it). Use `sshpass -e`, which reads the password from
-`SSHPASS` rather than the command line, so it never lands in shell
-history or `ps`:
+Authenticate with the per-pod password named `CLOUVE_OPS_PASSWORD`. The
+same value is set on all three pods and applied to the `clouve-ops` user
+via `chpasswd` on each side container's start. On current agents it isn't
+in your environment, so a command fetches it with
+`${CLOUVE_OPS_PASSWORD:-$(clv-secret CLOUVE_OPS_PASSWORD)}`. That form
+also works on older agents, which still have it in the environment. Never
+run `clv-secret CLOUVE_OPS_PASSWORD` on its own or print it. Use
+`sshpass -e`, which reads the password from `SSHPASS` rather than the
+command line, so it never lands in shell history or `ps`:
 
 ```bash
 # Make the per-pod password available to sshpass (do this once per shell):
-export SSHPASS=$(printenv CLOUVE_OPS_PASSWORD)
+export SSHPASS="${CLOUVE_OPS_PASSWORD:-$(clv-secret CLOUVE_OPS_PASSWORD)}"
 
 # Open an interactive shell in the gibbon container
 sshpass -e ssh clouve-ops@${GIBBON_HOST}

@@ -850,7 +850,8 @@ The `clv-docker-compose.yml` file contains Clouve-specific extensions for market
 - `image/Dockerfile` - Custom Moodle Docker image definition. Now also installs `openssh-server` + `sudo` and creates the `clouve-ops` operator account.
 - `image/installer/entrypoint.sh` - Container entrypoint (install/upgrade/config-update + cron + clouve-ops sshd bring-up).
 - `image/installer/install.sh` - Initial installation logic (non-interactive `admin/cli/install.php`).
-- `image/installer/upgrade.sh` - Upgrade flow (`admin/cli/upgrade.php --non-interactive`).
+- `image/installer/upgrade.sh` - Upgrade flow: moves the old code tree aside, copies the image's Moodle, copies back the plugins that admins added through Moodle's UI, then runs `admin/cli/upgrade.php --non-interactive`. If that fails twice with added plugins in place, it holds them back and runs it once more without them. The old tree stays in `clouve/upgrade-previous/` until the upgrade succeeds, so a start that is cut off can run the upgrade again.
+- `image/installer/added-plugins.php` - Lists those added plugins for `upgrade.sh`, and holds back the ones that the new Moodle ships itself or whose `version.php` says they won't work with it. Held-back plugins stay in `clouve/upgrade-stash/` on the code volume, and the container log says why.
 - `image/installer/update-config.sh` - Configuration update script (DB credentials + `wwwroot` + SSL proxy).
 - `image/installer/moodle-cron.sh` - Wrapper around `admin/cli/cron.php` invoked by cron.
 - `image/installer/start-clouve-ops-sshd.sh` - Applies the per-pod `CLOUVE_OPS_PASSWORD` to the `clouve-ops` user via `chpasswd`, then `exec`s `sshd -D`.
