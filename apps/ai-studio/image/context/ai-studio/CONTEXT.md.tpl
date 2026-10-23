@@ -12,7 +12,7 @@ The workspace is its own container, `${AI_STUDIO_HOST}`, separate from yours. Ev
 
 ```bash
 # Make the per-pod password available to sshpass (once per shell; never echo it):
-export SSHPASS=$(printenv CLOUVE_OPS_PASSWORD)
+export SSHPASS="${CLOUVE_OPS_PASSWORD:-$(clv-secret CLOUVE_OPS_PASSWORD)}"
 
 # A one-shot command on the workspace (preferred for scripted steps)
 sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \

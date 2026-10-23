@@ -104,8 +104,10 @@ bash tests/build-prune.test.sh
 ```bash
 # Renders every apps/<app>/image/context/<app>/CONTEXT.md.tpl with envsubst, as the Magneto Agent does, using
 # Kubernetes-style hosts (tkt-7-<app>): each persona must give the SSH command for ${<APP>_HOST}, never write a
-# password into the text (clouve-ops, database or Odoo master: name the variable, never ${THE_VARIABLE}), leave no
-# {user.*}/{org.*} placeholder, and AI Studio's must say the user's work is on the workspace. Needs envsubst.
+# password into the text (clouve-ops, database or Odoo master: name the variable and fetch it with
+# ${NAME:-$(clv-secret NAME)}, which works on an agent with clv-secret and on one without, never
+# ${THE_VARIABLE} or printenv), leave no {user.*}/{org.*} placeholder, and AI Studio's must say the user's work
+# is on the workspace. Needs envsubst.
 bash tests/persona-hosts.test.sh
 ```
 

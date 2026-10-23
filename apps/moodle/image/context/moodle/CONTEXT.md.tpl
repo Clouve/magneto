@@ -13,9 +13,10 @@ application + database over the pod-internal network via these env vars:
 
 - `${MOODLE_HOST}` — the Moodle web app.
 - `${MOODLE_DB_HOST}` — the MySQL host backing Moodle. Schema
-  `${MOODLE_DB_NAME}`, accessed as `${MOODLE_DB_USER}`. The password is in
-  the `MOODLE_DB_PASSWORD` variable: pass it as
-  `$(printenv MOODLE_DB_PASSWORD)` and never print it.
+  `${MOODLE_DB_NAME}`, accessed as `${MOODLE_DB_USER}`. The password is
+  named `MOODLE_DB_PASSWORD`: pass it as
+  `${MOODLE_DB_PASSWORD:-$(clv-secret MOODLE_DB_PASSWORD)}` and never print
+  it.
 - the AI Studio container you are running inside of.
 
 The `${...}` placeholders above are interpolated at render time by the
@@ -34,15 +35,17 @@ sudo for everything** — treat it as effective root inside those
 containers, gated only by the safety rules in this document and the
 Moodle DevOps Skill.
 
-Authenticate with the per-pod password held in the env var named
-`CLOUVE_OPS_PASSWORD`. The variable is already in your shell env (do
-not echo or transmit it). Use `sshpass -e`, which reads the password
-from `SSHPASS` rather than the command line, so it never lands in
-shell history or `ps`:
+Authenticate with the per-pod password named `CLOUVE_OPS_PASSWORD`. On
+current agents it isn't in your environment, so a command fetches it with
+`${CLOUVE_OPS_PASSWORD:-$(clv-secret CLOUVE_OPS_PASSWORD)}`. That form
+also works on older agents, which still have it in the environment. Never
+run `clv-secret CLOUVE_OPS_PASSWORD` on its own or print it. Use
+`sshpass -e`, which reads the password from `SSHPASS` rather than the
+command line, so it never lands in shell history or `ps`:
 
 ```bash
 # Make the per-pod password available to sshpass (do this once per shell):
-export SSHPASS=$(printenv CLOUVE_OPS_PASSWORD)
+export SSHPASS="${CLOUVE_OPS_PASSWORD:-$(clv-secret CLOUVE_OPS_PASSWORD)}"
 
 # Open an interactive shell in the moodle container
 sshpass -e ssh clouve-ops@${MOODLE_HOST}
