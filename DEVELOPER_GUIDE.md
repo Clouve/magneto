@@ -6,7 +6,7 @@ This directory contains shared management scripts for Docker Compose application
 
 ```
 magneto/
-├── apps/              # Individual applications (Gibbon, Moodle, WordPress, etc.)
+├── apps/              # Individual applications (Gibbon, Moodle, Nextcloud, WordPress, etc.)
 ├── bundles/           # Application bundles (Education Kit, etc.)
 ├── start.sh           # Shared start script
 ├── stop.sh            # Shared stop script
@@ -277,6 +277,7 @@ This approach:
 **Supported Applications:**
 - WordPress (`WORDPRESS_SITE_URL`)
 - LimeSurvey (`PUBLIC_URL`)
+- Nextcloud (`NEXTCLOUD_URL`)
 
 **Test Output:**
 
@@ -303,6 +304,7 @@ Individual applications in the `apps/` directory:
 - **moodle** - Moodle Learning Management System with MySQL 8.0
 - **wordpress** - WordPress CMS with MariaDB (supports dynamic URL updates)
 - **limesurvey** - LimeSurvey Survey Platform with MariaDB (supports dynamic URL updates)
+- **nextcloud** - Nextcloud file sync and sharing with MariaDB (supports dynamic URL updates)
 
 Each application has:
 - `docker-compose.yml` - Local development configuration with environment variable substitution support

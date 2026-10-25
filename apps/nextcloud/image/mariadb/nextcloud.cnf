@@ -1,0 +1,9 @@
+[mysqld]
+transaction_isolation  = READ-COMMITTED
+binlog_format          = ROW
+character_set_server   = utf8mb4
+collation_server       = utf8mb4_bin
+innodb_file_per_table  = 1
+innodb_log_file_size   = 256M
+max_connections        = 200
+skip_name_resolve      = 1

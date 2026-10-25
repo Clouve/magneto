@@ -53,7 +53,6 @@ apps/
     ├── logo.png                     # Application logo (recommended: 256x256)
     ├── docker-compose.yml           # Development/testing configuration
     ├── clv-docker-compose.yml       # Marketplace manifest with metadata
-    ├── clv-docker-compose-basic.yml # Optional: AI-disabled twin manifest (see below)
     └── image/                       # Custom Docker image build files
         ├── Dockerfile               # Main application Dockerfile
         ├── build.config             # Build configuration variables
@@ -293,26 +292,15 @@ TEST_DOMAIN=newdomain.test TEST_PORT=9090 docker-compose up -d
 
 The marketplace manifest (`clv-docker-compose.yml`) extends standard Docker Compose with metadata extensions.
 
-### Basic (AI-disabled) Twin Manifest (`clv-docker-compose-basic.yml`)
+### One manifest per app
 
-Agent-capable apps ship a second marketplace manifest so clients can choose
-between two published listings: the regular one (AI Assistant enabled — the
-manifest carries an `x-clouve-agent: enabled: true` block and an
-"`<App> with AI Assistant`" `appTitle`) and the basic one (no `x-clouve-agent`
-block, plain `appTitle`). Currently: `apps/wordpress`, `apps/moodle`,
-`apps/gibbon`, `apps/odoo`, and `bundles/education-kit`.
-
-Rules:
-
-- The two files must stay in **lock-step**: identical except for the header
-  comment, `appTitle`, `appDescription`, and the `x-clouve-agent` block. Any
-  service, env var, healthcheck, or volume change lands in both.
-- **One image pair serves both listings.** The images ship the `clouve-ops`
-  sshd, but it starts only when the platform injects `CLOUVE_OPS_PASSWORD`
-  (which happens on agent-enabled deployments only), so deployments from the
-  basic listing behave exactly like pre-agent ones.
-- Each listing is published independently on the marketplace (the platform has
-  no notion of the pairing — the filename is a packaging-repo convention only).
+Each app has one marketplace manifest. The AI-disabled twin
+(`clv-docker-compose-basic.yml`) was retired on 2026-10-18, and no app has one.
+An agent-capable app publishes a single listing: its manifest carries an
+`x-clouve-agent: enabled: true` block and an "`<App> with AI Assistant`"
+`appTitle`, and the customer chooses the AI Assistant at install. The images
+also run without it, because the `clouve-ops` sshd in them starts only when the
+platform injects `CLOUVE_OPS_PASSWORD`.
 
 ### AI Assistant (`x-clouve-agent`)
 
@@ -334,10 +322,10 @@ x-clouve-agent:
 
 | Field | Meaning |
 | --- | --- |
-| `enabled` | `true` offers the AI Assistant on this listing. The basic twin leaves the whole block out. |
+| `enabled` | `true` offers the AI Assistant on this listing. A manifest without the block has no AI Assistant. |
 | `skills.url` | Optional. The skills marketplace repo, with a non-empty `?plugins=` filter and an optional `#branch`. Left out, the agent starts with its base context and no skills plugins. |
 | `skills.git.token` / `skills.git.username` | Optional credentials for a private skills repo. |
-| `advanced.sidecarPullTimeout` | Optional, in seconds (at most 1800). How long the agent waits at init to pull each sibling's persona and env over `clouve-ops` SSH. Raise it for siblings with a slow first install, as Moodle, Gibbon and Odoo do here. |
+| `advanced.sidecarPullTimeout` | Optional, in seconds (at most 1800). How long the agent waits at init to pull each sibling's persona and env over `clouve-ops` SSH. Raise it for siblings with a slow first install, as Moodle, Gibbon, Odoo and Nextcloud do here. |
 | `advanced.passthroughEnv` | Optional map of extra env vars for the agent container. It is an escape hatch; `apps/ai-studio` uses it. |
 
 The AI Assistant's monthly price is Clouve's platform fee for the tier plus the

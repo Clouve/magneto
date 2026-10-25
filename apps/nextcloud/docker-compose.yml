@@ -1,0 +1,145 @@
+# Local run of the Nextcloud pod, for ./start.sh nextcloud and
+# ./test.sh apps/nextcloud. Build the two images first with ./build.sh nextcloud.
+# clv-docker-compose.yml is the marketplace projection of the same pod.
+services:
+  nextcloud:
+    image: r.clv.zone/e2eorg/nextcloud
+    container_name: nextcloud_app
+    restart: unless-stopped
+    ports:
+      - "${TEST_PORT:-8080}:80"
+    environment:
+      NEXTCLOUD_DB_HOST: nextcloud-mariadb
+      NEXTCLOUD_DB_NAME: nextcloud
+      NEXTCLOUD_DB_USER: nextcloud
+      NEXTCLOUD_DB_PASSWORD: nextcloud_password
+      # The first start installs Nextcloud with this administrator.
+      NEXTCLOUD_ADMIN_USER: admin
+      NEXTCLOUD_ADMIN_PASSWORD: Admin@123
+      NEXTCLOUD_ADMIN_EMAIL: admin@example.com
+      # Where the browser reaches Nextcloud. It uses environment variable
+      # substitution for testing flexibility.
+      # Default: http://t1.test.clv:8080
+      # Override with: TEST_DOMAIN and TEST_PORT environment variables
+      NEXTCLOUD_URL: http://${TEST_DOMAIN:-t1.test.clv}:${TEST_PORT:-8080}
+      # Shared per-pod password for the clouve-ops shell account. The same
+      # value is set on all three services: the magneto-agent container uses
+      # it to ssh in (sshpass), and nextcloud and nextcloud-mariadb apply it to
+      # the clouve-ops user at start. On a Clouve deployment the platform
+      # generates it and adds it to all three pods, so the marketplace
+      # manifest does not list it.
+      CLOUVE_OPS_PASSWORD: clouve_ops_dev_password
+    volumes:
+      - nextcloud_data:/var/www/html
+    networks:
+      - nextcloud_network
+    # The platform runs this same script as its liveness and readiness probe
+    # (x-clouve-healthcheck in clv-docker-compose.yml). Here it gives Docker
+    # a health status to wait for.
+    healthcheck:
+      test: ["CMD", "/clouve/nextcloud/installer/healthcheck.sh"]
+      interval: 30s
+      timeout: 15s
+      retries: 15
+      start_period: 60s
+
+  nextcloud-mariadb:
+    image: r.clv.zone/e2eorg/nextcloud-mariadb
+    container_name: nextcloud_mariadb
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: nextcloud
+      MYSQL_USER: nextcloud
+      MYSQL_PASSWORD: nextcloud_password
+      MYSQL_ROOT_PASSWORD: root_password
+      # Same value as the nextcloud service. See its comment.
+      CLOUVE_OPS_PASSWORD: clouve_ops_dev_password
+    volumes:
+      - db_data:/var/lib/mysql
+    networks:
+      - nextcloud_network
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  magneto-agent:
+    image: r.clv.zone/clouveinc/magneto-agent
+    container_name: nextcloud_magneto_agent
+    restart: unless-stopped
+    ports:
+      - "${MAGNETO_AGENT_PORT:-8081}:80"
+    environment:
+      MAGNETO_AGENT_USERNAME: admin
+      MAGNETO_AGENT_PASSWORD: Admin@123
+      MAGNETO_AGENT_ROOT_PASSWORD: Root@123
+
+      # AI Assistant model access, for local runs only. A Clouve
+      # deployment gets a managed key from the platform and never reads
+      # these. Export one option in your shell before ./start.sh:
+      #   - MAGNETO_AGENT_LLM_BASE_URL + MAGNETO_AGENT_LLM_KEY: a LiteLLM
+      #     gateway URL and a key it issued, or
+      #   - ANTHROPIC_API_KEY: your own Anthropic API key.
+      # With neither set, the agent shows "The AI Assistant isn't
+      # available yet". There is no key screen.
+      MAGNETO_AGENT_LLM_BASE_URL: ${MAGNETO_AGENT_LLM_BASE_URL:-}
+      MAGNETO_AGENT_LLM_KEY: ${MAGNETO_AGENT_LLM_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+
+      # Activates the nextcloud plugin from the magneto-skills Claude Code
+      # marketplace. At container start the Magneto Agent loader clones the
+      # marketplace, stages the plugin's payload at
+      # /clouve/skills/nextcloud/plugin/, appends a "Skill: nextcloud" section
+      # to ~/.claude/CLAUDE.md from context/nextcloud/CONTEXT.md.tpl (baked
+      # into the nextcloud image and pulled over clouve-ops SSH by
+      # sidecar-fetcher), and runs the plugin's install.sh hook.
+      MAGNETO_AGENT_SKILLS: https://github.com/Clouve/magneto-skills.git?plugins=nextcloud
+      # MAGNETO_AGENT_SKILLS_GIT_TOKEN: ${MAGNETO_AGENT_SKILLS_GIT_TOKEN:-}
+      # MAGNETO_AGENT_SKILLS_GIT_USERNAME: ${MAGNETO_AGENT_SKILLS_GIT_USERNAME:-}
+
+      # Same value as the nextcloud service. Claude Code logs in to nextcloud
+      # and nextcloud-mariadb with `sshpass -e ssh clouve-ops@...` using this
+      # password.
+      CLOUVE_OPS_PASSWORD: clouve_ops_dev_password
+
+      # Hosts the Magneto Agent SSHs to at init, for two parallel pulls:
+      #   - sidecar-fetcher: merges the per-plugin CONTEXT.md.tpl files baked
+      #     into each sibling container's /clouve/context/ tree.
+      #   - sidecar-env-fetcher: reads each sibling's PID 1 environment (via
+      #     `sudo cat /proc/1/environ` over SSH, since sshd does not pass
+      #     PID 1's environment to user sessions) and re-exports it under an
+      #     <UPPER(namespace)>_* prefix in /etc/profile.d/clv-sidecar-env.sh, so
+      #     skills can use NEXTCLOUD_HOST, NEXTCLOUD_DB_HOST,
+      #     NEXTCLOUD_DB_PASSWORD and so on without this file injecting them.
+      #     (The nextcloud container's own variables already carry the
+      #     NEXTCLOUD_ prefix, so the NEXTCLOUD_DB_* set is projected as it is
+      #     and NEXTCLOUD_HOST is synthesized.)
+      CLV_SIDECAR_HOSTS: nextcloud,nextcloud-mariadb
+      # The short names for CLV_SIDECAR_HOSTS, one for one, which give the
+      # <UPPER(name)>_* prefix. On docker-compose the two lists are the same.
+      # On Kubernetes CLV_SIDECAR_HOSTS is rewritten to tkt-<id>-* and this one
+      # keeps the short names, which is how ${NEXTCLOUD_HOST} in
+      # CONTEXT.md.tpl resolves in both places.
+      CLV_SIDECAR_NAMESPACES: nextcloud,nextcloud-mariadb
+    volumes:
+      - magneto_agent_home:/home
+      - magneto_agent_usr:/usr
+      - magneto_agent_opt:/opt
+      - magneto_agent_var:/var
+    networks:
+      - nextcloud_network
+
+volumes:
+  db_data:
+    driver: local
+  nextcloud_data:
+    driver: local
+  magneto_agent_home:
+  magneto_agent_usr:
+  magneto_agent_opt:
+  magneto_agent_var:
+
+networks:
+  nextcloud_network:
+    driver: bridge

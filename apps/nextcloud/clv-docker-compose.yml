@@ -1,0 +1,112 @@
+version: '3.8'
+# Magneto Agent-powered Nextcloud: marketplace manifest.
+# See docker-compose.yml for the local run and the reasons behind its variables;
+# this file is the Clouve marketplace projection of the same pod.
+services:
+  nextcloud:
+    image: nextcloud
+    ports:
+      - '80:80'
+    environment:
+      NEXTCLOUD_DB_HOST: nextcloud-mariadb
+      NEXTCLOUD_DB_NAME: nextcloud
+      NEXTCLOUD_DB_USER: nextcloud
+      NEXTCLOUD_DB_PASSWORD: nextcloud-mariadb-password
+      NEXTCLOUD_URL: http://localhost
+      NEXTCLOUD_ADMIN_USER: '{user.firstName}_{user.lastName}'
+      NEXTCLOUD_ADMIN_EMAIL: '{user.userEmail}'
+      NEXTCLOUD_ADMIN_PASSWORD: nextcloud-admin-password
+    x-clouve-environment-types:
+      NEXTCLOUD_DB_HOST: containerReference
+      NEXTCLOUD_DB_NAME: static
+      NEXTCLOUD_DB_USER: static
+      NEXTCLOUD_DB_PASSWORD: secret
+      NEXTCLOUD_URL: applicationUrl
+      NEXTCLOUD_ADMIN_USER: applicationUsername
+      NEXTCLOUD_ADMIN_EMAIL: applicationUsername
+      NEXTCLOUD_ADMIN_PASSWORD: applicationPassword
+    volumes:
+      - nextclouddata:/var/www/html
+    x-clouve-metadata:
+      containerName: nextcloud
+      purpose: Frontend
+      protocol: TCP
+      isPublic: true
+      memoryBase: 2
+      cpuBase: 1
+    x-clouve-bundle-metadata:
+      appVersion: 35.0.2
+      appTitle: Nextcloud with AI Assistant
+      appDescription: A hosted Nextcloud for small teams and businesses, with file sharing, Team folders, calendars and contacts. The first start installs the Calendar, Contacts and Team folders apps when the Nextcloud app store is reachable. You tell the AI Assistant what you need in plain English, in a chat in your browser. It adds and removes staff accounts, sets up Team folders and permissions, and shares files of your admin account with people or by link. It also installs and updates Nextcloud apps, sets storage quotas, helps you set up outgoing email, takes and restores backups, fixes setup warnings, and finds out why a page is slow or broken. It shows you the command and waits for your yes before it does anything destructive. The monthly price of the AI Assistant includes an AI usage allowance, and you can buy more usage at any time or switch the assistant off and on again. You do not need an API key or an account with an AI provider. The tenant owns the Nextcloud data; Clouve hosts the containers.
+      adminPath: /settings/admin
+    x-clouve-healthcheck:
+      enabled: true
+      type: Command
+      path: /clouve/nextcloud/installer/healthcheck.sh
+      port: 80
+      initialDelay: 60
+      interval: 30
+      timeout: 15
+      failureThreshold: 15
+      successThreshold: 1
+    healthcheck:
+      test: ["CMD", "/clouve/nextcloud/installer/healthcheck.sh"]
+      interval: 30s
+      timeout: 15s
+      retries: 15
+      start_period: 60s
+    x-clouve-volumes:
+      - name: nextclouddata
+        size: 20
+        description: Nextcloud code, configuration, apps and users' files
+  nextcloud-mariadb:
+    image: nextcloud-mariadb
+    ports:
+      - '3306:3306'
+    environment:
+      MYSQL_DATABASE: nextcloud
+      MYSQL_USER: nextcloud
+      MYSQL_PASSWORD: nextcloud-mariadb-password
+      MYSQL_ROOT_PASSWORD: nextcloud-mariadb-root-password
+    x-clouve-environment-types:
+      MYSQL_DATABASE: static
+      MYSQL_USER: static
+      MYSQL_PASSWORD: secret
+      MYSQL_ROOT_PASSWORD: secret
+    volumes:
+      - dbdata:/var/lib/mysql
+    x-clouve-metadata:
+      containerName: nextcloud-mariadb
+      purpose: Database
+      protocol: TCP
+      isPublic: false
+      memoryBase: 1
+      cpuBase: 0.5
+    x-clouve-healthcheck:
+      enabled: false
+      type: TCP
+      path: /
+      port: 3306
+      initialDelay: 30
+      interval: 10
+      timeout: 5
+      failureThreshold: 3
+      successThreshold: 1
+    x-clouve-volumes:
+      - name: dbdata
+        size: 10
+        description: Nextcloud's MariaDB database files
+volumes:
+  nextclouddata:
+    driver: local
+  dbdata:
+    driver: local
+x-clouve-agent:
+  enabled: true
+  skills:
+    url: https://github.com/Clouve/magneto-skills.git?plugins=nextcloud
+    git:
+      token: ''
+      username: ''
+  advanced:
+    sidecarPullTimeout: 600

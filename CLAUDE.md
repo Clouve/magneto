@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Magneto** is a Docker Compose-based system for packaging containerized applications (WordPress, Moodle, Gibbon, LimeSurvey, Odoo, OwnCloud, SuiteCRM, AI Studio) for deployment in Kubernetes-based marketplace environments. It provides standardized structures for single applications and multi-application bundles.
+**Magneto** is a Docker Compose-based system for packaging containerized applications (WordPress, Moodle, Gibbon, LimeSurvey, Odoo, OwnCloud, Nextcloud, SuiteCRM, AI Studio) for deployment in Kubernetes-based marketplace environments. It provides standardized structures for single applications and multi-application bundles.
 
 ## Common Commands
 
@@ -126,6 +126,18 @@ bash tests/gibbon-school-year.test.sh
 bash tests/moodle-upgrade-plugins.test.sh
 ```
 
+### Testing the Nextcloud image
+```bash
+# Installer scripts (lib.sh, the probe, the settings script, the hooks, the build's edits to the official entrypoint), run inside nextcloud:35.0.2-apache with no network. Needs Docker
+bash tests/nextcloud-image.test.sh
+# The root entrypoint in the built image (./build.sh nextcloud first): cleaned login and email in PID 1's environment, MYSQL_* only before the first install, CLOUVE_OPS_PASSWORD kept from Valkey and later processes, a missing admin password, the official entrypoint's lock opened read-only and version.php read as www-data. Needs Docker
+bash tests/nextcloud-entrypoint.test.sh
+# The database image: Nextcloud's settings, the buffer pool sized from the memory limit, the clouve-ops sshd. Needs Docker
+bash tests/nextcloud-mariadb.test.sh
+# Both compose files against the platform's rules (variables, probe, listing text). Needs only python3 with PyYAML, like check-manifests.sh
+bash tests/nextcloud-manifest.test.sh
+```
+
 ### Testing the Odoo image
 ```bash
 # addons_path names /mnt/extra-addons as a pattern, so an empty folder logs no warning
@@ -160,7 +172,7 @@ Each app in `apps/` contains:
 The key distinction between the compose files:
 - **`docker-compose.yml`**: Uses `.data/` volume mounts for local persistence, supports `TEST_DOMAIN`/`TEST_PORT` env var substitution for URL testing
 - **`clv-docker-compose.yml`**: Marketplace manifest — no host volume mounts, uses Clouve-specific YAML extensions for orchestration metadata
-- **`clv-docker-compose-basic.yml`** (optional): the AI-disabled twin of the marketplace manifest. Agent-capable apps (wordpress, moodle, gibbon, odoo; also `bundles/education-kit/`) publish TWO marketplace listings from the same images: the regular manifest (`x-clouve-agent: enabled: true`, appTitle "`<App> with AI Assistant`") and the basic one (no `x-clouve-agent` block, plain appTitle). The twins must stay in lock-step — identical except for the header comment, `appTitle`, `appDescription`, and the `x-clouve-agent` block. A single image pair serves both: the `clouve-ops` sshd in the images starts only when the platform injects `CLOUVE_OPS_PASSWORD` (agent-enabled deployments), so basic-listing deployments run exactly like pre-agent ones.
+- **`clv-docker-compose-basic.yml`** (retired on 2026-10-18): the AI-disabled twin of the marketplace manifest. No app has one now. Each app has one manifest, and the AI Assistant is chosen at install. An agent-capable app (wordpress, moodle, gibbon, odoo, nextcloud; also `bundles/education-kit/`) carries `x-clouve-agent: enabled: true` and an appTitle of "`<App> with AI Assistant`" in that manifest. The images also run without the AI Assistant: the `clouve-ops` sshd in them starts only when the platform injects `CLOUVE_OPS_PASSWORD`.
 
 ### Clouve Metadata Extensions
 The `clv-docker-compose.yml` files use custom YAML extensions to describe how the marketplace orchestrates the app:
