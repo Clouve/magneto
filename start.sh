@@ -4,10 +4,16 @@
 # This script can start any Docker Compose application or bundle
 #
 # Usage Modes:
-#   1. From parent directory with name: ./start.sh <app-or-bundle-name> [--cleanup]
-#   2. From parent directory with path: ./start.sh <relative-path> [--cleanup]
-#   3. From app/bundle directory: ../start.sh [--cleanup]
-#   4. From app/bundle directory: ../../start.sh [--cleanup]
+#   1. From parent directory with name: ./start.sh <app-or-bundle-name> [--cleanup] [--docker-volumes]
+#   2. From parent directory with path: ./start.sh <relative-path> [--cleanup] [--docker-volumes]
+#   3. From app/bundle directory: ../start.sh [--cleanup] [--docker-volumes]
+#   4. From app/bundle directory: ../../start.sh [--cleanup] [--docker-volumes]
+#
+# New volumes start the way a cluster gives them to a new install: an empty
+# disk with a top folder of root's and lost+found in it, and none of the
+# image's files (lib/new-disk-volumes.sh). Volumes that exist stay as they are.
+# --docker-volumes lets Docker copy the image's folder into new volumes instead,
+# for comparing the two while debugging; a cluster never does that.
 #
 # Examples:
 #   ./start.sh wordpress                 # Start WordPress (searches apps/ and bundles/)
@@ -102,14 +108,18 @@ fi
 # Parse remaining arguments
 # ============================================================================
 CLEAN_MODE=false
+DOCKER_VOLUMES=false
 for arg in "$@"; do
     case $arg in
         --cleanup)
             CLEAN_MODE=true
             ;;
+        --docker-volumes)
+            DOCKER_VOLUMES=true
+            ;;
         *)
             echo "Unknown argument: $arg"
-            echo "Usage: $0 [app-or-bundle-name] [--cleanup]"
+            echo "Usage: $0 [app-or-bundle-name] [--cleanup] [--docker-volumes]"
             exit 1
             ;;
     esac
@@ -167,6 +177,25 @@ echo "Starting $DISPLAY_NAME..."
 echo ""
 
 cd "$WORK_DIR"
+
+# New volumes as new cluster disks (see the header). Making them here, before
+# Compose creates the containers, keeps Docker from copying the image into them.
+if [ "$DOCKER_VOLUMES" = true ]; then
+    echo "⚠ --docker-volumes: new volumes get Docker's copy of the image's files, owner and mode. A cluster never does this."
+    echo ""
+else
+    if ! python3 -c 'import json' >/dev/null 2>&1; then
+        echo "✗ start.sh needs python3 to make new volumes like new cluster disks (or start with --docker-volumes)"
+        exit 1
+    fi
+    # shellcheck source=lib/new-disk-volumes.sh
+    . "$SCRIPT_DIR/lib/new-disk-volumes.sh"
+    # shellcheck disable=SC2119  # no Compose options: the project in this folder, as docker-compose up sees it
+    if ! prepare_new_disk_volumes; then
+        echo "✗ Could not make the new volumes like new cluster disks, so nothing was started. --docker-volumes starts on Docker's copies of the image instead, which a cluster never does."
+        exit 1
+    fi
+fi
 
 if docker-compose up -d; then
     echo ""

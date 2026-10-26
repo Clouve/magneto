@@ -28,6 +28,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ./build-dev.sh wordpress
 ./build-prod.sh wordpress
 ./build-uat.sh wordpress
+
+# UAT and prod pushes are gated: build-uat.sh/build-prod.sh --push refuse an app until
+# `bash tests/new-disk-start.test.sh <app>` has passed on its current source (see "Testing on new cluster disks").
+# --skip-new-disk-check pushes anyway, for emergencies only.
+./build-uat.sh wordpress --push
 ```
 
 ### Switch Registry Users
@@ -60,6 +65,10 @@ docker login r.clv.zone -u 'robot$<project>+<name>' -p '<secret>'
 
 # Start fresh (remove volumes)
 ./start.sh wordpress --cleanup
+
+# New volumes start like new cluster disks: root's top folder, lost+found, none of the image's files (see
+# "Volumes on a cluster" below). --docker-volumes gives Docker's copy of the image instead, for debugging only.
+./start.sh wordpress --docker-volumes
 
 # Stop an app
 ./stop.sh wordpress
@@ -98,6 +107,21 @@ export MAGNETO_AGENT_LLM_BASE_URL=https://llm.example.com MAGNETO_AGENT_LLM_KEY=
 ```bash
 # --prune flag: stubbed docker, builds and pushes nothing, no daemon needed
 bash tests/build-prune.test.sh
+```
+
+### Testing on new cluster disks
+```bash
+# Every app and bundle must start the way a cluster starts a new install: each volume a new disk, each container
+# judged by its own x-clouve-healthcheck probe within Kubernetes' deadline, then a 90 s settle period. Builds the app
+# first (host platform) and records a pass for that exact source on this machine, which build-uat.sh and build-prod.sh
+# require before they push (a run with a shorter --settle doesn't count). Run it after every change to an app's image,
+# entrypoint or compose files, on the machine that will push. Needs Docker, python3 with PyYAML
+bash tests/new-disk-start.test.sh <app-or-bundle>      # or --all
+# After a fix to an app that already has installs: the previous build installs, the fix restarts on the same volumes,
+# and each volume's top folder must keep its owner and mode
+bash tests/new-disk-start.test.sh <app> --upgrade-from <previous dated tag>
+# The volume helper, start.sh, the runner and the push gate themselves, on fake apps (about 10 minutes)
+bash tests/new-disk-volumes.test.sh
 ```
 
 ### Testing the AI Assistant personas
@@ -200,6 +224,9 @@ Bundles in `bundles/` combine multiple apps with integration:
 
 ### Build System
 `build.sh` reads `image/build.config` from each app directory to determine image names and registry paths. It uses Docker Buildx for multi-platform builds (`linux/amd64` + `linux/arm64`).
+
+### Volumes on a cluster
+A new volume on a cluster is an empty disk: a top folder of root's (mode 755), `lost+found`, and none of the files the image keeps at that path. Docker named volumes copy the image's folder in instead, which is how Nextcloud's first GKE install broke on 2026-10-26 while every local test passed. So an image's entrypoint starts as root and, before the app's user runs anything, makes each volume's top folder usable when it is root's; it keeps the files it needs outside volume paths and copies them in when they're missing; it treats `lost+found` as empty; and it switches to the app's user only after that. A fix for an app with installs changes only what a working install never has, and passes `--upgrade-from`. `./start.sh` and `tests/new-disk-start.test.sh` reproduce the cluster's volumes locally. The full rules are in README.md, "Volumes on a cluster".
 
 ### AI Studio (`apps/ai-studio/`)
 The AI Studio app is an Ubuntu 26.04 LTS workspace **pre-seeded with a running MERN starter project** (Node.js 22 LTS, MongoDB 7.0, Express API on `:4000`, Vite React frontend on `:5173`, mongo-express on `:8081` — all supervised by `supervisord` as PID 1; there is no systemd in the container). It is **not** a UI host — it is a sibling workspace operated by the Magneto Agent. The user talks to the agent in the chat UI (provided automatically because `x-clouve-agent: enabled: true` is always set in [apps/ai-studio/clv-docker-compose.yml](apps/ai-studio/clv-docker-compose.yml)), and the agent SSHes in as `clouve-ops` (passwordless sudo) to iterate on the seeded project at `/home/clouve-ops/projects/starter/`, install software, run services, and verify deploys. In a cluster deploy the dev servers are reached through the fleet clv-proxy at `https://<port>-<workspace-id>.<base>/`; the workspace exposes no public `:80` of its own. Four volumes (`/home`, `/usr`, `/opt`, `/var`) persist across pod restarts, so apt-installed packages, user files and Mongo data survive. The agent's behavioral contract lives in the `ai-studio` skill at [magneto-skills/plugins/ai-studio/](../magneto-skills/plugins/ai-studio/); the per-tenant persona is templated from [apps/ai-studio/image/context/ai-studio/CONTEXT.md.tpl](apps/ai-studio/image/context/ai-studio/CONTEXT.md.tpl); the seed app sources live in [apps/ai-studio/image/seed/](apps/ai-studio/image/seed/). Local dev: `./build.sh ai-studio && ./start.sh ai-studio`, then browse the seeded app at `http://localhost:5173` (API `:4000`, mongo-express `:8082`) or `ssh -p 2222 clouve-ops@localhost` (password `clouve_ops_dev_password`, set in [apps/ai-studio/docker-compose.yml](apps/ai-studio/docker-compose.yml)).

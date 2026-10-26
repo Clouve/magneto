@@ -10,13 +10,16 @@
 # This script uses environment variable substitution in docker-compose.yml files
 # instead of modifying the files directly, making it cleaner and safer.
 #
-# Usage: ./test.sh <app-path> [domain1] [domain2] [port]
+# Usage: ./test.sh <app-path> [domain1] [domain2] [port] [--docker-volumes]
 #
 # Arguments:
 #   app-path    Required. Relative path to app/bundle directory (e.g., apps/limesurvey)
 #   domain1     Optional. First test domain (default: t1.test.clv)
 #   domain2     Optional. Second test domain (default: t2.test.clv)
 #   port        Optional. Port number to use (default: 8080)
+#   --docker-volumes  Optional, anywhere. New volumes get Docker's copy of the
+#               image's folder instead of starting like new cluster disks
+#               (lib/new-disk-volumes.sh), which a cluster never does.
 #
 # Examples:
 #   ./test.sh apps/limesurvey
@@ -84,13 +87,15 @@ print_warning() {
 # ============================================================================
 
 show_usage() {
-    echo "Usage: $0 <app-path> [domain1] [domain2] [port]"
+    echo "Usage: $0 <app-path> [domain1] [domain2] [port] [--docker-volumes]"
     echo ""
     echo "Arguments:"
     echo "  app-path    Required. Relative path to app/bundle directory"
     echo "  domain1     Optional. First test domain (default: $DEFAULT_DOMAIN_1)"
     echo "  domain2     Optional. Second test domain (default: $DEFAULT_DOMAIN_2)"
     echo "  port        Optional. Port number to use (default: $DEFAULT_PORT)"
+    echo "  --docker-volumes  Optional. New volumes get Docker's copy of the image instead of"
+    echo "              starting like new cluster disks (a cluster never does this)"
     echo ""
     echo "Examples:"
     echo "  $0 apps/limesurvey"
@@ -240,6 +245,22 @@ docker_compose_up() {
     # Export environment variables for docker-compose substitution
     export TEST_DOMAIN="$domain"
     export TEST_PORT="$port"
+    # New volumes start like new cluster disks, as with start.sh, unless --docker-volumes was given.
+    if [ "$DOCKER_VOLUMES" = true ]; then
+        print_warning "--docker-volumes: new volumes get Docker's copy of the image's files, owner and mode. A cluster never does this."
+    else
+        if ! python3 -c 'import json' >/dev/null 2>&1; then
+            print_error "test.sh needs python3 to make new volumes like new cluster disks (or run it with --docker-volumes)"
+            exit 1
+        fi
+        # shellcheck source=lib/new-disk-volumes.sh
+        . "$SCRIPT_DIR/lib/new-disk-volumes.sh"
+        # shellcheck disable=SC2119  # no Compose options: the project in this folder, as docker-compose up sees it
+        if ! prepare_new_disk_volumes; then
+            print_error "Could not make the new volumes like new cluster disks, so nothing was started. --docker-volumes starts on Docker's copies of the image instead, which a cluster never does."
+            exit 1
+        fi
+    fi
     docker-compose up -d
     cd - > /dev/null
     print_success "Application started"
@@ -500,8 +521,19 @@ main() {
     fi
 }
 
+# --docker-volumes may come anywhere; the other arguments keep their positions.
+DOCKER_VOLUMES=false
+ARGS=()
+for arg in "$@"; do
+    if [ "$arg" = "--docker-volumes" ]; then
+        DOCKER_VOLUMES=true
+    else
+        ARGS+=("$arg")
+    fi
+done
+
 # Run main function
-main "$@"
+main ${ARGS[@]+"${ARGS[@]}"}
 
 
 

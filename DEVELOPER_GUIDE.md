@@ -48,16 +48,20 @@ Simple-name mode (an argument without a `/`) only searches `magneto/apps/` and `
 
 Start any application or bundle with optional clean mode.
 
+New volumes start the way a cluster gives them to a new install: an empty disk with a top folder of root's and
+`lost+found` in it, and none of the image's files (see README.md, "Volumes on a cluster"). Volumes that already exist
+stay as they are.
+
 **Usage:**
 ```bash
 # From magneto directory (simple name)
-./start.sh <app-or-bundle-name> [--cleanup]
+./start.sh <app-or-bundle-name> [--cleanup] [--docker-volumes]
 
 # From magneto directory (relative path)
-./start.sh <relative-path> [--cleanup]
+./start.sh <relative-path> [--cleanup] [--docker-volumes]
 
 # From within an app/bundle directory
-../../start.sh [--cleanup]
+../../start.sh [--cleanup] [--docker-volumes]
 ```
 
 **Examples:**
@@ -85,6 +89,8 @@ cd bundles/education-kit
 
 **Options:**
 - `--cleanup` - Remove all existing data and start fresh (prompts for confirmation)
+- `--docker-volumes` - New volumes get Docker's copy of the image's folder instead of starting like new cluster
+  disks. For comparing the two while debugging; a cluster never does this.
 
 ### stop.sh - Stop Applications/Bundles
 
@@ -220,7 +226,7 @@ The test script uses environment variable substitution in docker-compose.yml fil
 
 **Usage:**
 ```bash
-./test.sh <app-path> [domain1] [domain2] [port]
+./test.sh <app-path> [domain1] [domain2] [port] [--docker-volumes]
 ```
 
 **Arguments:**
@@ -228,6 +234,8 @@ The test script uses environment variable substitution in docker-compose.yml fil
 - `domain1` - Optional. First test domain (default: `t1.test.clv`)
 - `domain2` - Optional. Second test domain (default: `t2.test.clv`)
 - `port` - Optional. Port number to use (default: `8080`)
+- `--docker-volumes` - Optional, anywhere. As for `start.sh`: new volumes get Docker's copy of the image instead of
+  starting like new cluster disks.
 
 **Examples:**
 ```bash
@@ -447,6 +455,11 @@ cd magneto/apps/gibbon
 
 # Clean up completely
 ./stop.sh gibbon --cleanup
+
+# Before a push to UAT or prod: start it the way a cluster starts a new install. build-uat.sh and build-prod.sh
+# push an app only after this passed on its current source (--skip-new-disk-check overrides, for emergencies).
+bash tests/new-disk-start.test.sh gibbon
+./build-uat.sh gibbon --push
 ```
 
 ### URL Update Testing Workflow
