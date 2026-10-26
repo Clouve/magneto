@@ -10,7 +10,9 @@
 #      there. CLV_NC_ENTRYPOINT_REEXEC marks the second run, which removes it again.
 #   1. Before the first install only (no version.php on the volume yet), it stops when NEXTCLOUD_ADMIN_PASSWORD is
 #      missing, and gives the official entrypoint the database settings as MYSQL_HOST, MYSQL_DATABASE, MYSQL_USER and
-#      MYSQL_PASSWORD, so later starts don't carry copies of them in PID 1's environment.
+#      MYSQL_PASSWORD, so later starts don't carry copies of them in PID 1's environment. Then, at every start, the
+#      volume's top folder becomes www-data's when it is root's, as on a new Kubernetes disk (nc_claim_new_volume), so
+#      that www-data can make the init lock in step 8.
 #   2. PHP's limits go into conf.d/zz-clouve.ini as plain values. The official nextcloud.ini reads them from the
 #      environment, and occ run through sudo has none, so it would run at 128 MB with a warning on stdout.
 #   3. Apache's worker count and the preview concurrency follow the container's memory limit (the sizing is in lib.sh).
@@ -74,6 +76,12 @@ if [ ! -f /var/www/html/version.php ]; then
     export MYSQL_HOST=$NEXTCLOUD_DB_HOST MYSQL_DATABASE=$NEXTCLOUD_DB_NAME MYSQL_USER=$NEXTCLOUD_DB_USER \
         MYSQL_PASSWORD=$NEXTCLOUD_DB_PASSWORD
 fi
+
+# The volume's top folder. On a new Kubernetes disk it is root's, mode 755, and www-data could make nothing in it: not
+# the init lock of step 8, and the official entrypoint's read-only open of the lock would then stop every start. Docker
+# fills a new volume from the image, where the folder is www-data's and 1777, so there it is already as it should be.
+# The checks above come first, so a start that stops there leaves the volume as it was.
+nc_claim_new_volume /var/www/html || :
 
 # --- 2. PHP's limits -------------------------------------------------------------------------------------------------
 
@@ -222,9 +230,9 @@ fi
 # --- 8. the init lock ------------------------------------------------------------------------------------------------
 
 # The official entrypoint opens this file as root, read-only, and the before-starting hook locks it as www-data. The
-# folder is www-data's, so www-data makes the file a plain file of its own (nc_make_init_lock in lib.sh), and root never
-# creates anything here. A failure is a warning: a missing file then stops the official entrypoint at its open, and
-# anything else left here opens, but the probe never counts the lock as held.
+# folder is www-data's (on a new disk, step 1 makes it so), so www-data makes the file a plain file of its own
+# (nc_make_init_lock in lib.sh), and root never creates anything here. A failure is a warning: a missing file then stops
+# the official entrypoint at its open, and anything else left here opens, but the probe never counts the lock as held.
 nc_make_init_lock /var/www/html/nextcloud-init-sync.lock || :
 
 # --- 9. cron ---------------------------------------------------------------------------------------------------------

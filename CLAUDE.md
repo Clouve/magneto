@@ -130,7 +130,7 @@ bash tests/moodle-upgrade-plugins.test.sh
 ```bash
 # Installer scripts (lib.sh, the probe, the settings script, the hooks, the build's edits to the official entrypoint), run inside nextcloud:35.0.2-apache with no network. Needs Docker
 bash tests/nextcloud-image.test.sh
-# The root entrypoint in the built image (./build.sh nextcloud first): cleaned login and email in PID 1's environment, MYSQL_* only before the first install, CLOUVE_OPS_PASSWORD kept from Valkey and later processes, a missing admin password, the official entrypoint's lock opened read-only and version.php read as www-data. Needs Docker
+# The root entrypoint in the built image (./build.sh nextcloud first): cleaned login and email in PID 1's environment, MYSQL_* only before the first install, CLOUVE_OPS_PASSWORD kept from Valkey and later processes, a missing admin password, a new disk's root-owned top folder given to www-data, the official entrypoint's lock opened read-only and version.php read as www-data. Needs Docker
 bash tests/nextcloud-entrypoint.test.sh
 # The database image: Nextcloud's settings, the buffer pool sized from the memory limit, the clouve-ops sshd. Needs Docker
 bash tests/nextcloud-mariadb.test.sh

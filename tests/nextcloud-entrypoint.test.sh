@@ -21,6 +21,14 @@
 #   - step 1 again: a first start without NEXTCLOUD_ADMIN_PASSWORD exits 1 and
 #     says why, without printing any value, and leaves the volume empty. A
 #     version.php left there would make every later start skip the install;
+#   - step 1, the volume's top folder: on a new Kubernetes disk it is root's,
+#     mode 755, with lost+found in it (the other cases start on a Docker
+#     volume, which Docker fills from the image, so their folder is
+#     www-data's). It becomes www-data's, 1777, as in the image, what is in it
+#     stays as it was, it is logged once, and www-data can then make the init
+#     lock there, which failed on UAT on 2026-10-26. A folder of www-data's
+#     with mode 755, as an older image's first install left one, stays as it
+#     is;
 #   - step 4: a restore marker in data/clouve-backups, a folder only root can
 #     enter, gets a warning and a note in /run/clouve that www-data, which
 #     runs the hooks, can see. Once the marker is gone, the next start removes
@@ -495,6 +503,55 @@ assert_lacks "nopw: no database password in what it printed" "$nopw_out" "$DB_PW
 assert_lacks "nopw: no clouve-ops password in what it printed" "$nopw_out" "$OPS_PW"
 assert_eq "nopw: the volume is still empty, with no version.php" "" \
   "$(docker run --rm --name "${PREFIX}nopw-ls" --network none -v "${PREFIX}nopw:/v" --entrypoint ls "$IMAGE" -A /v 2>&1)"
+
+# --- 5. a first start on a new Kubernetes disk ------------------------------------------
+# A new disk (on GKE, a persistent disk's empty ext4) has a top folder of root's, mode 755, with lost+found in it, and
+# www-data can make nothing there. The volume is made at /v, a path the image doesn't have, so Docker copies nothing
+# into it, and lost+found then keeps Docker from copying the image's /var/www/html into it at the start.
+echo
+echo "A first start on a new Kubernetes disk (top folder root:root 755, with lost+found)"
+if docker run --rm --name "${PREFIX}seed-disk" --network none -v "${PREFIX}disk:/v" --entrypoint sh "$IMAGE" -c '
+     chown root:root /v && chmod 755 /v && mkdir -m 700 /v/lost+found' >/dev/null 2>&1; then
+  pass "disk: the volume's top folder is root's, mode 755, with lost+found in it"
+else
+  fail "disk: the volume's top folder is root's, mode 755, with lost+found in it"
+fi
+assert_eq "disk: sanity check: mounted at /var/www/html it is still root's, 755" "root:root 755" \
+  "$(docker run --rm --name "${PREFIX}seed-disk-stat" --network none -v "${PREFIX}disk:/var/www/html" --entrypoint stat \
+     "$IMAGE" -c '%U:%G %a' /var/www/html 2>&1)"
+start_nc disk admin -e "NEXTCLOUD_ADMIN_PASSWORD=$ADMIN_PW" || fail "disk: the container starts"
+if parked disk; then
+  assert_eq "disk: the top folder is now www-data's, 1777, as in the image" "www-data:root 1777" \
+    "$(docker exec "${PREFIX}disk" stat -c '%U:%G %a' /var/www/html 2>&1)"
+  assert_eq "disk: what is in it stays as it was" "root:root 700" \
+    "$(docker exec "${PREFIX}disk" stat -c '%U:%G %a' /var/www/html/lost+found 2>&1)"
+  assert_eq "disk: one line says so" 1 "$(docker logs "${PREFIX}disk" 2>&1 | grep -cxF \
+    "[nextcloud] /var/www/html was root's, as on a new disk, so it is now www-data's (1777, as in the image)")"
+  # Step 8 comes after the wait, so the check runs it here, as step 8 does: nc_make_init_lock as root, which makes the
+  # file as www-data. On UAT on 2026-10-26 it could not, and the official entrypoint's read-only open stopped the start.
+  assert_eq "disk: www-data can now make the init lock there (step 8)" "www-data regular empty file" \
+    "$(docker exec "${PREFIX}disk" bash -c '. /clouve/nextcloud/installer/lib.sh && nc_make_init_lock &&
+       stat -c "%U %F" /var/www/html/nextcloud-init-sync.lock' 2>&1)"
+  no_secret_in_logs disk
+fi
+
+# --- 6. a later start on a folder of www-data's, mode 755 ------------------------------------
+# The first install of an older image on a new disk left its folder www-data's with mode 755: the official entrypoint's
+# copy gave the folder to www-data and kept its mode. Step 1 leaves such a folder as it is.
+echo
+echo "A later start on a folder of www-data's, mode 755 (version.php there)"
+if docker run --rm --name "${PREFIX}seed-own" --network none -v "${PREFIX}own:/v" --entrypoint sh "$IMAGE" -c '
+     cp /usr/src/nextcloud/version.php /v/version.php && chown www-data:www-data /v && chmod 755 /v' >/dev/null 2>&1; then
+  pass "own: the volume's folder is www-data's, mode 755, and holds version.php"
+else
+  fail "own: the volume's folder is www-data's, mode 755, and holds version.php"
+fi
+start_nc own admin || fail "own: the container starts"
+if parked own; then
+  assert_eq "own: the folder is left as it is" "www-data:www-data 755" \
+    "$(docker exec "${PREFIX}own" stat -c '%U:%G %a' /var/www/html 2>&1)"
+  assert_lacks "own: and nothing about it is logged" "$(docker logs "${PREFIX}own" 2>&1)" "was root's"
+fi
 
 echo
 if [[ "$FAILED" -eq 0 ]]; then

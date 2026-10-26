@@ -27,8 +27,9 @@
 #            the AI Assistant's backups and restores (the note that tells
 #            the hooks of a restore, a backup's name read safely, a backup
 #            that was cut off); the first lines of occ's output; the sweep
-#            of what a killed run leaves behind; and the repair of the
-#            database settings in config.php, as root and as www-data.
+#            of what a killed run leaves behind; a new disk's top folder of
+#            root's, given to www-data; and the repair of the database
+#            settings in config.php, as root and as www-data.
 #   valkey.conf       the file is exactly the planned one.
 #   start-valkey.sh   the socket directory (owner, mode, and one left wrong by
 #                     an earlier run), the command it runs, the line it logs
@@ -1208,7 +1209,8 @@ section_lib_hygiene() {
   for fn in nc_log nc_warn nc_decode_entities nc_clean_admin_user nc_url_scheme nc_url_host \
             nc_memory_limit_mb nc_apache_workers nc_preview_concurrency nc_missing_trusted_domains \
             nc_first_lines nc_try_occ nc_post_upgrade_steps nc_first_install_steps nc_sweep_leftovers \
-            nc_json_line nc_marker_path nc_marker_name nc_note_restore_marker nc_clear_cut_off_backup; do
+            nc_json_line nc_marker_path nc_marker_name nc_note_restore_marker nc_clear_cut_off_backup \
+            nc_claim_new_volume; do
     # shellcheck source=/dev/null
     tv_out="$( set -euo pipefail; source "$LIB"; "$fn" 2>&1 )"
     tv_rc=$?
@@ -1272,6 +1274,10 @@ section_lib_hygiene() {
   nc_marker_name "$WORK/hyg-mark/BACKUP-IN-PROGRESS" >/dev/null
   nc_marker_name "$WORK/none/BACKUP-IN-PROGRESS" >/dev/null
   nc_clear_cut_off_backup >/dev/null 2>&1
+  mkdir -p "$WORK/hyg-disk" && chmod 755 "$WORK/hyg-disk"
+  nc_claim_new_volume "$WORK/hyg-disk" >/dev/null
+  nc_claim_new_volume "$WORK/hyg-disk" >/dev/null
+  nc_claim_new_volume "$WORK/none" >/dev/null
   nc_repair_db_config "$WORK/none/config.php" >/dev/null 2>&1
 
   compgen -v | sort > "$WORK/vars.after"
@@ -4790,6 +4796,72 @@ EOF2
   rm -f /var/www/html/version.php
 }
 
+# --- a new disk's top folder -----------------------------------------------------------------------------------------
+# nc_claim_new_volume as the root entrypoint's step 1 runs it: as root, before anything else writes to the volume. A new
+# Kubernetes disk (on GKE, a persistent disk's empty ext4) has a top folder of root's, mode 755, with lost+found in it,
+# and www-data can make nothing there. Docker fills a new named volume from the image instead, owner and mode included,
+# so there the folder is www-data's already. Every case here runs on a folder under $WORK, never on /var/www/html.
+section_lib_new_volume() {
+  load_lib || return 0
+  local dir="$WORK/disk" target="$WORK/disk-target" link="$WORK/disk-link" bin="$WORK/disk-bin" out err rc line
+  line="[nextcloud] $dir was root's, as on a new disk, so it is now www-data's (1777, as in the image)"
+  # claim PATH: nc_claim_new_volume on PATH, with its stdout in $out, its stderr in $err and its status in $rc
+  claim() { out="$(nc_claim_new_volume "$1" 2>"$WORK/disk.err")"; rc=$?; err="$(cat "$WORK/disk.err")"; }
+  state() { stat -c '%U:%G %a' -- "$1" 2>&1; }
+  chmod 711 "$WORK"    # so that www-data can reach the folders below
+
+  mkdir -p "$dir/lost+found"
+  chmod 755 "$dir"
+  chmod 700 "$dir/lost+found"
+  eq 'root:root 755' "$(state "$dir")" "sanity check: the folder is root's, mode 755, as on a new disk"
+  claim "$dir"
+  eq "0|www-data:root 1777" "$rc|$(state "$dir")" "a folder of root's becomes www-data's, 1777, as in the image"
+  eq 'root:root 700' "$(state "$dir/lost+found")" "... and what is in it stays as it was"
+  eq "$line" "$out" "... and one line says so"
+  eq '' "$err" "... with no warning"
+  # shellcheck disable=SC2016  # $1 is for the inner sh, which gets the folder as its first argument
+  runuser -u www-data -- sh -c ': > "$1/nextcloud-init-sync.lock"' _ "$dir"
+  eq yes "$(exists "$dir/nextcloud-init-sync.lock")" "www-data can now make the init lock there, as step 8 has it do"
+  claim "$dir"
+  eq "0|||www-data:root 1777" "$rc|$out|$err|$(state "$dir")" "a second run changes nothing and prints nothing"
+  rm -f "$dir/nextcloud-init-sync.lock"
+
+  chown www-data:www-data "$dir"
+  chmod 755 "$dir"
+  claim "$dir"
+  eq "0|||www-data:www-data 755" "$rc|$out|$err|$(state "$dir")" \
+     "a folder of www-data's is left as it is (755: what an older image's first install left on a new disk)"
+  chown nobody:nogroup "$dir"
+  claim "$dir"
+  eq "0|||nobody:nogroup 755" "$rc|$out|$err|$(state "$dir")" "a folder of another user's is left as it is"
+
+  mkdir -p "$target"
+  chmod 755 "$target"
+  ln -s "$target" "$link"
+  claim "$link"
+  eq "0|||root:root 755|link" "$rc|$out|$err|$(state "$target")|$(if [[ -L "$link" ]]; then echo link; fi)" \
+     "a link to a folder of root's: the link stays, and its target is left as it is"
+  claim "$WORK/disk-none"
+  eq "0|||no" "$rc|$out|$err|$(exists "$WORK/disk-none")" "nothing at the path: nothing is made"
+  : > "$WORK/disk-file"
+  chmod 644 "$WORK/disk-file"
+  claim "$WORK/disk-file"
+  eq "0|||root:root 644" "$rc|$out|$err|$(state "$WORK/disk-file")" "a file of root's is left as it is"
+
+  # A chown that fails, as on a disk mounted read-only: status 1 and a warning, and the folder keeps root's owner.
+  chown root:root "$dir"
+  fake_cmd "$bin" chown <<'EOF'
+echo "chown: changing ownership: Read-only file system" >&2
+exit 1
+EOF
+  out="$(with_path "$bin" nc_claim_new_volume "$dir" 2>"$WORK/disk.err")"
+  rc=$?
+  err="$(cat "$WORK/disk.err")"
+  eq "1|root:root 755" "$rc|$(state "$dir")" "chown fails: status 1, and the folder is still root's"
+  contains "could not give $dir to www-data" "$err" "... and a warning says so"
+  rm -rf "$dir" "$target" "$link" "$WORK/disk-file" "$bin" "$WORK/disk.err"
+}
+
 # --- the init lock file ----------------------------------------------------------------------------------------------
 # nc_make_init_lock as the root entrypoint's step 8 runs it: as root, on www-data's /var/www/html (1777, as in the image).
 section_lib_init_lock() {
@@ -5613,6 +5685,7 @@ run_section "nextcloud-config.sh: the upload chunk size"                  sectio
 run_section "lib.sh: occ status and the app config markers"              section_lib_status
 run_section "lib.sh: the post-upgrade steps and their marker"            section_lib_post_upgrade_steps
 run_section "lib.sh: the marker files of backups and restores"           section_lib_markers
+run_section "lib.sh: nc_claim_new_volume, a new disk's top folder"       section_lib_new_volume
 run_section "lib.sh: nc_make_init_lock, the init lock file"               section_lib_init_lock
 run_section "patch-official-entrypoint.sh: the edits to /entrypoint.sh"   section_patch_entrypoint
 run_section "hooks: pre-installation"                                     section_hook_pre_installation

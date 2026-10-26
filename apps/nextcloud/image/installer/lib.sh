@@ -17,8 +17,9 @@
 # marker is not set, 2 when occ failed), nc_marker_trusted (a test: 0 when a
 # marker can be the AI Assistant's, 1 when not), nc_restore_cut_off (a
 # test: 0 when a restore was cut off, 1 when not), nc_hold_upgrade_for_restore
-# (a test: 0 when a cut-off restore holds back an upgrade to this image) and
-# nc_make_init_lock (1 when the init lock file could not be made).
+# (a test: 0 when a cut-off restore holds back an upgrade to this image),
+# nc_claim_new_volume (1 when a new disk's top folder could not be given to
+# www-data) and nc_make_init_lock (1 when the init lock file could not be made).
 #
 # The functions that run occ (nc_occ, nc_try_occ, nc_post_upgrade_steps,
 # nc_first_install_steps) pass occ's own stdout and stderr through as they are.
@@ -765,15 +766,39 @@ nc_hold_upgrade_for_restore() {
     ! cmp -s -- /var/www/html/version.php /usr/src/nextcloud/version.php
 }
 
+# nc_claim_new_volume [DIR]: for the root entrypoint, as root, before anything else writes to the volume. When DIR (by
+# default /var/www/html, the volume's top folder) is a folder of root's, it gets the owner and the mode the image gives
+# that folder, www-data:root and 1777, and one line says so. A new Kubernetes disk (on GKE, a persistent disk's empty
+# ext4) has a top folder of root's, mode 755, with lost+found in it, while Docker fills a new named volume from the
+# image, owner and mode included. In root's folder www-data can make nothing, so not the init lock (nc_make_init_lock),
+# and the official entrypoint's read-only open of the lock would then stop every start. Only the folder itself
+# changes, never anything in it: lost+found stays root's until the official entrypoint's first copy removes it. A link,
+# a folder of anyone else's and anything that is not a folder are left as they are. Nothing that runs as www-data has
+# started yet, and the folder is the volume's mount point, which nobody can swap for a link. Status 0, or 1 with a
+# warning when the folder could not be changed.
+nc_claim_new_volume() {
+    local dir=${1:-/var/www/html}
+    if [ -L "$dir" ] || [ ! -d "$dir" ] || [ "$(stat -c %u -- "$dir" 2>/dev/null)" != 0 ]; then
+        return 0
+    fi
+    if chown -h www-data:root -- "$dir" && chmod 1777 -- "$dir"; then
+        nc_log "$dir was root's, as on a new disk, so it is now www-data's (1777, as in the image)"
+        return 0
+    fi
+    nc_warn "could not give $dir to www-data, so www-data cannot make the init lock there"
+    return 1
+}
+
 # nc_make_init_lock [FILE]: for the root entrypoint, as root. Makes FILE (the init lock, by default
 # /var/www/html/nextcloud-init-sync.lock) a plain file of www-data's, and lets www-data do it. The official entrypoint
 # opens the file as root, read-only (patch-official-entrypoint.sh), and the before-starting hook locks it as www-data.
-# Its folder is www-data's, so root must not create anything there (the official entrypoint only reads it): a link
-# that a www-data process puts at FILE between a test and a touch would make root create the link's target, such as
-# a restore marker in root's clouve-backups. As www-data, a link leads only to files www-data could make anyway.
-# Anything at FILE that is not a plain file of www-data's goes first: a link, a folder, a named pipe, or a file of
-# another user's, which the hook could not open on a host with fs.protected_regular (the folder is sticky and
-# world-writable in this image). Status 0 when FILE is a plain file afterwards, 1 with a warning when not.
+# Its folder is www-data's (on a new disk, nc_claim_new_volume makes it so first), so root must not create anything
+# there (the official entrypoint only reads it): a link that a www-data process puts at FILE between a test and a
+# touch would make root create the link's target, such as a restore marker in root's clouve-backups. As www-data, a
+# link leads only to files www-data could make anyway. Anything at FILE that is not a plain file of www-data's goes
+# first: a link, a folder, a named pipe, or a file of another user's, which the hook could not open on a host with
+# fs.protected_regular (the folder is sticky and world-writable in this image). Status 0 when FILE is a plain file
+# afterwards, 1 with a warning when not.
 nc_make_init_lock() {
     local file=${1:-/var/www/html/nextcloud-init-sync.lock}
     # shellcheck disable=SC2016  # $1 is for the inner sh, which gets the path as its first argument
