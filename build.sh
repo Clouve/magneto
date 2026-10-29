@@ -23,6 +23,13 @@
 #   --all          Build all apps/bundles found in apps/ and bundles/ directories
 #   --tag <tag>    Push/build a single explicit tag instead of the default
 #                  ":<DATE>" + ":latest" pair (e.g. --tag 2025.11.20)
+#   --skip-new-disk-check  Push to UAT or prod without a new-disk pass (below)
+#
+# New-disk gate: build-uat.sh and build-prod.sh set NEW_DISK_GATE=1. With it and
+# --push, every app about to be pushed must have passed
+# tests/new-disk-start.test.sh on its current source (it starts the app the way
+# a cluster starts a new install, lib/new-disk-passes.sh keeps the record), or
+# nothing is built or pushed. --skip-new-disk-check overrides that, and says so.
 #
 # Examples:
 #   ./build.sh gibbon                      # Build Gibbon multi-platform images locally (amd64 + arm64)
@@ -66,6 +73,7 @@ show_usage() {
     echo "                 layer is rebuilt and uploaded fresh (fixes 'blob ... not found' pushes)"
     echo "  --all          Build all apps/bundles found in apps/ and bundles/ directories"
     echo "  --tag <tag>    Push/build a single explicit tag instead of :<DATE> + :latest"
+    echo "  --skip-new-disk-check  With build-uat.sh/build-prod.sh: push without a new-disk pass"
     echo ""
     echo "Examples:"
     echo "  $0 gibbon                      # Build Gibbon multi-platform images locally"
@@ -293,6 +301,42 @@ prune_builder_cache() {
 }
 
 # ============================================================================
+# The new-disk gate (build-uat.sh and build-prod.sh turn it on)
+# ============================================================================
+# new_disk_gate TARGET_DIR...: with NEW_DISK_GATE=1 and --push, stops the whole
+# push, before any docker call, unless every app has a new-disk pass for its
+# current source. lib/new-disk-passes.sh is read here and only here, so a copy
+# of this script without lib/ still builds when the gate is off.
+new_disk_gate() {
+    local dir name missing=0
+    if [ "${NEW_DISK_GATE:-}" != 1 ] || [ "$PUSH_IMAGES" != true ]; then
+        return 0
+    fi
+    if [ "$SKIP_NEW_DISK_CHECK" = true ]; then
+        echo "⚠ Pushing without the new-disk check (--skip-new-disk-check)"
+        return 0
+    fi
+    if [ ! -f "$SCRIPT_DIR/lib/new-disk-passes.sh" ]; then
+        echo "✗ $SCRIPT_DIR/lib/new-disk-passes.sh is missing, so the new-disk check can't run"
+        echo "  (or push anyway with --skip-new-disk-check)"
+        exit 1
+    fi
+    # shellcheck source=lib/new-disk-passes.sh
+    . "$SCRIPT_DIR/lib/new-disk-passes.sh"
+    for dir in "$@"; do
+        name="$(basename "$dir")"
+        if ! nd_has_pass "$name" "$dir"; then
+            echo "✗ $name: no new-disk pass for its current source. Run: bash tests/new-disk-start.test.sh $name"
+            missing=1
+        fi
+    done
+    if [ "$missing" -ne 0 ]; then
+        echo "  (or push anyway with --skip-new-disk-check)"
+        exit 1
+    fi
+}
+
+# ============================================================================
 # Parse command line arguments
 # ============================================================================
 # Determine script directory early for usage function
@@ -313,6 +357,7 @@ PUSH_IMAGES=false
 CLEANUP=false
 PRUNE=false
 CUSTOM_TAG=""
+SKIP_NEW_DISK_CHECK=false
 
 # Check if first argument is --all or --cleanup
 if [ "$1" = "--all" ]; then
@@ -397,6 +442,9 @@ while [ $# -gt 0 ]; do
         --prune)
             PRUNE=true
             ;;
+        --skip-new-disk-check)
+            SKIP_NEW_DISK_CHECK=true
+            ;;
         --tag)
             # Require a value, and reject the next token if it is another
             # flag (or missing) — tags never start with "--".
@@ -440,6 +488,13 @@ if [ "$BUILD_ALL" = true ]; then
     echo "Building all applications and bundles"
     echo "============================================================================"
     echo ""
+
+    # The new-disk gate checks every app before anything is cleaned, pruned or built.
+    GATE_DIRS=()
+    for target in $(discover_targets); do
+        GATE_DIRS+=("$SCRIPT_DIR/$target")
+    done
+    new_disk_gate ${GATE_DIRS[@]+"${GATE_DIRS[@]}"}
 
     # Allow IMAGE_REGISTRY to be overridden via REGISTRY environment variable
     IMAGE_REGISTRY="${REGISTRY:-r.clv.zone/e2eorg}"
@@ -516,6 +571,9 @@ if [ "$BUILD_ALL" = true ]; then
         if [ "$PUSH_IMAGES" = true ]; then
             BUILD_CMD="$BUILD_CMD --push"
         fi
+        if [ "$SKIP_NEW_DISK_CHECK" = true ]; then
+            BUILD_CMD="$BUILD_CMD --skip-new-disk-check"
+        fi
         if [ -n "$CUSTOM_TAG" ]; then
             BUILD_CMD="$BUILD_CMD --tag $CUSTOM_TAG"
         fi
@@ -561,6 +619,9 @@ if [ "$BUILD_ALL" = true ]; then
     echo ""
     exit 0
 fi
+
+# The new-disk gate, before any docker call for this target.
+new_disk_gate "$TARGET_DIR"
 
 # ============================================================================
 # Configure global variables

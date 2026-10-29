@@ -15,10 +15,10 @@
 # hosts, and checks that:
 #   - it gives the SSH command for its own app host (clouve-ops@<host>);
 #   - the rendered text never contains a password: not the clouve-ops one, and
-#     not the app's database or Odoo master password, even with the plain
-#     envsubst of agents built before 2026-10-20, which filled in every variable
-#     that was set (a persona names the variable that holds a password, never
-#     ${THE_VARIABLE});
+#     not the app's database password, Nextcloud's admin password or Odoo's
+#     master password, even with the plain envsubst of agents built before
+#     2026-10-20, which filled in every variable that was set (a persona names
+#     the variable that holds a password, never ${THE_VARIABLE});
 #   - it fetches the clouve-ops password, the app's database password and
 #     Odoo's master password with ${NAME:-$(clv-secret NAME)}, and never reads
 #     one with printenv. An older agent has NAME in its environment and no
@@ -71,6 +71,7 @@ render() {
     GIBBON_DB_PASSWORD="$SENTINEL_PW-gibbon-db" MOODLE_DB_PASSWORD="$SENTINEL_PW-moodle-db" \
     ODOO_DB_PASSWORD="$SENTINEL_PW-odoo-db" ODOO_MASTER_PASSWORD="$SENTINEL_PW-odoo-master" \
     WORDPRESS_DB_PASSWORD="$SENTINEL_PW-wordpress-db" ROOT_PASSWORD="$SENTINEL_PW-root" \
+    NEXTCLOUD_DB_PASSWORD="$SENTINEL_PW-nextcloud-db" NEXTCLOUD_ADMIN_PASSWORD="$SENTINEL_PW-nextcloud-admin" \
     envsubst < "$1"
 }
 
@@ -89,12 +90,22 @@ for tpl in "$APPS_DIR"/*/image/context/*/CONTEXT.md.tpl; do
   assert_not_contains "$app: clouve-ops password stays out of the text" "$out" "$SENTINEL_PW"
   assert_not_contains "$app: no manifest-style {user.*} placeholder" "$out" "{user."
   assert_not_contains "$app: no manifest-style {org.*} placeholder" "$out" "{org."
-  assert_contains "$app: exports SSHPASS from the two-part form of the clouve-ops password" "$out" \
-    "export SSHPASS=\"$(two_part CLOUVE_OPS_PASSWORD)\""
+  # SSHPASS comes from the two-part form, either exported once or set on the sshpass command itself. The assistant's
+  # shell keeps no variables from one command to the next, so the per-command form is the one that always works.
+  ops_form="$(two_part CLOUVE_OPS_PASSWORD)"
+  if grep -qF -- "export SSHPASS=\"$ops_form\"" <<< "$out" || grep -qF -- "SSHPASS=\"$ops_form\" sshpass -e" <<< "$out"; then
+    pass "$app: sets SSHPASS from the two-part form of the clouve-ops password"
+  else
+    fail "$app: sets SSHPASS from the two-part form of the clouve-ops password"
+    printf '       wanted: %q or %q\n' "export SSHPASS=\"$ops_form\"" "SSHPASS=\"$ops_form\" sshpass -e"
+  fi
+  if [ "$app" = "nextcloud" ]; then
+    assert_not_contains "nextcloud: sets SSHPASS on each sshpass command, never with export" "$out" "export SSHPASS"
+  fi
   # printenv CLOUVE_OPS_PASSWORD, printenv <APP>_DB_PASSWORD, printenv ODOO_MASTER_PASSWORD: none of them.
   assert_not_matches "$app: never reads a password with printenv" "$out" 'printenv[[:space:]]+[A-Z0-9_]*PASSWORD'
   case "$app" in
-    gibbon|moodle|odoo|wordpress)
+    gibbon|moodle|nextcloud|odoo|wordpress)
       dbvar="$(printf '%s' "$app" | tr '[:lower:]-' '[:upper:]_')_DB_PASSWORD"
       assert_contains "$app: names the variable that holds the database password" "$out" "\`$dbvar\`"
       assert_contains "$app: fetches the database password in the two-part form" "$out" "$(two_part "$dbvar")"

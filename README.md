@@ -53,7 +53,6 @@ apps/
     ├── logo.png                     # Application logo (recommended: 256x256)
     ├── docker-compose.yml           # Development/testing configuration
     ├── clv-docker-compose.yml       # Marketplace manifest with metadata
-    ├── clv-docker-compose-basic.yml # Optional: AI-disabled twin manifest (see below)
     └── image/                       # Custom Docker image build files
         ├── Dockerfile               # Main application Dockerfile
         ├── build.config             # Build configuration variables
@@ -293,26 +292,15 @@ TEST_DOMAIN=newdomain.test TEST_PORT=9090 docker-compose up -d
 
 The marketplace manifest (`clv-docker-compose.yml`) extends standard Docker Compose with metadata extensions.
 
-### Basic (AI-disabled) Twin Manifest (`clv-docker-compose-basic.yml`)
+### One manifest per app
 
-Agent-capable apps ship a second marketplace manifest so clients can choose
-between two published listings: the regular one (AI Assistant enabled — the
-manifest carries an `x-clouve-agent: enabled: true` block and an
-"`<App> with AI Assistant`" `appTitle`) and the basic one (no `x-clouve-agent`
-block, plain `appTitle`). Currently: `apps/wordpress`, `apps/moodle`,
-`apps/gibbon`, `apps/odoo`, and `bundles/education-kit`.
-
-Rules:
-
-- The two files must stay in **lock-step**: identical except for the header
-  comment, `appTitle`, `appDescription`, and the `x-clouve-agent` block. Any
-  service, env var, healthcheck, or volume change lands in both.
-- **One image pair serves both listings.** The images ship the `clouve-ops`
-  sshd, but it starts only when the platform injects `CLOUVE_OPS_PASSWORD`
-  (which happens on agent-enabled deployments only), so deployments from the
-  basic listing behave exactly like pre-agent ones.
-- Each listing is published independently on the marketplace (the platform has
-  no notion of the pairing — the filename is a packaging-repo convention only).
+Each app has one marketplace manifest. The AI-disabled twin
+(`clv-docker-compose-basic.yml`) was retired on 2026-10-18, and no app has one.
+An agent-capable app publishes a single listing: its manifest carries an
+`x-clouve-agent: enabled: true` block and an "`<App> with AI Assistant`"
+`appTitle`, and the customer chooses the AI Assistant at install. The images
+also run without it, because the `clouve-ops` sshd in them starts only when the
+platform injects `CLOUVE_OPS_PASSWORD`.
 
 ### AI Assistant (`x-clouve-agent`)
 
@@ -334,10 +322,10 @@ x-clouve-agent:
 
 | Field | Meaning |
 | --- | --- |
-| `enabled` | `true` offers the AI Assistant on this listing. The basic twin leaves the whole block out. |
+| `enabled` | `true` offers the AI Assistant on this listing. A manifest without the block has no AI Assistant. |
 | `skills.url` | Optional. The skills marketplace repo, with a non-empty `?plugins=` filter and an optional `#branch`. Left out, the agent starts with its base context and no skills plugins. |
 | `skills.git.token` / `skills.git.username` | Optional credentials for a private skills repo. |
-| `advanced.sidecarPullTimeout` | Optional, in seconds (at most 1800). How long the agent waits at init to pull each sibling's persona and env over `clouve-ops` SSH. Raise it for siblings with a slow first install, as Moodle, Gibbon and Odoo do here. |
+| `advanced.sidecarPullTimeout` | Optional, in seconds (at most 1800). How long the agent waits at init to pull each sibling's persona and env over `clouve-ops` SSH. Raise it for siblings with a slow first install, as Moodle, Gibbon, Odoo and Nextcloud do here. |
 | `advanced.passthroughEnv` | Optional map of extra env vars for the agent container. It is an escape hatch; `apps/ai-studio` uses it. |
 
 The AI Assistant's monthly price is Clouve's platform fee for the tier plus the
@@ -635,7 +623,48 @@ x-clouve-volumes:
 1. **Separate volumes by purpose:** Application files, uploads, database data
 2. **Size appropriately:** Consider growth patterns
 3. **Use descriptive names:** Helps with management and debugging
-4. **Handle empty volume mounts:** Bundle files and copy on first start
+4. **Handle empty volume mounts:** On a cluster a new volume starts empty and owned by root (see the next section)
+
+### Volumes on a cluster
+
+On a cluster, every volume of a new install is a new disk. Tropo writes a plain PersistentVolumeClaim for each volume,
+with the cluster's default storage class (on GKE a pd-balanced persistent disk, formatted ext4), no init container and
+no `securityContext`. So when a container starts for the first time, each of its volumes is an empty filesystem:
+
+- the top folder belongs to root, with mode 755;
+- `lost+found` (root's, mode 700) is in it;
+- none of the files the image keeps at that path are there.
+
+Docker works differently. The first time a container mounts a new named volume, Docker copies the image's folder at
+that path into it, owner and mode included. An image that has only ever run under Docker can therefore depend on that
+copy without anyone noticing. Nextcloud's first install on GKE did, and crash-looped on 2026-10-26: www-data could not
+write to its volume's root-owned top folder.
+
+`./start.sh` and `./test.sh` make every new volume in the cluster's shape before Compose creates the containers
+(`lib/new-disk-volumes.sh`), so a local start shows what a cluster does. Volumes that already exist stay as they are.
+`--docker-volumes` gives Docker's copy back, for comparing the two while debugging; a cluster never does that. A plain
+`docker-compose up` still gets Docker's copy.
+
+An image follows these rules:
+
+1. The entrypoint starts as root, and before anything runs as the app's user it makes each volume's top folder usable
+   for that user. It acts when the folder is root's, which a working install never leaves it, and it doesn't change
+   ownership through a whole volume at every start. Nextcloud's `nc_claim_new_volume`
+   (`apps/nextcloud/image/installer/lib.sh`) is an example.
+2. Files the app needs at a volume path aren't shipped at that path. They live elsewhere in the image (for example
+   `/usr/src/<app>`) and the entrypoint copies them in when they're missing, as WordPress and Nextcloud do. Or the
+   entrypoint seeds the volume from a snapshot in the image and writes a sentinel file, as the Magneto Agent and AI
+   Studio do.
+3. `lost+found` counts as empty. A first-start check ignores it, and an engine that refuses a data folder that isn't
+   empty keeps its data in a subfolder (PostgreSQL's `PGDATA=/var/lib/postgresql/data`).
+4. When the upstream image runs as a user other than root, the image starts as root and switches to that user once the
+   ownership is right. It never relies on the owner the image gives the folder.
+5. A nested volume, like LimeSurvey's `/var/www/html/upload` inside `/var/www/html`, is a disk of its own and follows
+   the same rules.
+6. A fix for an app that already has installs changes only what a working install never has, and proves it with
+   `tests/new-disk-start.test.sh <app> --upgrade-from <previous build>` (see "Testing on new cluster disks").
+7. `tests/new-disk-start.test.sh <app>` passes before every push to UAT or prod. `build-uat.sh` and `build-prod.sh`
+   check for that pass and refuse to push an app whose current source doesn't have one.
 
 ---
 
@@ -740,6 +769,38 @@ fi
 ---
 
 ## Testing Your Application
+
+### Testing on new cluster disks
+
+Every app and bundle has to start the way a cluster starts a new install. The new-disk test does that locally:
+
+```bash
+# Builds the app (host platform), starts it with every volume as a new disk, and judges each container
+# by its own probe from clv-docker-compose.yml. A pass is recorded for this exact source.
+bash tests/new-disk-start.test.sh wordpress
+bash tests/new-disk-start.test.sh education-kit      # a bundle runs the images of its apps as they are
+bash tests/new-disk-start.test.sh --all
+
+# After a fix to an app that already has installs: the previous build installs first, then the fix
+# starts on the same volumes, and each volume's top folder must keep its owner and mode.
+bash tests/new-disk-start.test.sh wordpress --upgrade-from 2026.10.22
+
+# The test's own checks: the volume helper, start.sh, the runner and the push gate, on fake apps
+bash tests/new-disk-volumes.test.sh
+```
+
+Each run uses its own Compose project with no published ports and no fixed container names, so it never collides
+with a local stack, and it gives each container the CPU and memory of the smallest plan (`cpuBase`, `memoryBase`), with
+no swap beyond that. A container passes when its `x-clouve-healthcheck` probe passes, run as Kubernetes runs it, within
+`initialDelay + failureThreshold × interval` seconds (at most 600, the time the platform's launch job waits). An HTTP
+probe asks the container's IP, follows redirects to the same host and judges the last answer, as the kubelet does.
+Then, for a 90-second settle period, nothing may exit or restart, and no probe may fail for longer than the platform
+allows. The Magneto Agent's service is left out unless `--with-agent` is given.
+
+`build-uat.sh` and `build-prod.sh` push an app only when this test passed on its current source, on the machine that
+pushes: a record of each pass is kept in `~/.cache/magneto/new-disk-passes/` there, and any change to the app's files
+makes it stale. A pass counts only from a full run, built by the test itself and with the full 90-second settle. In an
+emergency, `--skip-new-disk-check` pushes anyway and says so.
 
 ### Local Testing Workflow
 

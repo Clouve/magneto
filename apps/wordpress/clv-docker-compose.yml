@@ -2,9 +2,6 @@ version: '3.8'
 # Magneto Agent-powered WordPress — marketplace manifest.
 # See docker-compose.yml for the architectural overview and per-env-var
 # rationale; this file is the Clouve marketplace projection of the same pod.
-# The AI-disabled marketplace variant lives in clv-docker-compose-basic.yml —
-# the two files are identical except for the header, appTitle, appDescription,
-# and the x-clouve-agent block. Keep them in lock-step.
 services:
   wordpress:
     image: wordpress
