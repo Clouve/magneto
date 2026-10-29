@@ -19,7 +19,7 @@ The Nextcloud image extends the official one, as the packaging guide describes. 
 
 | Container | Built from | Port | Volume | Size |
 |---|---|---|---|---|
-| `nextcloud` | `nextcloud:35.0.2-apache` | 80, public | `nextclouddata` at `/var/www/html` | 20 GB |
+| `nextcloud` | `nextcloud:35.0.2-apache` | 80, public | `nextclouddata` at `/var/www/html` | 100 GB |
 | `nextcloud-mariadb` | `mariadb:12.3` | 3306, internal | `dbdata` at `/var/lib/mysql` | 10 GB |
 
 The `nextclouddata` volume holds the code, `config/`, `custom_apps/`, `themes/` and the users' files in `data/`. The sizes are for the smallest plan, and larger plans multiply them. The app asks for `memoryBase: 2` and `cpuBase: 1`, and the database for `memoryBase: 1` and `cpuBase: 0.5`. The app gets more memory because of previews: in a test, 24 photo previews generated at once peaked at about 1 GB. The database has no health check in the manifest, as in the other apps.

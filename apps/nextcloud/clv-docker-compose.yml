@@ -57,7 +57,7 @@ services:
       start_period: 60s
     x-clouve-volumes:
       - name: nextclouddata
-        size: 20
+        size: 100
         description: Nextcloud code, configuration, apps and users' files
   nextcloud-mariadb:
     image: nextcloud-mariadb

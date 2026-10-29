@@ -25,7 +25,7 @@
 #     password and the admin password each have a placeholder of their own;
 #   - the containers: names with at most one hyphen (plan changes skip names
 #     with more), purpose, ports, memory and CPU, and volumes whose mounted
-#     names are the x-clouve-volumes names and are declared, at 20 GB and 10 GB;
+#     names are the x-clouve-volumes names and are declared, at 100 GB and 10 GB;
 #   - the probe: the Command check, with the same numbers in
 #     x-clouve-healthcheck and in the compose healthcheck, and none for the
 #     database;
@@ -234,7 +234,7 @@ MANIFEST_METADATA = {
 
 # service -> (volume name, mount path, size in GB, description)
 MANIFEST_VOLUME = {
-    APP: ("nextclouddata", "/var/www/html", 20, "Nextcloud code, configuration, apps and users' files"),
+    APP: ("nextclouddata", "/var/www/html", 100, "Nextcloud code, configuration, apps and users' files"),
     DB: ("dbdata", "/var/lib/mysql", 10, "Nextcloud's MariaDB database files"),
 }
 
