@@ -109,6 +109,15 @@ export MAGNETO_AGENT_LLM_BASE_URL=https://llm.example.com MAGNETO_AGENT_LLM_KEY=
 bash tests/build-prune.test.sh
 ```
 
+### Checking manifests
+```bash
+# Every apps/*/ and bundles/*/ marketplace manifest against the publish wizard's limits and the host alias rules
+# (README.md, "Host aliases"). Needs python3 with PyYAML
+./check-manifests.sh
+# The checks themselves, on manifests written for each case (good ones and one per rule)
+bash tests/check-manifests.test.sh
+```
+
 ### Testing on new cluster disks
 ```bash
 # Every app and bundle must start the way a cluster starts a new install: each volume a new disk, each container
@@ -203,14 +212,16 @@ The `clv-docker-compose.yml` files use custom YAML extensions to describe how th
 
 - **`x-clouve-metadata`**: Per-container purpose (`app`, `database`), resource limits, protocol
 - **`x-clouve-environment-types`**: Declares how each env var is handled:
-  - `static` — fixed value
-  - `secret` — auto-generated secure password
-  - `containerReference` — reference to another container's name/IP
-  - `applicationUrl` — replaced with the deployment URL
-  - `applicationUsername` / `applicationPassword` — user credentials
-  - `userConfigurable` — user can modify at deploy time
+  - `static`: fixed value
+  - `secret`: auto-generated secure password
+  - `containerReference`: reference to another container's name/IP
+  - `applicationUrl` / `applicationHost`: replaced with the container's own URL (`https://<host>`) or host
+  - `applicationAliasUrl` / `applicationAliasHost`: the same for one of the container's host aliases; the value is the alias's name, which must be an alias of that container
+  - `applicationUsername` / `applicationPassword`: user credentials
+  - `userConfigurable`: user can modify at deploy time
 - **`x-clouve-healthcheck`**: HTTP/TCP/command-based health checks for the marketplace
-- **`x-clouve-bundle-metadata`**: App title, version, icon path, description
+- **`x-clouve-bundle-metadata`**: App title, version, icon path, description, admin path (`adminPath`)
+- **`x-clouve-host-aliases`** (release 4.5.2): up to 3 more hosts for a public Frontend or Backend container. Alias `studio` on a deployment at `acme-12.clouve.app` answers at `studio-acme-12.clouve.app`, a sibling host under the environment's wildcard certificate (never `studio.acme-12.clouve.app`), on the same container and port; the app tells its hosts apart by `Host`. Each entry has `name` (required) and the text fields of `x-clouve-bundle-metadata`: `appTitle` (the wizard asks for it, and for the owning container's; without one, the name with a capital first letter), `appDescription` (empty: "<title> application"), `appVersion` (the owner's when empty) and `adminPath` (a container's rules, which the owner's own `adminPath` then has to keep too). The icon is a PNG uploaded in the wizard, with no manifest field; a manifest downloaded from the wizard leaves alias icons out, so they are uploaded again after a re-upload. The customer sees each alias as its own app with its own custom-domain field, and a domain saved on an alias goes into the owning container's environment. Rules, checked at upload, save and publish: a name matches `^[a-z][a-z0-9]{1,14}$`; it isn't `default`, `ai`, `icon`, `gcp`, `aws`, `azure`, `clv`, `magneto-agent` or `oauth2-proxy`; it isn't a container's name (lower-cased, public or not) or another alias's; never on the AI Assistant; no `{{` or `}}` in an alias's title or description, or in the owning container's title, description or version. Every save after the first publish also keeps the first published version's aliases (adding, removing or moving one means a new listing), and installs and copies keep every host of the deployment within 63 characters. `./check-manifests.sh` checks magneto's manifests against the rules a file can show, and needs a container with aliases to state `isPublic` and `purpose` in its `x-clouve-metadata` (an upload would guess them). Spec: README.md, "Host aliases".
 - **`x-clouve-volumes`**: Volume sizing and human-readable descriptions
 - **`x-clouve-agent`**: AI Assistant opt-in for agent-capable apps: `enabled`, `skills.url` (plus optional `skills.git`), and optional `advanced.sidecarPullTimeout` / `advanced.passthroughEnv`. There is no `advanced.client` (one built-in client; uploads reject any value other than `null` or `claude-code`) and no API key: Clouve manages model access with one key per deployment. `quota` is retired (Clouve sets the usage allowance; uploads ignore it); the publisher's AI Assistant fee is a pricing setting in the publish wizard, not a manifest field. Spec: README.md, "AI Assistant (`x-clouve-agent`)".
 
