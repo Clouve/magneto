@@ -14,8 +14,9 @@
 #   3. `-c` given to `odoo db`. `odoo db dump -c ...` fails ("unrecognized
 #      arguments: -c"); ODOO_RC=/etc/odoo/odoo.conf works for every subcommand.
 #   4. Recycling the pod, or asking the customer to restart. The agent has no
-#      kubectl and the customer's dashboard has no restart button. Odoo is
-#      PID 1 in its container and re-executes itself on SIGHUP.
+#      kubectl and the customer's dashboard has no restart button. tini, PID 1
+#      in the Odoo container, passes SIGHUP on to Odoo, which re-executes
+#      itself.
 #   5. An odoo command given -d (shell, module, neutralize, -i/-u) without the
 #      config. sudo over ssh has no ODOO_RC, so Odoo can't find the database:
 #      `odoo neutralize -d <db>` ends "THE DATABASE IS NOT NEUTRALIZED!".

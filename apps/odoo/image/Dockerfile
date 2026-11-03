@@ -11,15 +11,22 @@ LABEL version="19.0"
 # Switch to root to install packages
 USER root
 
-# Install dependencies for database connectivity, health checks, and the
-# clouve-ops shell channel (openssh-server + sudo) used by the Magneto Agent.
+# Install dependencies for database connectivity, health checks, the
+# clouve-ops shell channel (openssh-server + sudo) used by the Magneto Agent,
+# and tini, which runs as PID 1 (see ENTRYPOINT below). Installing
+# openssh-server makes SSH host keys, and they're deleted again here: kept,
+# they would ship in the pushed image and every tenant would have the same
+# host key. Each container makes its own when its sshd starts (ssh-keygen -A
+# in start-clouve-ops-sshd.sh).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     postgresql-client \
     curl \
     netcat-openbsd \
     openssh-server \
     sudo \
-    && rm -rf /var/lib/apt/lists/*
+    tini \
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -f /etc/ssh/ssh_host_*
 
 # Operator account used by the Magneto Agent container's Claude Code agent for
 # shell access into this container. Password is set at runtime by
@@ -57,8 +64,14 @@ RUN if [ -f /entrypoint.sh ]; then \
         mv /entrypoint.sh /entrypoint-original.sh; \
     fi
 
-# Set our custom entrypoint
-ENTRYPOINT ["/clouve/odoo/installer/entrypoint.sh"]
+# tini is PID 1 and runs our entrypoint, which ends by exec'ing Odoo. Odoo never
+# reaps a process it didn't start, so while it was PID 1 every finished process
+# whose parent had gone stayed a zombie (each clouve-ops SSH session left one).
+# tini reaps them and passes signals on to Odoo: docker stop's SIGTERM, and the
+# SIGHUP that restarts Odoo in place. PID 1's command line still holds "odoo",
+# which the AI Assistant's restart command checks first
+# (grep -q odoo /proc/1/cmdline && sudo kill -HUP 1).
+ENTRYPOINT ["/usr/bin/tini", "--", "/clouve/odoo/installer/entrypoint.sh"]
 
 # Default command (starts Odoo server)
 CMD ["odoo"]

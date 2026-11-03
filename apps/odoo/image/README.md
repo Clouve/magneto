@@ -33,8 +33,13 @@ image/
 - `postgresql-client` - PostgreSQL command-line tools
 - `curl` - HTTP client for health checks
 - `netcat-openbsd` - Network connectivity testing
+- `tini` - PID 1: it runs the entrypoint, reaps finished processes whose parent has gone (such as what an SSH
+  session leaves behind) and passes signals on to Odoo
+- `openssh-server` and `sudo` - The clouve-ops channel for the AI Assistant. The image holds no SSH host keys: each
+  container makes its own when its sshd starts, and the PostgreSQL image does the same
 
 **Entrypoint Flow:**
+0. tini starts as PID 1 and runs the entrypoint
 1. Wait for PostgreSQL to be ready (with retry logic)
 2. Check if Odoo is already initialized (marker file)
 3. Run installation script if first-time setup
@@ -45,7 +50,11 @@ image/
 **Base Image:** `postgres:18`
 
 **Purpose:**
-- Re-packaged official PostgreSQL image
+- Re-packaged official PostgreSQL image, with the clouve-ops channel for the AI Assistant (`openssh-server` and
+  `sudo`) and no SSH host keys: each container makes its own when its sshd starts
+- `tini` as PID 1, with PostgreSQL as its child. The entrypoint starts the sshd detached, so its parent is tini too.
+  PostgreSQL then never sees a process it didn't start: when one of those ends with an error or a signal, PostgreSQL
+  takes it for a crashed server process and ends every connection to restart
 - Hosted in Clouve registry to avoid Docker Hub rate limits
 - Multi-platform support (amd64, arm64)
 - Optimized for Odoo compatibility

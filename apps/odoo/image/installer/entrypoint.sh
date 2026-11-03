@@ -146,7 +146,8 @@ fi
 # ============================================================================
 # Backgrounded — applies the per-pod CLOUVE_OPS_PASSWORD to the clouve-ops user
 # via chpasswd, then exec's sshd -D in its own background tree. Dies with the
-# container when odoo (PID 1, via the exec below) exits.
+# container when odoo (the exec below) exits: tini, PID 1, exits when odoo
+# does, and the container stops.
 /clouve/odoo/installer/start-clouve-ops-sshd.sh &
 
 # ============================================================================

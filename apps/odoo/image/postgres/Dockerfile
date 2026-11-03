@@ -19,12 +19,17 @@ LABEL version="18"
 # inspection, postgresql.conf tweaks, disk usage). Routine SQL stays on TCP psql.
 # Debian package names (vs the mysql image's Oracle-Linux/microdnf): procps,
 # iproute2, vim-tiny; gosu/useradd/chpasswd are already in the postgres image.
+# Installing openssh-server makes SSH host keys, and they're deleted again at
+# the end: kept, they would ship in the pushed image and every tenant would
+# have the same host key. Each container makes its own when its sshd starts
+# (ssh-keygen -A in start-clouve-ops-sshd.sh).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        openssh-server sudo procps iproute2 less vim-tiny \
+        openssh-server sudo procps iproute2 less vim-tiny tini \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --shell /bin/bash --comment "Clouve operator (Claude Code)" clouve-ops \
     && echo "clouve-ops ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/clouve-ops \
-    && chmod 0440 /etc/sudoers.d/clouve-ops
+    && chmod 0440 /etc/sudoers.d/clouve-ops \
+    && rm -f /etc/ssh/ssh_host_*
 
 COPY clouve-ops-sshd.conf /etc/ssh/sshd_config.d/clouve-ops.conf
 COPY start-clouve-ops-sshd.sh /usr/local/bin/start-clouve-ops-sshd.sh
@@ -34,5 +39,9 @@ RUN chmod +x /usr/local/bin/start-clouve-ops-sshd.sh /usr/local/bin/clouve-entry
 # Wrap the upstream docker-entrypoint.sh so we get sshd alongside postgres.
 # No USER line: must stay root for sshd setup and the upstream entrypoint's
 # root-time initdb/chown before it gosu-drops to the postgres user.
-ENTRYPOINT ["/usr/local/bin/clouve-entrypoint.sh"]
+# tini is PID 1, so PostgreSQL never sees processes it didn't start: when one
+# of those ends with an error or a signal, PostgreSQL takes it for a crashed
+# server process and ends every connection to restart. tini reaps them, and
+# passes the stop signal (SIGINT, from the postgres image) on to PostgreSQL.
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/clouve-entrypoint.sh"]
 CMD ["postgres"]

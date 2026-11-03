@@ -206,6 +206,45 @@ This approach is useful when you want to:
 - Push to your own private registry
 - Maintain consistent image sources
 
+### The clouve-ops SSH channel
+
+An image the AI Assistant works in runs an sshd for the `clouve-ops` account,
+which its entrypoint starts in the background (`start-clouve-ops-sshd.sh`).
+Three rules come with it:
+
+- **No SSH host keys in the image.** Installing openssh-server makes host keys.
+  Delete them in the same `RUN` (`rm -f /etc/ssh/ssh_host_*`): kept, they ship
+  to every deployment, and every tenant has the same host key. Each container
+  then makes its own when its sshd starts (`ssh-keygen -A`), so the keys change
+  at every container start. The Odoo and Nextcloud images do this
+  (`tests/ssh-host-keys.test.sh` checks Odoo's). The WordPress, Moodle, Gibbon
+  and AI Studio images, and WordPress's database image, still ship keys; add
+  the `rm -f` when you next rebuild them.
+- **Push a rebuilt image only where the AI Assistant keeps no host keys.** An
+  AI Assistant older than magneto-agent 4.5.3 saves each sibling's host key,
+  and refuses the sibling once that key changes. A rebuilt image's key does
+  change: at every start when the image ships none, and at the rebuild itself
+  when it still ships one. So push a rebuilt image with openssh-server to an
+  environment only after that environment's AI Assistant image is
+  magneto-agent 4.5.3 or later, which saves no sibling keys, and its running
+  AI Assistants have restarted onto it. Until then, the app's skill has to
+  pass `-o UserKnownHostsFile=/dev/null` itself, as the Nextcloud and AI Studio
+  skills do. Where such an image runs, the AI Assistant image stays at 4.5.3
+  or later: to roll it back below that, put the earlier app images back first.
+- **A PID 1 that reaps.** An SSH session can leave processes whose parent has
+  gone, and PID 1 inherits them. Make tini PID 1 when the image's own server
+  doesn't reap them (Odoo, MySQL and MariaDB don't), or when it takes such a
+  process for one of its own (PostgreSQL does: when one ends with an error or
+  a signal, PostgreSQL ends every connection and restarts). Install the `tini`
+  package and set `ENTRYPOINT ["/usr/bin/tini", "--", "<your entrypoint>"]`.
+  tini passes signals on to its child, so `docker stop` and a `kill -HUP 1`
+  restart still reach the server. In a database image, also start the sshd
+  detached, `( start-clouve-ops-sshd.sh & )`: the subshell exits at once, so
+  sshd's parent is tini, not the database server that the entrypoint's `exec`
+  turns the shell into. Both Odoo images do this (`tests/odoo-init.test.sh`).
+  `tests/db-image-zombies.test.sh` shows which database images still need it;
+  add a new database image to its lists.
+
 ---
 
 ## Docker Compose Configuration
@@ -297,10 +336,12 @@ The marketplace manifest (`clv-docker-compose.yml`) extends standard Docker Comp
 Each app has one marketplace manifest. The AI-disabled twin
 (`clv-docker-compose-basic.yml`) was retired on 2026-10-18, and no app has one.
 An agent-capable app publishes a single listing: its manifest carries an
-`x-clouve-agent: enabled: true` block and an "`<App> with AI Assistant`"
-`appTitle`, and the customer chooses the AI Assistant at install. The images
-also run without it, because the `clouve-ops` sshd in them starts only when the
-platform injects `CLOUVE_OPS_PASSWORD`.
+`x-clouve-agent: enabled: true` block, and the customer chooses the AI Assistant
+at install. Its `appTitle` is the app's own name, such as "Moodle", never
+"Moodle with AI Assistant", because the deployment page shows the title whether
+or not the customer added the AI Assistant. The images also run without it,
+because the `clouve-ops` sshd in them starts only when the platform injects
+`CLOUVE_OPS_PASSWORD`.
 
 ### AI Assistant (`x-clouve-agent`)
 
@@ -328,13 +369,17 @@ x-clouve-agent:
 | `advanced.sidecarPullTimeout` | Optional, in seconds (at most 1800). How long the agent waits at init to pull each sibling's persona and env over `clouve-ops` SSH. Raise it for siblings with a slow first install, as Moodle, Gibbon, Odoo and Nextcloud do here. |
 | `advanced.passthroughEnv` | Optional map of extra env vars for the agent container. It is an escape hatch; `apps/ai-studio` uses it. |
 
-The AI Assistant's monthly price is Clouve's platform fee for the tier plus the
-publisher's own AI Assistant fee ($0 to $500 a month), which the publisher sets
-on the publish wizard's pricing step and earns. Clouve sets the monthly usage
-allowance that comes with it and sells extra usage at cost. Customers see one
-price on the listing and at checkout, never the allowance in dollars or the
-split, and they can buy more usage for the current month when it runs out. The
-AI Assistant is optional at install and can be switched off and on again later.
+On a paid plan, the AI Assistant's monthly price is Clouve's platform fee for
+the tier plus the publisher's own AI Assistant fee ($0 to $500 a month), which
+the publisher sets on the publish wizard's pricing step and earns. Clouve sets
+the monthly usage allowance that comes with it and sells extra usage at cost.
+Customers see one price on the listing and at checkout, never the allowance in
+dollars or the split, and they can buy more usage for the current month when it
+runs out. A free trial, or an organization with free services, gets the AI
+Assistant at no charge, with no AI usage and no Buy more: the customer uses it
+with their own Claude subscription. A listing's text has to be true for both,
+which `tests/listing-ai-copy.test.sh` checks. The AI Assistant is optional at
+install, and the customer can turn it on or off later.
 
 `quota` is retired: Clouve sets the allowance now, so an upload ignores a
 leftover `quota` field instead of rejecting it.
@@ -342,7 +387,7 @@ leftover `quota` field instead of rejecting it.
 The AI Assistant has one built-in client, so there is no `advanced.client`
 field. An upload ignores a leftover `client: null` or `client: claude-code` and
 rejects any other value. Manifests carry no API key and no model settings:
-Clouve manages model access with one key per deployment.
+Clouve manages model access, with one key per paid deployment.
 
 For local runs, an app's `docker-compose.yml` passes model access through from
 the developer's shell (`MAGNETO_AGENT_LLM_BASE_URL` + `MAGNETO_AGENT_LLM_KEY`, or
@@ -366,12 +411,20 @@ x-clouve-metadata:
 ```yaml
 x-clouve-bundle-metadata:
   appVersion: "1.0.0"            # Application version
-  appTitle: "My Application"     # Display name in marketplace
+  appTitle: "My Application"     # The app's own name, shown with its version (the listing has a name of its own)
   appDescription: |              # Detailed description
     My Application is a powerful platform that enables...
-  appIcon: /path/to/icon.png     # Optional: custom icon path
+  appIcon: /thermo/assets/Company/acme/attachments/myapp-icon.png  # Optional: an icon your organization uploaded
   adminPath: /admin              # Optional: the admin page; the app's admin link is its URL plus this path
 ```
+
+An app's icon is a PNG you upload in the publish wizard, so leave `appIcon`
+out of a manifest you write. A manifest you download from the wizard holds the
+path the upload wrote, `/thermo/assets/Company/<your organization's folder>/attachments/<file>`.
+Clouve accepts no other path (release 4.5.3). A path that points anywhere else,
+such as another organization's upload, is refused when the listing is saved or
+published: "Container 1: upload the icon again. A listing can only use images
+your organization uploaded."
 
 ### Host aliases (`x-clouve-host-aliases`)
 
@@ -458,6 +511,41 @@ organization's part of the host.
 In this repo, `./check-manifests.sh` checks every manifest against all of this section's rules except the two only
 Clouve can check: the aliases a published version fixes, and the 63 characters at install. It also needs a container
 with aliases to state `isPublic` and `purpose` in its `x-clouve-metadata`, which an upload would otherwise guess.
+
+### Values Clouve refuses
+
+Clouve writes much of a listing into the templates it deploys from, and those templates read `{{` and `}}` as
+expressions of their own. So Clouve checks every listing against the rules below (release 4.5.3) when you upload a
+manifest, whenever the listing is saved, when a reviewer downloads its manifests and when it is published. A listing
+that breaks one can't be saved or published until you fix it, and deployments that already run don't change. A refusal
+names the container and the field by position, counted from 1 as the publish wizard lists them, and the rule, never the
+text it found. Refusals about a container's settings start with "Check the container settings: ".
+
+- No `{{` or `}}` in these fields: a variable's name or value, whatever its type; `image`; the `path` of
+  `x-clouve-healthcheck`; a volume's name and mount path; a Helm chart's name, version and repository; a global
+  secret's name; and the AI Assistant's `skills.url` and `skills.git.username`. A backslash in front doesn't help, and
+  no placeholder is allowed: the only expressions in a deployment's templates are the ones Clouve writes after this
+  check, such as `tkt-{{ticket.id}}-<name>` for a container reference. Single braces are fine, so the template
+  variables below, such as `{user.userEmail}`, keep working.
+- A variable's name uses only letters, digits, `.`, `-` and `_`, doesn't start with a digit, isn't `.` and doesn't
+  start with `..`: Kubernetes' rule for environment variable names. A global secret's name keeps the same rule. In a
+  manifest with `x-clouve-environment-types`, that name is the value of a `secret` or `applicationPassword` variable,
+  such as `myapp-mysql-password`.
+- No line breaks or other control characters in `image`, the health check's `path`, a volume's name and mount path, a
+  Helm chart's name, version and repository, or the AI Assistant's `skills.url` and `skills.git.username`. Clouve
+  writes each of them into the deployment's manifests on a line of its own. A variable's value may hold line feeds and
+  tabs, but no carriage return or other control character.
+- A `userConfigurable` or `applicationUsername` variable's value can't contain a double quote or a backslash, and a
+  mount path can't contain a quote of either kind or a backslash: Clouve writes these inside quoted strings.
+- A container's Kubernetes labels and annotations, host prefix, service type, headless setting and extra ports are
+  Clouve's own, so a listing can't set them. An upload doesn't read a manifest's compose `labels`.
+- Every container's `adminPath`, with host aliases or without, keeps the rule in the host alias table above: it starts
+  with `/`, uses only letters, digits, `-`, `_`, `.`, `~`, `%` and `/`, has no `//`, and is at most 256 characters
+  long.
+- Icons come only from your organization's uploads: a container's `appIcon`, each host alias's icon and the listing's
+  logo (see [Application Metadata](#application-metadata-x-clouve-bundle-metadata)).
+
+Of these rules, `./check-manifests.sh` checks only the admin path of a container that has host aliases.
 
 ### Environment Variable Types (`x-clouve-environment-types`)
 

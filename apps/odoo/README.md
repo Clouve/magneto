@@ -125,8 +125,8 @@ docker-compose down
 docker-compose up -d
 ```
 
-   If the modules are already in the volume, restarting Odoo inside its container is enough. Odoo is the
-   container's main process and re-executes itself on `SIGHUP`:
+   If the modules are already in the volume, restarting Odoo inside its container is enough. tini, the
+   container's PID 1, passes `SIGHUP` on to Odoo, which re-executes itself:
 
 ```bash
 docker-compose exec odoo kill -HUP 1

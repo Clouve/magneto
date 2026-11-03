@@ -32,6 +32,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # UAT and prod pushes are gated: build-uat.sh/build-prod.sh --push refuse an app until
 # `bash tests/new-disk-start.test.sh <app>` has passed on its current source (see "Testing on new cluster disks").
 # --skip-new-disk-check pushes anyway, for emergencies only.
+# A rebuilt image with openssh-server goes to an environment only after that environment's AI Assistant image is
+# magneto-agent 4.5.3 or later (it saves no sibling host keys) and its AI Assistants have restarted onto it. Where such
+# an image runs, the AI Assistant image never goes back below 4.5.3 (README.md, "The clouve-ops SSH channel").
 ./build-uat.sh wordpress --push
 ```
 
@@ -116,6 +119,17 @@ bash tests/build-prune.test.sh
 ./check-manifests.sh
 # The checks themselves, on manifests written for each case (good ones and one per rule)
 bash tests/check-manifests.test.sh
+# The AI Assistant's listing copy: each agent-enabled container's title is the app's own name. A sentence that offers
+# more usage, names an allowance, says what the price includes or says no API key is needed says it of a paid plan,
+# and a description that mentions any of these also says that a free trial or free services use the customer's own
+# Claude subscription. Needs python3 with PyYAML
+bash tests/listing-ai-copy.test.sh
+# The same rules on one text, such as a listing's own description from the publish wizard (the SEO page's About
+# text, which no manifest holds). It prints which rules pass, never the text. Save the text in a file first, so that
+# quotes and $ in it reach the test unchanged
+bash tests/listing-ai-copy.test.sh --text "$(cat description.txt)"
+# The rules themselves, on texts written to break each one and on texts that keep them all
+bash tests/listing-ai-copy-rules.test.sh
 ```
 
 ### Testing on new cluster disks
@@ -127,7 +141,8 @@ bash tests/check-manifests.test.sh
 # entrypoint or compose files, on the machine that will push. Needs Docker, python3 with PyYAML
 bash tests/new-disk-start.test.sh <app-or-bundle>      # or --all
 # After a fix to an app that already has installs: the previous build installs, the fix restarts on the same volumes,
-# and each volume's top folder must keep its owner and mode
+# and each volume's top folder must keep its owner and mode. This run records no pass, so a push needs the plain run
+# above as well
 bash tests/new-disk-start.test.sh <app> --upgrade-from <previous dated tag>
 # The volume helper, start.sh, the runner and the push gate themselves, on fake apps (about 10 minutes)
 bash tests/new-disk-volumes.test.sh
@@ -178,6 +193,22 @@ bash tests/odoo-addons-path.test.sh
 # The Odoo persona's commands run as written: the config on every odoo command, backup.sh piped into
 # the Odoo container, restarts by SIGHUP to PID 1, nothing that prints odoo.conf's passwords
 bash tests/odoo-persona-commands.test.sh
+# tini is PID 1: no zombies after clouve-ops SSH sessions, the SIGHUP restart still works, and docker stop ends Odoo
+# and then PostgreSQL in time (PostgreSQL with a clean shutdown). Builds both Odoo images and runs them with no network.
+# Needs Docker
+bash tests/odoo-init.test.sh
+# Neither Odoo image ships SSH host keys, and each container makes its own. Needs Docker
+bash tests/ssh-host-keys.test.sh
+# The checks of ssh-host-keys.test.sh, with a fake docker: no daemon needed
+bash tests/ssh-host-keys-checks.test.sh
+```
+
+### Checking the database images
+```bash
+# Each database image: zombies after 40 clouve-ops SSH sessions, and what happens when a background job left by a
+# session is killed (PostgreSQL can end its connections and restart). Under tini, sshd's parent has to be PID 1.
+# KNOWN findings belong to images that get tini at their next rebuild. Needs Docker
+bash tests/db-image-zombies.test.sh
 ```
 
 ## Architecture
@@ -205,7 +236,7 @@ Each app in `apps/` contains:
 The key distinction between the compose files:
 - **`docker-compose.yml`**: Uses `.data/` volume mounts for local persistence, supports `TEST_DOMAIN`/`TEST_PORT` env var substitution for URL testing
 - **`clv-docker-compose.yml`**: Marketplace manifest — no host volume mounts, uses Clouve-specific YAML extensions for orchestration metadata
-- **`clv-docker-compose-basic.yml`** (retired on 2026-10-18): the AI-disabled twin of the marketplace manifest. No app has one now. Each app has one manifest, and the AI Assistant is chosen at install. An agent-capable app (wordpress, moodle, gibbon, odoo, nextcloud; also `bundles/education-kit/`) carries `x-clouve-agent: enabled: true` and an appTitle of "`<App> with AI Assistant`" in that manifest. The images also run without the AI Assistant: the `clouve-ops` sshd in them starts only when the platform injects `CLOUVE_OPS_PASSWORD`.
+- **`clv-docker-compose-basic.yml`** (retired on 2026-10-18): the AI-disabled twin of the marketplace manifest. No app has one now. Each app has one manifest, and the AI Assistant is chosen at install. An agent-capable app (wordpress, moodle, gibbon, odoo, nextcloud; also `bundles/education-kit/`) carries `x-clouve-agent: enabled: true` in that manifest, and its appTitle is the app's own name ("Moodle", never "Moodle with AI Assistant"), because the deployment page shows the title whether or not the customer added the AI Assistant. The images also run without the AI Assistant: the `clouve-ops` sshd in them starts only when the platform injects `CLOUVE_OPS_PASSWORD`.
 
 ### Clouve Metadata Extensions
 The `clv-docker-compose.yml` files use custom YAML extensions to describe how the marketplace orchestrates the app:
@@ -220,10 +251,15 @@ The `clv-docker-compose.yml` files use custom YAML extensions to describe how th
   - `applicationUsername` / `applicationPassword`: user credentials
   - `userConfigurable`: user can modify at deploy time
 - **`x-clouve-healthcheck`**: HTTP/TCP/command-based health checks for the marketplace
-- **`x-clouve-bundle-metadata`**: App title, version, icon path, description, admin path (`adminPath`)
+- **`x-clouve-bundle-metadata`**: App title, version, icon (only the path the publish wizard's upload wrote for the listing's own organization; leave it out of a manifest you write), description, admin path (`adminPath`)
 - **`x-clouve-host-aliases`** (release 4.5.2): up to 3 more hosts for a public Frontend or Backend container. Alias `studio` on a deployment at `acme-12.clouve.app` answers at `studio-acme-12.clouve.app`, a sibling host under the environment's wildcard certificate (never `studio.acme-12.clouve.app`), on the same container and port; the app tells its hosts apart by `Host`. Each entry has `name` (required) and the text fields of `x-clouve-bundle-metadata`: `appTitle` (the wizard asks for it, and for the owning container's; without one, the name with a capital first letter), `appDescription` (empty: "<title> application"), `appVersion` (the owner's when empty) and `adminPath` (a container's rules, which the owner's own `adminPath` then has to keep too). The icon is a PNG uploaded in the wizard, with no manifest field; a manifest downloaded from the wizard leaves alias icons out, so they are uploaded again after a re-upload. The customer sees each alias as its own app with its own custom-domain field, and a domain saved on an alias goes into the owning container's environment. Rules, checked at upload, save and publish: a name matches `^[a-z][a-z0-9]{1,14}$`; it isn't `default`, `ai`, `icon`, `gcp`, `aws`, `azure`, `clv`, `magneto-agent` or `oauth2-proxy`; it isn't a container's name (lower-cased, public or not) or another alias's; never on the AI Assistant; no `{{` or `}}` in an alias's title or description, or in the owning container's title, description or version. Every save after the first publish also keeps the first published version's aliases (adding, removing or moving one means a new listing), and installs and copies keep every host of the deployment within 63 characters. `./check-manifests.sh` checks magneto's manifests against the rules a file can show, and needs a container with aliases to state `isPublic` and `purpose` in its `x-clouve-metadata` (an upload would guess them). Spec: README.md, "Host aliases".
 - **`x-clouve-volumes`**: Volume sizing and human-readable descriptions
-- **`x-clouve-agent`**: AI Assistant opt-in for agent-capable apps: `enabled`, `skills.url` (plus optional `skills.git`), and optional `advanced.sidecarPullTimeout` / `advanced.passthroughEnv`. There is no `advanced.client` (one built-in client; uploads reject any value other than `null` or `claude-code`) and no API key: Clouve manages model access with one key per deployment. `quota` is retired (Clouve sets the usage allowance; uploads ignore it); the publisher's AI Assistant fee is a pricing setting in the publish wizard, not a manifest field. Spec: README.md, "AI Assistant (`x-clouve-agent`)".
+- **`x-clouve-agent`**: AI Assistant opt-in for agent-capable apps: `enabled`, `skills.url` (plus optional `skills.git`), and optional `advanced.sidecarPullTimeout` / `advanced.passthroughEnv`. There is no `advanced.client` (one built-in client; uploads reject any value other than `null` or `claude-code`) and no API key: Clouve manages model access, with one key per paid deployment (a free trial or free services use the customer's own Claude subscription). `quota` is retired (Clouve sets the usage allowance; uploads ignore it); the publisher's AI Assistant fee is a pricing setting in the publish wizard, not a manifest field. Spec: README.md, "AI Assistant (`x-clouve-agent`)".
+
+Rules thermo checks at upload, every save, a reviewer's download and publish (release 4.5.3; spec: README.md, "Values Clouve refuses"):
+- No `{{` or `}}` in variables, `image`, the health check path, volumes, chart fields, global secret names or the AI Assistant's `skills.url` and `skills.git.username`, and no placeholder: Clouve writes its own expressions, such as `tkt-{{ticket.id}}-<name>`, after the check (single braces such as `{user.userEmail}` are fine). Variable and global secret names keep Kubernetes' env-name rule: letters, digits, `.`, `-` and `_`, no digit first, not `.`, `..` or a `..` start. No line breaks or other control characters in `image`, the health check path, volume names, mount paths or chart fields.
+- Every container's `adminPath`, with host aliases or without: `/` first, then letters, digits and `- _ . ~ % /`, no `//`, at most 256 characters.
+- Icons (`appIcon`, alias icons, the listing's logo) come only from the listing's own organization's uploads.
 
 Template variables available in manifest values: `{user.userEmail}`, `{user.firstName}`, `{org.name}`
 
@@ -238,6 +274,9 @@ Bundles in `bundles/` combine multiple apps with integration:
 
 ### Volumes on a cluster
 A new volume on a cluster is an empty disk: a top folder of root's (mode 755), `lost+found`, and none of the files the image keeps at that path. Docker named volumes copy the image's folder in instead, which is how Nextcloud's first GKE install broke on 2026-10-26 while every local test passed. So an image's entrypoint starts as root and, before the app's user runs anything, makes each volume's top folder usable when it is root's; it keeps the files it needs outside volume paths and copies them in when they're missing; it treats `lost+found` as empty; and it switches to the app's user only after that. A fix for an app with installs changes only what a working install never has, and passes `--upgrade-from`. `./start.sh` and `tests/new-disk-start.test.sh` reproduce the cluster's volumes locally. The full rules are in README.md, "Volumes on a cluster".
+
+### The clouve-ops SSH channel
+An image the AI Assistant works in runs an sshd for `clouve-ops`. It ships no SSH host keys (`rm -f /etc/ssh/ssh_host_*` in the `RUN` that installs openssh-server), so each container makes its own at start; the WordPress, Moodle, Gibbon and AI Studio images and WordPress's database image still ship keys until their next rebuild. AI Assistants older than magneto-agent 4.5.3 save each sibling's key and refuse a changed one, so a rebuilt image with openssh-server goes to an environment only after its AI Assistant image is 4.5.3 or later and its AI Assistants have restarted onto it, and the AI Assistant image never goes back below 4.5.3 where such an image runs. PID 1 has to reap what SSH sessions leave behind: tini is PID 1 when the server doesn't reap them (Odoo, MySQL, MariaDB) or takes one for a crashed process of its own (PostgreSQL then ends every connection and restarts). A database image also starts its sshd detached, `( start-clouve-ops-sshd.sh & )`, so that sshd's parent is tini. Both Odoo images do all of this. The full rules are in README.md, "The clouve-ops SSH channel".
 
 ### AI Studio (`apps/ai-studio/`)
 The AI Studio app is an Ubuntu 26.04 LTS workspace **pre-seeded with a running MERN starter project** (Node.js 22 LTS, MongoDB 7.0, Express API on `:4000`, Vite React frontend on `:5173`, mongo-express on `:8081` — all supervised by `supervisord` as PID 1; there is no systemd in the container). It is **not** a UI host — it is a sibling workspace operated by the Magneto Agent. The user talks to the agent in the chat UI (provided automatically because `x-clouve-agent: enabled: true` is always set in [apps/ai-studio/clv-docker-compose.yml](apps/ai-studio/clv-docker-compose.yml)), and the agent SSHes in as `clouve-ops` (passwordless sudo) to iterate on the seeded project at `/home/clouve-ops/projects/starter/`, install software, run services, and verify deploys. In a cluster deploy the dev servers are reached through the fleet clv-proxy at `https://<port>-<workspace-id>.<base>/`; the workspace exposes no public `:80` of its own. Four volumes (`/home`, `/usr`, `/opt`, `/var`) persist across pod restarts, so apt-installed packages, user files and Mongo data survive. The agent's behavioral contract lives in the `ai-studio` skill at [magneto-skills/plugins/ai-studio/](../magneto-skills/plugins/ai-studio/); the per-tenant persona is templated from [apps/ai-studio/image/context/ai-studio/CONTEXT.md.tpl](apps/ai-studio/image/context/ai-studio/CONTEXT.md.tpl); the seed app sources live in [apps/ai-studio/image/seed/](apps/ai-studio/image/seed/). Local dev: `./build.sh ai-studio && ./start.sh ai-studio`, then browse the seeded app at `http://localhost:5173` (API `:4000`, mongo-express `:8082`) or `ssh -p 2222 clouve-ops@localhost` (password `clouve_ops_dev_password`, set in [apps/ai-studio/docker-compose.yml](apps/ai-studio/docker-compose.yml)).

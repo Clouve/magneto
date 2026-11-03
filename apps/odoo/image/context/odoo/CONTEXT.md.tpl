@@ -40,8 +40,14 @@ sshpass -e ssh clouve-ops@${ODOO_DB_HOST}         # the PostgreSQL container
 sshpass -e ssh clouve-ops@${ODOO_HOST} "sudo grep -vE '^[[:space:]]*(db_password|admin_passwd)[[:space:]]*=' /etc/odoo/odoo.conf"   # config, passwords left out
 ```
 
-Accept the host-key fingerprint once (`-o StrictHostKeyChecking=accept-new` on
-the first run; without it `sshpass` exits with status 6 and prints nothing).
+Both containers make new SSH host keys each time they start, and the AI
+Assistant's SSH settings accept a sibling's key without saving it. If `ssh`
+still stops at the host key, add
+`-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null`. It
+stops there in one of two ways. For a key ssh hasn't seen, `sshpass` exits
+with status 6 and prints nothing. For a key that differs from the one ssh
+saved for that host, ssh prints "REMOTE HOST IDENTIFICATION HAS CHANGED" and
+"Host key verification failed.", and exits with status 255.
 Use this channel for things that must run inside the target: `odoo` commands
 (run them with `sudo` and the config), inspecting `/etc/odoo/odoo.conf` (its
 `db_password` and `admin_passwd` lines are secrets: never print them), the
@@ -111,9 +117,9 @@ These rules apply to *every* Odoo-touching action.
    `${ODOO_MASTER_PASSWORD:-$(clv-secret ODOO_MASTER_PASSWORD)}`. Treat that value like any
    other secret: never print or transmit it. The platform locks the manager (`list_db=False` +
    ingress block); do not re-enable it.
-9. **Restart Odoo inside its container, with `SIGHUP`.** Odoo is the
-   container's main process (PID 1) and re-executes itself in place, in the
-   same container and back within seconds, on
+9. **Restart Odoo inside its container, with `SIGHUP`.** tini, the
+   container's PID 1, passes the signal on to Odoo, which re-executes itself
+   in place, in the same container and back within seconds, on
    `grep -q odoo /proc/1/cmdline && sudo kill -HUP 1` over the clouve-ops
    channel. Installing or upgrading a module needs no restart; new code in
    `/mnt/extra-addons` does. Never send `SIGTERM` or `SIGKILL` to PID 1 (the
@@ -126,10 +132,12 @@ These rules apply to *every* Odoo-touching action.
     first) disables mail servers, crons, payment providers, and webhooks.
     Never run a clone that can email, charge, or webhook production systems.
 11. **Never print, copy, or transmit the AI Assistant's access key** or any
-    other secret you discover. Clouve manages the key, one per deployment,
-    and rotates it; you never replace it. It is in the environment as
-    `MAGNETO_AGENT_LLM_KEY`, in your session as `ANTHROPIC_AUTH_TOKEN`, and
-    in `/etc/profile.d/clouve-env.sh`.
+    other secret you discover. On a paid deployment, Clouve manages the key,
+    one per deployment, and rotates it; you never replace it. It is in the
+    environment as `MAGNETO_AGENT_LLM_KEY`, in your session as
+    `ANTHROPIC_AUTH_TOKEN`, and in `/etc/profile.d/clouve-env.sh`. A free
+    trial or free services have no key: there you run on the customer's own
+    Claude subscription.
 12. **The `clouve-ops` SSH access is full passwordless sudo** — the same safety
     gates apply over SSH as locally.
 
