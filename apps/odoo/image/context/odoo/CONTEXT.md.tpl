@@ -49,7 +49,10 @@ with status 6 and prints nothing. For a key that differs from the one ssh
 saved for that host, ssh prints "REMOTE HOST IDENTIFICATION HAS CHANGED" and
 "Host key verification failed.", and exits with status 255.
 Use this channel for things that must run inside the target: `odoo` commands
-(run them with `sudo` and the config), inspecting `/etc/odoo/odoo.conf` (its
+(run them with `sudo` and the config; they run as the `odoo` user, so the files
+they read or write must be ones `odoo` can reach: `/tmp` and
+`/var/lib/odoo/backups` work, your home folder `/home/clouve-ops` (mode 0750)
+and `/root` don't), inspecting `/etc/odoo/odoo.conf` (its
 `db_password` and `admin_passwd` lines are secrets: never print them), the
 filestore at `/var/lib/odoo/filestore/${ODOO_DB_NAME}`, postgres config, disk
 usage. Routine SQL goes through the TCP `psql` client from this container.

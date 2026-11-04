@@ -27,7 +27,7 @@
 #    - the Odoo server is PID 1's child (tini, whose command line still holds
 #      "odoo"), runs as odoo (user, group, no root group, no capabilities),
 #      can't gain privileges (no_new_privs) and has no password in its
-#      environment;
+#      environment (read as odoo, since root in a container can't read it);
 #    - the container's log holds no password, the made-up master password
 #      included, and Odoo never logged that it runs as root;
 #    - odoo.conf is odoo's, mode 600 or tighter, and holds the database
@@ -65,6 +65,21 @@
 #    keeps its mode), backups must end up a folder of odoo's, mode 700, and
 #    the files of odoo's outside the volumes must be the ones the first
 #    start had.
+# 6. The database container, started on its own (its own network namespace,
+#    a second client beside it) with CLOUVE_OPS_PASSWORD set, as the platform
+#    sets it in every container. Odoo's database role is the superuser, so
+#    code running as odoo could read the database server's environment
+#    (COPY ... FROM PROGRAM 'env' runs a program as postgres) and, with
+#    CLOUVE_OPS_PASSWORD, log in to the Odoo container's sshd and sudo to
+#    root. So no PostgreSQL process may hold CLOUVE_OPS_PASSWORD (looked up by
+#    name in /proc/<pid>/environ, read as postgres: root in a container has no
+#    CAP_SYS_PTRACE, so it can't read another user's environment; and through
+#    COPY ... FROM PROGRAM), while tini (PID 1) keeps it for the AI Assistant's
+#    settings read. The SSH check
+#    (sshpass -e ssh -o StrictHostKeyChecking=accept-new
+#    -o UserKnownHostsFile=/dev/null clouve-ops@<host> true) passes, and
+#    PostgreSQL restarts and stops cleanly, with the same checks after the
+#    restart.
 #
 # --image odoo=REF and --image odoo-postgres=REF use images that are already
 # built instead, and the test leaves them in place: for example an older
@@ -87,6 +102,9 @@ PREFIX="odoo-nonroot-t-"   # every container and volume this test makes begins w
 DB="${PREFIX}db"
 APP="${PREFIX}app"
 CLIENT="${PREFIX}client"
+DB2="${PREFIX}db2"          # part 6: the database container on its own
+CLIENT2="${PREFIX}client2"
+VOL_PG2="${PREFIX}pgdata2"
 VOL_PG="${PREFIX}pgdata"
 VOL_DATA="${PREFIX}data"
 VOL_ADDONS="${PREFIX}addons"
@@ -150,7 +168,7 @@ BUILT=()
 # Removes this test's containers (Odoo and the client first: they use the database's network) and volumes.
 remove_test_containers() {
   local name
-  docker rm -f -v "$APP" "$CLIENT" >/dev/null 2>&1
+  docker rm -f -v "$APP" "$CLIENT" "$CLIENT2" >/dev/null 2>&1
   while IFS= read -r name; do
     case "$name" in "$PREFIX"*) docker rm -f -v "$name" >/dev/null 2>&1 ;; esac
   done < <(docker ps -a --format '{{.Names}}' 2>/dev/null)
@@ -238,7 +256,7 @@ if ! nd_shaper_ready; then
   finish
 fi
 SHAPER="$(nd_shaper_image)"
-for volume in "$VOL_PG" "$VOL_DATA" "$VOL_ADDONS"; do
+for volume in "$VOL_PG" "$VOL_DATA" "$VOL_ADDONS" "$VOL_PG2"; do
   if ! nd_make_new_disk "$volume" "${PREFIX%-}" "$volume"; then
     fail "volume $volume starts as a new disk"
     finish
@@ -286,6 +304,20 @@ found_in() {
     if [[ "$joined" == *"${VALUES[$i]}"* ]]; then FOUND="${FOUND:+$FOUND,}${NAMES[$i]}"; fi
   done
 }
+# env_of DIR: FOUND as found_in, for a process's environment, and ENV_STATE: ok, unreadable (root in a container
+# has no CAP_SYS_PTRACE, so only the process's own user can read it) or empty (no NAME=value in it: the process has
+# written its title over that memory, as PostgreSQL's server processes other than the first do).
+env_of() {
+  local -a parts
+  local part
+  FOUND=""; ENV_STATE=unreadable
+  { mapfile -d '' -t parts < "$1/environ"; } 2>/dev/null || return 0
+  ENV_STATE=empty
+  for part in "${parts[@]}"; do
+    case "$part" in [A-Za-z_]*=*) ENV_STATE=ok; break ;; esac
+  done
+  found_in "$1/environ"
+}
 # heads DIR: A0 and A1, a process's first two arguments. Status 1 for a process with none (a kernel thread, or gone).
 heads() {
   local -a parts
@@ -321,8 +353,8 @@ scan_cmdlines() {
     printf 'cmdline pid=%s uid=%s found=%s program=%s\n' "${d#/proc/}" "${UIDS:-?}" "$FOUND" "${A0##*/}"
   done
 }
-# scan_odoo: one line for each Odoo process (python running odoo), with its users, groups, capabilities and the
-# passwords in its environment.
+# scan_odoo: one line for each Odoo process (python running odoo), with its users, groups, capabilities and
+# no_new_privs (all from /proc/<pid>/status, which any user can read).
 scan_odoo() {
   local d
   for d in /proc/[0-9]*; do
@@ -330,9 +362,8 @@ scan_odoo() {
     case "${A0##*/}" in python*) ;; *) continue ;; esac
     case "${A1##*/}" in odoo|odoo-bin) ;; *) continue ;; esac
     status "$d" || continue
-    found_in "$d/environ"
-    printf 'odoo pid=%s ppid=%s uid=%s gid=%s groups=%s capprm=%s capeff=%s nnp=%s env=%s\n' "${d#/proc/}" \
-      "$PPID_" "$UIDS" "$GIDS" "${GROUPS_:--}" "$CAPPRM" "$CAPEFF" "${NNP:--}" "${FOUND:--}"
+    printf 'odoo pid=%s ppid=%s uid=%s gid=%s groups=%s capprm=%s capeff=%s nnp=%s\n' "${d#/proc/}" \
+      "$PPID_" "$UIDS" "$GIDS" "${GROUPS_:--}" "$CAPPRM" "$CAPEFF" "${NNP:--}"
   done
 }
 # conf_is KEY VAR: status 0 when odoo.conf's KEY holds the value of the variable VAR.
@@ -363,6 +394,12 @@ EOF
 in_app() {
   T_DB="$DB_PW" T_ADMIN="$ADMIN_PW" T_OPS="$OPS_PW" T_MASTER="$MASTER_PW" \
     docker exec -e T_DB -e T_ADMIN -e T_OPS -e T_MASTER "$APP" bash -c "$SCAN_LIB"$'\n'"$1"
+}
+
+# in_app_as <user> <bash>: in_app, as <user> (a name or a uid).
+in_app_as() {
+  T_DB="$DB_PW" T_ADMIN="$ADMIN_PW" T_OPS="$OPS_PW" T_MASTER="$MASTER_PW" \
+    docker exec -u "$1" -e T_DB -e T_ADMIN -e T_OPS -e T_MASTER "$APP" bash -c "$SCAN_LIB"$'\n'"$2"
 }
 
 start_sampler() {
@@ -471,8 +508,7 @@ expect_server_odoo() {
     detail "${lines:-no Odoo process}"
     return
   fi
-  re='pid=([0-9]+) ppid=1 uid=([0-9,]+) gid=([0-9,]+) groups=([^ ]+) capprm=([0-9a-f]+) capeff=([0-9a-f]+) nnp=([^ ]+) '
-  re+='env=([^ ]+)'
+  re='pid=([0-9]+) ppid=1 uid=([0-9,]+) gid=([0-9,]+) groups=([^ ]+) capprm=([0-9a-f]+) capeff=([0-9a-f]+) nnp=([^ ]+)$'
   if ! [[ "$server" =~ $re ]]; then
     fail "the Odoo server's status can be read ($1)"
     detail "$server"
@@ -490,7 +526,11 @@ expect_server_odoo() {
   fi
   assert_eq "it has no capabilities ($1)" "0000000000000000 0000000000000000" "${BASH_REMATCH[5]} ${BASH_REMATCH[6]}"
   assert_eq "it can't gain privileges: no_new_privs is set ($1)" 1 "${BASH_REMATCH[7]}"
-  assert_eq "its environment holds no password ($1)" "-" "${BASH_REMATCH[8]}"
+  # Its environment, read as its own user: root in a container has no CAP_SYS_PTRACE, so it can read the
+  # environment of its own processes only. "ok" says the read worked and found NAME=value entries.
+  # shellcheck disable=SC2016  # the script is for the bash inside the container
+  assert_eq "its environment holds no password (read as its own user, $1)" "ok -" \
+    "$(in_app_as "${BASH_REMATCH[2]%%,*}" "load_secrets; env_of /proc/$SERVER_PID; printf '%s %s' \"\$ENV_STATE\" \"\${FOUND:--}\"")"
   root="$(printf '%s\n' "$lines" | grep -E ' uid=([0-9]+,)*0(,|( ))')"
   if [ -z "$root" ]; then
     pass "no Odoo process runs as root ($1)"
@@ -866,6 +906,140 @@ if restart_planted "backups as a link to /opt, a folder of root's" \
   expect_backups_folder "backups is a folder of odoo's again, mode 700"
   assert_eq "root didn't follow the link: /opt keeps its owner and mode" "root 755" \
     "$(docker exec "$APP" stat -c '%U %a' /opt 2>&1)"
+fi
+
+# --- 6. the database container -----------------------------------------------------------------
+echo
+echo "The database container: CLOUVE_OPS_PASSWORD stays out of PostgreSQL's environment"
+
+# pg_env_hits: one line for each PostgreSQL process in the second database container with CLOUVE_OPS_PASSWORD in its
+# environment (looked up by name, the value never read), then "read <n> of <m>": the PostgreSQL processes whose
+# environment could be read, of all of them. It reads as postgres: root in a container has no CAP_SYS_PTRACE, so it
+# can't read another user's environment. The server processes other than the first write their titles over that
+# memory, so the first one (the postmaster) is the one this can read.
+pg_env_hits() {
+  # shellcheck disable=SC2016  # the script is for the bash inside the container
+  docker exec -u postgres "$DB2" bash -c '
+    n=0; m=0
+    for d in /proc/[0-9]*; do
+      { mapfile -d "" -t argv < "$d/cmdline"; } 2>/dev/null || continue
+      case "${argv[0]:-}" in postgres|postgres:*|*/bin/postgres) ;; *) continue ;; esac
+      m=$((m + 1))
+      { mapfile -d "" -t vars < "$d/environ"; } 2>/dev/null || continue
+      ok=0
+      for v in "${vars[@]}"; do
+        case "$v" in
+          CLOUVE_OPS_PASSWORD=*) echo "pid ${d#/proc/}: ${argv[0]%% *}"; ok=1; break ;;
+          [A-Za-z_]*=*) ok=1 ;;
+        esac
+      done
+      n=$((n + ok))
+    done
+    echo "read $n of $m"'
+}
+
+# pg_program_count: what a program that PostgreSQL runs sees, asked as Odoo's database role (the superuser) would ask
+# it: COPY ... FROM PROGRAM runs `env` as the postgres user, and only the number of CLOUVE_OPS_PASSWORD lines comes back.
+pg_program_count() {
+  docker exec "$DB2" psql -U odoo -d postgres -qtA -c "CREATE TEMP TABLE t_env (n text)" \
+    -c "COPY t_env FROM PROGRAM 'env | grep -c ^CLOUVE_OPS_PASSWORD= || true'" -c "SELECT n FROM t_env" 2>&1
+}
+
+# ssh_db <command>: runs <command> as clouve-ops over SSH in the second database container, from the client beside it.
+ssh_db() {
+  SSHPASS="$OPS_PW" docker exec -i -e SSHPASS "$CLIENT2" timeout 120 \
+    sshpass -e ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+    clouve-ops@127.0.0.1 "$1"
+}
+
+# db_ready: PostgreSQL answers in the second database container and its sshd lets clouve-ops in (the runbook's check).
+db_ready() {
+  docker exec "$DB2" pg_isready -q -h 127.0.0.1 -U odoo 2>/dev/null &&
+    SSHPASS="$OPS_PW" docker exec -e SSHPASS "$CLIENT2" timeout 60 \
+      sshpass -e ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null clouve-ops@127.0.0.1 true \
+      </dev/null >/dev/null 2>&1
+}
+
+# wait_db_ready <label>: up to 120 s.
+wait_db_ready() {
+  local deadline=$((SECONDS + 120))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    if db_ready; then pass "$1"; return 0; fi
+    sleep 2
+  done
+  fail "$1"
+  docker logs --tail 20 "$DB2" 2>&1 | redacted | sed 's/^/       | /'
+  return 1
+}
+
+# shutdowns: how many clean shutdowns PostgreSQL has logged in the second database container.
+db2_shutdowns() { docker logs "$DB2" 2>&1 | grep -c 'database system is shut down'; }
+
+# expect_db_env_clean <when>: the checks on the second database container's environment.
+expect_db_env_clean() {
+  local hits read agent
+  hits="$(pg_env_hits)"
+  read="$(printf '%s\n' "$hits" | sed -n 's/^read //p')"
+  hits="$(printf '%s\n' "$hits" | grep -v '^read ')"
+  if [ "${read%% *}" -gt 0 ] 2>/dev/null && [ -z "$hits" ]; then
+    pass "no PostgreSQL process has CLOUVE_OPS_PASSWORD in its environment (/proc/<pid>/environ read as postgres: $read, $1)"
+  else
+    fail "no PostgreSQL process has CLOUVE_OPS_PASSWORD in its environment (/proc/<pid>/environ read as postgres, $1)"
+    detail "${hits:-no PostgreSQL environment could be read (${read:-none})}"
+  fi
+  assert_eq "a program PostgreSQL runs (COPY ... FROM PROGRAM 'env', as Odoo's superuser role) sees no CLOUVE_OPS_PASSWORD ($1)" \
+    0 "$(pg_program_count)"
+  # shellcheck disable=SC2016  # the command is for the shell clouve-ops gets over SSH
+  agent="$(ssh_db 'sudo -nu "$(stat -c %U /proc/1)" cat /proc/1/environ | tr "\0" "\n" | grep -c "^CLOUVE_OPS_PASSWORD="' \
+    </dev/null 2>/dev/null)"
+  assert_eq "tini (PID 1) still has it, read the way the AI Assistant reads its settings ($1)" 1 "$agent"
+}
+
+if ! POSTGRES_PASSWORD="$DB_PW" CLOUVE_OPS_PASSWORD="$OPS_PW" docker run -d --pull=never --name "$DB2" --network none \
+    -v "$VOL_PG2:/var/lib/postgresql" -e POSTGRES_DB=postgres -e POSTGRES_USER=odoo -e POSTGRES_PASSWORD \
+    -e CLOUVE_OPS_PASSWORD "$PG_IMAGE" >/dev/null; then
+  fail "the second database container starts"
+  finish
+fi
+if ! docker run -d --pull=never --name "$CLIENT2" --network "container:$DB2" "$CLIENT_IMAGE" sleep 3600 >/dev/null; then
+  fail "the client beside it starts"
+  finish
+fi
+if wait_db_ready "PostgreSQL answers, and the runbook's SSH check passes: sshpass -e ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null clouve-ops@<db host> true"; then
+  assert_eq "PID 1 is tini" tini "$(docker exec "$DB2" cat /proc/1/comm 2>/dev/null)"
+  expect_db_env_clean "first start"
+
+  shutdowns_before="$(db2_shutdowns)"
+  docker restart -t 30 "$DB2" >/dev/null 2>&1
+  check "docker restart -t 30 restarts the database container" $?
+  # The client joined the network namespace the container had before; it joins the new one when it starts again.
+  docker restart -t 1 "$CLIENT2" >/dev/null 2>&1
+  if wait_db_ready "after the restart, PostgreSQL answers and the SSH check passes again"; then
+    if [ "$(db2_shutdowns)" -gt "$shutdowns_before" ]; then
+      pass "PostgreSQL shut down cleanly for the restart (\"database system is shut down\")"
+    else
+      fail "PostgreSQL shut down cleanly for the restart (\"database system is shut down\")"
+    fi
+    recoveries="$(docker logs "$DB2" 2>&1 | grep -c 'automatic recovery in progress')"
+    assert_eq "it started again without crash recovery (no \"automatic recovery in progress\")" 0 "$recoveries"
+    expect_db_env_clean "after the restart"
+  fi
+
+  shutdowns_before="$(db2_shutdowns)"
+  start=$SECONDS
+  docker stop -t 30 "$DB2" >/dev/null 2>&1
+  took=$((SECONDS - start))
+  if [ "$took" -lt 30 ]; then
+    pass "docker stop -t 30 ends the database container in about $took s"
+  else
+    fail "docker stop -t 30 ends the database container before the grace period is up (took $took s)"
+  fi
+  assert_eq "PostgreSQL exits 0 on the forwarded SIGINT" 0 "$(docker inspect -f '{{.State.ExitCode}}' "$DB2" 2>/dev/null)"
+  if [ "$(db2_shutdowns)" -gt "$shutdowns_before" ]; then
+    pass "PostgreSQL logs a clean shutdown (\"database system is shut down\")"
+  else
+    fail "PostgreSQL logs a clean shutdown (\"database system is shut down\")"
+  fi
 fi
 
 finish

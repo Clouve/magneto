@@ -201,7 +201,10 @@ bash tests/odoo-init.test.sh
 bash tests/ssh-host-keys.test.sh
 # Odoo runs as the odoo user and no password is on a command line or in the log: through the first start and a
 # SIGHUP restart, for odoo commands root runs with sudo, and on a new and an upgraded disk; odoo.conf is odoo's,
-# mode 600; the clouve-ops SSH check passes before and after the restart. Needs Docker
+# mode 600; the clouve-ops SSH check passes before and after the restart. Links and files that code running as odoo
+# could leave in /var/lib/odoo (the install marker as a link, backups as a file or a link) never make root write to
+# or change anything outside it, and the database container keeps CLOUVE_OPS_PASSWORD out of PostgreSQL's
+# environment while tini keeps it for the AI Assistant. Needs Docker
 bash tests/odoo-non-root.test.sh
 # The checks of ssh-host-keys.test.sh, with a fake docker: no daemon needed
 bash tests/ssh-host-keys-checks.test.sh

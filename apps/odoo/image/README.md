@@ -60,6 +60,10 @@ image/
 **Purpose:**
 - Re-packaged official PostgreSQL image, with the clouve-ops channel for the AI Assistant (`openssh-server` and
   `sudo`) and no SSH host keys: each container makes its own when its sshd starts
+- `CLOUVE_OPS_PASSWORD` stays out of PostgreSQL's environment: the entrypoint starts the sshd, then takes the
+  password out of the environment it starts PostgreSQL with, and PID 1 (tini) keeps it for the AI Assistant's settings
+  read. Odoo's database role is the superuser, and a superuser can read the server's environment
+  (`COPY ... FROM PROGRAM 'env'`), so code running as `odoo` could otherwise log in as clouve-ops and sudo to root
 - `tini` as PID 1, with PostgreSQL as its child. The entrypoint starts the sshd detached, so its parent is tini too.
   PostgreSQL then never sees a process it didn't start: when one of those ends with an error or a signal, PostgreSQL
   takes it for a crashed server process and ends every connection to restart
@@ -141,7 +145,9 @@ The container starts as root: tini, the entrypoint and the clouve-ops sshd run a
   if it doesn't. So the Odoo commands that root runs run as `odoo` too: `sudo odoo shell ...`,
   `sudo odoo ... --stop-after-init`, and the `odoo db dump` in the AI Assistant's `backup.sh`. Their arguments,
   stdin, environment and exit status stay the same, and `HOME` becomes `/var/lib/odoo`. A root Odoo would leave files
-  of root's in `/var/lib/odoo` (filestore folders, sessions), and the server couldn't write to them after that.
+  of root's in `/var/lib/odoo` (filestore folders, sessions), and the server couldn't write to them after that. Since
+  these commands run as `odoo`, the files they read or write must be ones `odoo` can reach: `/tmp` and
+  `/var/lib/odoo/backups` work, but a home folder such as `/home/clouve-ops` (mode 0750) or `/root` doesn't.
 - Before anything runs as `odoo`, the entrypoint gives the top folders of `/var/lib/odoo` and `/mnt/extra-addons` to
   `odoo` while they are root's (a new cluster disk), and keeps their mode. It also gives `odoo` every file in
   `/var/lib/odoo` that isn't `odoo`'s, since older images ran Odoo as root and left such files. `find` looks for one
