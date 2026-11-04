@@ -176,9 +176,9 @@ Odoo comes with a wide range of built-in applications:
 
 **Solution**:
 1. Check the `ODOO_MASTER_PASSWORD` environment variable in docker-compose.yml
-2. If auto-generated, check container logs:
+2. If auto-generated, read it from the configuration file (the logs never show it):
    ```bash
-   docker logs odoo_app | grep "Master password"
+   docker exec odoo_app grep '^admin_passwd' /etc/odoo/odoo.conf
    ```
 3. Recreate containers to generate a new password:
    ```bash
@@ -219,6 +219,12 @@ Look for error messages in the logs and address the specific issue.
 ### Permission Issues
 
 **Symptom**: Permission denied errors in logs
+
+**Cause**: Odoo runs as the `odoo` user, never as root, so it can't write to a file of root's in `/var/lib/odoo`. The
+entrypoint gives every such file to `odoo` at each container start (an older image ran Odoo as root and left some),
+but a restart with `kill -HUP 1` doesn't run the entrypoint. The `odoo` command drops to the `odoo` user by itself
+when root runs it (`docker-compose exec odoo odoo ...`, `sudo odoo ...`). Give files that you copy in as root to
+`odoo`.
 
 **Solution**:
 Reset permissions:
@@ -411,10 +417,12 @@ environment:
 
 **Method 2: Auto-Generated (Development Only)**
 
-If `ODOO_MASTER_PASSWORD` is not provided, a random 32-character password is generated automatically. The generated password is displayed in the container logs during first initialization:
+If `ODOO_MASTER_PASSWORD` is not provided, the entrypoint makes up a random 32-character password at every container
+start. It writes the password to `/etc/odoo/odoo.conf` (`admin_passwd`) only, a file that only the `odoo` user and
+root can read. The logs say where it is, never what it is. Read it there:
 
 ```bash
-docker logs odoo_app | grep "Master password"
+docker exec odoo_app grep '^admin_passwd' /etc/odoo/odoo.conf
 ```
 
 #### Verifying Configuration

@@ -9,8 +9,12 @@ image/
 ├── Dockerfile                    # Custom Odoo image
 ├── build.config                  # Build configuration
 ├── installer/
-│   ├── entrypoint.sh            # Main entrypoint script
-│   └── install.sh               # Installation/initialization script
+│   ├── entrypoint.sh            # Main entrypoint script (runs as root, starts Odoo as odoo)
+│   ├── install.sh               # Installation/initialization script
+│   ├── update-config.sh         # Sets web.base.url from ODOO_URL at every start
+│   ├── odoo                     # /usr/local/bin/odoo: runs Odoo as the odoo user
+│   ├── start-clouve-ops-sshd.sh # The clouve-ops sshd for the AI Assistant
+│   └── clouve-ops-sshd.conf     # sshd settings for clouve-ops
 └── postgres/
     └── Dockerfile               # Custom PostgreSQL image
 ```
@@ -22,6 +26,7 @@ image/
 **Base Image:** `odoo:19.0`
 
 **Enhancements:**
+- Odoo runs as the `odoo` user, never as root (see "Users and passwords" below)
 - Bundled initialization scripts (no host mounts required)
 - Automatic database connection with retry logic
 - PostgreSQL client tools for database connectivity
@@ -39,11 +44,14 @@ image/
   container makes its own when its sshd starts, and the PostgreSQL image does the same
 
 **Entrypoint Flow:**
-0. tini starts as PID 1 and runs the entrypoint
+0. tini starts as PID 1 and runs the entrypoint, as root
 1. Wait for PostgreSQL to be ready (with retry logic)
-2. Check if Odoo is already initialized (marker file)
-3. Run installation script if first-time setup
-4. Start Odoo server
+2. Write `/etc/odoo/odoo.conf`: the `odoo` user's, mode 600
+3. Give the volumes to the `odoo` user (a new disk, or files of root's that an older image left)
+4. Check if Odoo is already initialized (marker file), and run the installation script if not
+5. Update `web.base.url`, and start the clouve-ops sshd (as root, detached, so its parent is tini)
+6. Start the Odoo server as the `odoo` user, with `odoo.conf` and no password on its command line or in its
+   environment
 
 ### 2. PostgreSQL Database Image (`r.clv.zone/e2eorg/odoo-postgres`)
 
@@ -119,6 +127,51 @@ This configuration is used by build scripts to automate the image building proce
 | `POSTGRES_USER` | Database username | `odoo` |
 | `POSTGRES_PASSWORD` | Database password | `odoo` |
 
+## Users and passwords
+
+The container starts as root: tini, the entrypoint and the clouve-ops sshd run as root. Odoo never runs as root.
+
+- The entrypoint ends with `exec /usr/local/bin/odoo ... -c /etc/odoo/odoo.conf`. That script drops to the `odoo`
+  user (its user, group and own groups, through `setpriv`) and execs the real `/usr/bin/odoo`. Every step is an exec,
+  so the Odoo server is tini's child, and the restart (`grep -q odoo /proc/1/cmdline && sudo kill -HUP 1`) still
+  reaches it. Odoo re-executes itself in place, still as `odoo`. `setpriv` also sets `no_new_privs`, which Odoo and
+  everything it starts keep (`wkhtmltopdf` for PDF reports, for one): none of them can gain rights through a setuid
+  program such as `sudo` or `su`.
+- `/usr/local/bin/odoo` comes before `/usr/bin/odoo` in root's PATH and in sudo's `secure_path`, and the build fails
+  if it doesn't. So the Odoo commands that root runs run as `odoo` too: `sudo odoo shell ...`,
+  `sudo odoo ... --stop-after-init`, and the `odoo db dump` in the AI Assistant's `backup.sh`. Their arguments,
+  stdin, environment and exit status stay the same, and `HOME` becomes `/var/lib/odoo`. A root Odoo would leave files
+  of root's in `/var/lib/odoo` (filestore folders, sessions), and the server couldn't write to them after that.
+- Before anything runs as `odoo`, the entrypoint gives the top folders of `/var/lib/odoo` and `/mnt/extra-addons` to
+  `odoo` while they are root's (a new cluster disk), and keeps their mode. It also gives `odoo` every file in
+  `/var/lib/odoo` that isn't `odoo`'s, since older images ran Odoo as root and left such files. `find` looks for one
+  first, so a start with nothing to fix costs one pass over the folder. `lost+found` stays as it is. The modules in
+  `/mnt/extra-addons` keep their owner, because Odoo only reads them (the AI Assistant gives the ones it adds to
+  `odoo`).
+- The entrypoint makes `/var/lib/odoo/backups` as `odoo`'s when it is missing, and sets it to mode 700 at every start,
+  so only `odoo` and root can read the backups. `backup.sh` runs as root and would make the folder as root's, and the
+  dump, which runs as `odoo`, couldn't write into it. If the folder goes missing while the container runs,
+  `backup.sh` fails until the next start.
+- Root never follows a link in `odoo`'s folders, because code running as `odoo` can leave one there. The ownership
+  pass uses `find` (which doesn't follow links) and `chown -h`. A file or a link where the `backups` folder should be
+  is removed before the folder is made. The install marker (`/var/lib/odoo/.odoo_initialized`) is written as `odoo`,
+  after root removes whatever was at that path.
+- Odoo gets the database password from `odoo.conf` only. The file is `odoo`'s, mode 600 from the moment it is made, so
+  no other user can read it. Odoo writes to it too, when someone sets a new master password in its database manager.
+- No password goes on a command line, where any process in the container can read it. The official image's
+  `/entrypoint.sh` put `--db_host`, `--db_port`, `--db_user` and `--db_password` on Odoo's command line for each one
+  `odoo.conf` lacks. The Dockerfile removes it, and the entrypoint waits for PostgreSQL itself. The installer hands the
+  admin's password to its `odoo shell` step through that command's environment.
+- The entrypoint takes `ODOO_DB_PASSWORD`, `ODOO_MASTER_PASSWORD`, `ODOO_ADMIN_PASSWORD`, `CLOUVE_OPS_PASSWORD` and
+  `PGPASSWORD` out of the environment it passes to Odoo. Any process of `odoo`'s could read them there, and
+  `CLOUVE_OPS_PASSWORD` would give it root over SSH. Odoo would also take a `PGPASSWORD` over `odoo.conf`. PID 1 keeps
+  them, because the AI Assistant reads its settings from PID 1's environment.
+- Without `ODOO_MASTER_PASSWORD`, the entrypoint makes up a new master password at every start and writes it to
+  `odoo.conf` (`admin_passwd`) only. The log says where it is, never what it is.
+
+`bash tests/odoo-non-root.test.sh` checks all of this on a running pair of containers built from the current source,
+on new disks and on a disk with files of root's. It takes about a minute when the images are cached.
+
 ## Initialization Process
 
 ### First-Time Setup
@@ -135,7 +188,7 @@ This configuration is used by build scripts to automate the image building proce
 
 3. **Database Initialization**
    - Verifies PostgreSQL connection using `psql`
-   - Creates necessary directories with proper permissions
+   - Creates necessary directories (the entrypoint has already given them to the `odoo` user)
    - Sets up Odoo data directory (`/var/lib/odoo`)
    - Sets up addons directory (`/mnt/extra-addons`), the custom-modules volume. The `odoo.conf` that the
      entrypoint writes on every start lists it in `addons_path` as the pattern `/mnt/extra-addons*`, so Odoo
@@ -277,6 +330,9 @@ open http://localhost:8069
 ### Verify Initialization
 
 ```bash
+# Run the image's own checks: Odoo as the odoo user, no password on a command line
+bash tests/odoo-non-root.test.sh    # from the magneto folder
+
 # Check marker file
 docker exec odoo_app ls -la /var/lib/odoo/.odoo_initialized
 

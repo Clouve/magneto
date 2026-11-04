@@ -234,8 +234,9 @@ pass "Odoo answers on /web/health"
 comm_of() { docker exec "$APP" cat "/proc/$1/comm" 2>/dev/null; }
 
 # odoo_pid: the PID of the Odoo server: the child of PID 1 with /usr/bin/odoo among its arguments. Its name
-# changes from odoo to python3 when it re-executes itself on SIGHUP, so the name can't tell. Its command line holds
-# the database password (the official entrypoint passes --db_password), so nothing here prints it.
+# changes from odoo to python3 when it re-executes itself on SIGHUP, so the name can't tell. Images built before
+# 2026-11-03 could have the database password on its command line (the official entrypoint passed --db_password), so
+# nothing here prints it.
 odoo_pid() {
   # shellcheck disable=SC2016  # the script is for the bash inside the container
   docker exec "$APP" bash -c '

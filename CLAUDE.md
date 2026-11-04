@@ -199,6 +199,10 @@ bash tests/odoo-persona-commands.test.sh
 bash tests/odoo-init.test.sh
 # Neither Odoo image ships SSH host keys, and each container makes its own. Needs Docker
 bash tests/ssh-host-keys.test.sh
+# Odoo runs as the odoo user and no password is on a command line or in the log: through the first start and a
+# SIGHUP restart, for odoo commands root runs with sudo, and on a new and an upgraded disk; odoo.conf is odoo's,
+# mode 600; the clouve-ops SSH check passes before and after the restart. Needs Docker
+bash tests/odoo-non-root.test.sh
 # The checks of ssh-host-keys.test.sh, with a fake docker: no daemon needed
 bash tests/ssh-host-keys-checks.test.sh
 ```

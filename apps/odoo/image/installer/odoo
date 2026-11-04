@@ -1,0 +1,29 @@
+#!/bin/bash
+# /usr/local/bin/odoo: runs Odoo as the odoo user.
+#
+# Odoo never runs as root in this image. A root Odoo leaves files of root's in
+# /var/lib/odoo (filestore folders, sessions, backups), and the Odoo server,
+# which runs as odoo, can't write to them after that. This file comes before
+# the real odoo (/usr/bin/odoo) in PATH and in sudo's secure_path, so the
+# commands the AI Assistant runs as clouve-ops (sudo odoo shell ...,
+# sudo odoo ... --stop-after-init, odoo db dump in backup.sh) come here too.
+#
+# Run as root, it drops to odoo (user, group, odoo's own groups) with setpriv
+# and runs the real odoo in its own place (exec). So it is the same process,
+# with the same arguments, stdin and environment, and the exit status is
+# Odoo's. HOME, USER and LOGNAME become odoo's: Odoo's home is its data
+# folder, /var/lib/odoo. no_new_privs stays set for Odoo and everything it
+# starts (wkhtmltopdf for PDF reports, for one), so none of them can gain
+# rights through a setuid program such as sudo or su. Run as any other user,
+# it runs the real odoo as that user.
+
+REAL_ODOO=/usr/bin/odoo
+
+if [ "$EUID" -eq 0 ]; then
+    HOME=/var/lib/odoo
+    USER=odoo
+    LOGNAME=odoo
+    export HOME USER LOGNAME
+    exec setpriv --reuid=odoo --regid=odoo --init-groups --no-new-privs -- "$REAL_ODOO" "$@"
+fi
+exec "$REAL_ODOO" "$@"

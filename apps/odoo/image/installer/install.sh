@@ -1,7 +1,11 @@
 #!/bin/bash
 
 # Odoo Installation Script
-# This script handles the initial Odoo database setup and configuration
+# This script handles the initial Odoo database setup and configuration.
+# The entrypoint runs it as root. The odoo commands in it run as the odoo user
+# (/usr/local/bin/odoo drops root's rights), and no password goes on a
+# command line: each one goes to the one command that needs it, through that
+# command's environment.
 
 # Color codes for output
 RED='\033[0;31m'
@@ -27,9 +31,15 @@ ODOO_CONF="/etc/odoo/odoo.conf"
 # Odoo database configuration
 ODOO_DB_NAME="${ODOO_DB_NAME:-odoo}"
 ODOO_ADMIN_EMAIL="${ODOO_ADMIN_EMAIL:-admin@example.com}"
-ODOO_ADMIN_PASSWORD="${ODOO_ADMIN_PASSWORD:-admin}"
+ADMIN_PASSWORD="${ODOO_ADMIN_PASSWORD:-admin}"
 ODOO_LANGUAGE="${ODOO_LANGUAGE:-en_US}"
 ODOO_COUNTRY="${ODOO_COUNTRY:-US}"
+
+# The odoo commands below get none of the container's passwords in their
+# environment. Odoo reads the database password from odoo.conf. The admin
+# step gets the admin's password by itself, and each psql gets PGPASSWORD by
+# itself (Odoo would take a PGPASSWORD over odoo.conf).
+unset ODOO_DB_PASSWORD ODOO_MASTER_PASSWORD ODOO_ADMIN_PASSWORD CLOUVE_OPS_PASSWORD PGPASSWORD
 
 # ============================================================================
 # STEP 1: Verify PostgreSQL connection
@@ -38,8 +48,7 @@ ODOO_COUNTRY="${ODOO_COUNTRY:-US}"
 echo -e "${YELLOW}[INFO]${NC} Verifying PostgreSQL connection..."
 
 # Test connection using psql
-export PGPASSWORD="$DB_PASSWORD"
-if psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d postgres -c "SELECT 1" > /dev/null 2>&1; then
+if PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d postgres -c "SELECT 1" > /dev/null 2>&1; then
     echo -e "${GREEN}[SUCCESS]${NC} PostgreSQL connection verified!"
 else
     echo -e "${RED}[ERROR]${NC} Failed to connect to PostgreSQL"
@@ -50,13 +59,9 @@ fi
 # STEP 2: Create data and addons directories
 # ============================================================================
 
-# Ensure data directory exists and has proper permissions
-mkdir -p "$ODOO_DATA_DIR"
-chown -R odoo:odoo "$ODOO_DATA_DIR"
-
-# Ensure addons directory exists
-mkdir -p "$ODOO_ADDONS_DIR"
-chown -R odoo:odoo "$ODOO_ADDONS_DIR"
+# The entrypoint has made both folders and given them to odoo already (its
+# step 3), lost+found aside.
+mkdir -p "$ODOO_DATA_DIR" "$ODOO_ADDONS_DIR"
 
 # ============================================================================
 # STEP 3: Check if database already exists
@@ -64,7 +69,7 @@ chown -R odoo:odoo "$ODOO_ADDONS_DIR"
 
 echo -e "${YELLOW}[INFO]${NC} Checking if database '$ODOO_DB_NAME' already exists..."
 
-if psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d postgres -lqt | cut -d \| -f 1 | grep -qw "$ODOO_DB_NAME"; then
+if PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d postgres -lqt | cut -d \| -f 1 | grep -qw "$ODOO_DB_NAME"; then
     echo -e "${GREEN}[INFO]${NC} Database '$ODOO_DB_NAME' already exists. Skipping database initialization."
     echo -e "${GREEN}[SUCCESS]${NC} Odoo is ready to use!"
     echo -e "${GREEN}[INFO]${NC} Access Odoo at: http://localhost:8069"
@@ -79,13 +84,13 @@ fi
 echo -e "${YELLOW}[INFO]${NC} Initializing Odoo database '$ODOO_DB_NAME'..."
 echo -e "${YELLOW}[INFO]${NC} This may take a few minutes..."
 
-# Run Odoo database initialization as odoo user
+# Run Odoo database initialization as odoo user (/usr/local/bin/odoo drops to it)
 # Using -i base to install base module which creates the database
-su - odoo -s /bin/bash -c "odoo -c $ODOO_CONF \
-    -d $ODOO_DB_NAME \
+/usr/local/bin/odoo -c "$ODOO_CONF" \
+    -d "$ODOO_DB_NAME" \
     -i base \
     --without-demo=all \
-    --stop-after-init" 2>&1 | tee /tmp/odoo_init.log
+    --stop-after-init 2>&1 | tee /tmp/odoo_init.log
 
 # Check if initialization was successful
 if [ ${PIPESTATUS[0]} -eq 0 ]; then
@@ -105,8 +110,11 @@ echo -e "${YELLOW}[INFO]${NC} Configuring admin user..."
 
 # Use Odoo shell to properly configure admin user using ORM
 # This ensures all hooks and validations are properly executed
-# Pass environment variables explicitly to the odoo user
-su - odoo -s /bin/bash -c "ODOO_ADMIN_EMAIL='$ODOO_ADMIN_EMAIL' ODOO_ADMIN_PASSWORD='$ODOO_ADMIN_PASSWORD' odoo shell -c $ODOO_CONF -d $ODOO_DB_NAME --stop-after-init" << 'PYTHON_SCRIPT' 2>&1 | tee /tmp/odoo_user_config.log
+# The admin's login and password reach the shell through its environment,
+# never on a command line, where any process in the container could read them.
+# The shell runs as the odoo user (/usr/local/bin/odoo drops to it).
+ODOO_ADMIN_EMAIL="$ODOO_ADMIN_EMAIL" ODOO_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
+    /usr/local/bin/odoo shell -c "$ODOO_CONF" -d "$ODOO_DB_NAME" --stop-after-init << 'PYTHON_SCRIPT' 2>&1 | tee /tmp/odoo_user_config.log
 import os
 
 # Get environment variables
