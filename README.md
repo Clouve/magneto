@@ -206,6 +206,45 @@ This approach is useful when you want to:
 - Push to your own private registry
 - Maintain consistent image sources
 
+### The clouve-ops SSH channel
+
+An image the AI Assistant works in runs an sshd for the `clouve-ops` account,
+which its entrypoint starts in the background (`start-clouve-ops-sshd.sh`).
+Three rules come with it:
+
+- **No SSH host keys in the image.** Installing openssh-server makes host keys.
+  Delete them in the same `RUN` (`rm -f /etc/ssh/ssh_host_*`): kept, they ship
+  to every deployment, and every tenant has the same host key. Each container
+  then makes its own when its sshd starts (`ssh-keygen -A`), so the keys change
+  at every container start. The Odoo and Nextcloud images do this
+  (`tests/ssh-host-keys.test.sh` checks Odoo's). The WordPress, Moodle, Gibbon
+  and AI Studio images, and WordPress's database image, still ship keys; add
+  the `rm -f` when you next rebuild them.
+- **Push a rebuilt image only where the AI Assistant keeps no host keys.** An
+  AI Assistant older than magneto-agent 4.5.3 saves each sibling's host key,
+  and refuses the sibling once that key changes. A rebuilt image's key does
+  change: at every start when the image ships none, and at the rebuild itself
+  when it still ships one. So push a rebuilt image with openssh-server to an
+  environment only after that environment's AI Assistant image is
+  magneto-agent 4.5.3 or later, which saves no sibling keys, and its running
+  AI Assistants have restarted onto it. Until then, the app's skill has to
+  pass `-o UserKnownHostsFile=/dev/null` itself, as the Nextcloud and AI Studio
+  skills do. Where such an image runs, the AI Assistant image stays at 4.5.3
+  or later: to roll it back below that, put the earlier app images back first.
+- **A PID 1 that reaps.** An SSH session can leave processes whose parent has
+  gone, and PID 1 inherits them. Make tini PID 1 when the image's own server
+  doesn't reap them (Odoo, MySQL and MariaDB don't), or when it takes such a
+  process for one of its own (PostgreSQL does: when one ends with an error or
+  a signal, PostgreSQL ends every connection and restarts). Install the `tini`
+  package and set `ENTRYPOINT ["/usr/bin/tini", "--", "<your entrypoint>"]`.
+  tini passes signals on to its child, so `docker stop` and a `kill -HUP 1`
+  restart still reach the server. In a database image, also start the sshd
+  detached, `( start-clouve-ops-sshd.sh & )`: the subshell exits at once, so
+  sshd's parent is tini, not the database server that the entrypoint's `exec`
+  turns the shell into. Both Odoo images do this (`tests/odoo-init.test.sh`).
+  `tests/db-image-zombies.test.sh` shows which database images still need it;
+  add a new database image to its lists.
+
 ---
 
 ## Docker Compose Configuration
@@ -297,10 +336,12 @@ The marketplace manifest (`clv-docker-compose.yml`) extends standard Docker Comp
 Each app has one marketplace manifest. The AI-disabled twin
 (`clv-docker-compose-basic.yml`) was retired on 2026-10-18, and no app has one.
 An agent-capable app publishes a single listing: its manifest carries an
-`x-clouve-agent: enabled: true` block and an "`<App> with AI Assistant`"
-`appTitle`, and the customer chooses the AI Assistant at install. The images
-also run without it, because the `clouve-ops` sshd in them starts only when the
-platform injects `CLOUVE_OPS_PASSWORD`.
+`x-clouve-agent: enabled: true` block, and the customer chooses the AI Assistant
+at install. Its `appTitle` is the app's own name, such as "Moodle", never
+"Moodle with AI Assistant", because the deployment page shows the title whether
+or not the customer added the AI Assistant. The images also run without it,
+because the `clouve-ops` sshd in them starts only when the platform injects
+`CLOUVE_OPS_PASSWORD`.
 
 ### AI Assistant (`x-clouve-agent`)
 
@@ -328,13 +369,17 @@ x-clouve-agent:
 | `advanced.sidecarPullTimeout` | Optional, in seconds (at most 1800). How long the agent waits at init to pull each sibling's persona and env over `clouve-ops` SSH. Raise it for siblings with a slow first install, as Moodle, Gibbon, Odoo and Nextcloud do here. |
 | `advanced.passthroughEnv` | Optional map of extra env vars for the agent container. It is an escape hatch; `apps/ai-studio` uses it. |
 
-The AI Assistant's monthly price is Clouve's platform fee for the tier plus the
-publisher's own AI Assistant fee ($0 to $500 a month), which the publisher sets
-on the publish wizard's pricing step and earns. Clouve sets the monthly usage
-allowance that comes with it and sells extra usage at cost. Customers see one
-price on the listing and at checkout, never the allowance in dollars or the
-split, and they can buy more usage for the current month when it runs out. The
-AI Assistant is optional at install and can be switched off and on again later.
+On a paid plan, the AI Assistant's monthly price is Clouve's platform fee for
+the tier plus the publisher's own AI Assistant fee ($0 to $500 a month), which
+the publisher sets on the publish wizard's pricing step and earns. Clouve sets
+the monthly usage allowance that comes with it and sells extra usage at cost.
+Customers see one price on the listing and at checkout, never the allowance in
+dollars or the split, and they can buy more usage for the current month when it
+runs out. A free trial, or an organization with free services, gets the AI
+Assistant at no charge, with no AI usage and no Buy more: the customer uses it
+with their own Claude subscription. A listing's text has to be true for both,
+which `tests/listing-ai-copy.test.sh` checks. The AI Assistant is optional at
+install, and the customer can turn it on or off later.
 
 `quota` is retired: Clouve sets the allowance now, so an upload ignores a
 leftover `quota` field instead of rejecting it.
@@ -342,7 +387,7 @@ leftover `quota` field instead of rejecting it.
 The AI Assistant has one built-in client, so there is no `advanced.client`
 field. An upload ignores a leftover `client: null` or `client: claude-code` and
 rejects any other value. Manifests carry no API key and no model settings:
-Clouve manages model access with one key per deployment.
+Clouve manages model access, with one key per paid deployment.
 
 For local runs, an app's `docker-compose.yml` passes model access through from
 the developer's shell (`MAGNETO_AGENT_LLM_BASE_URL` + `MAGNETO_AGENT_LLM_KEY`, or
@@ -366,11 +411,141 @@ x-clouve-metadata:
 ```yaml
 x-clouve-bundle-metadata:
   appVersion: "1.0.0"            # Application version
-  appTitle: "My Application"     # Display name in marketplace
+  appTitle: "My Application"     # The app's own name, shown with its version (the listing has a name of its own)
   appDescription: |              # Detailed description
     My Application is a powerful platform that enables...
-  appIcon: /path/to/icon.png     # Optional: custom icon path
+  appIcon: /thermo/assets/Company/acme/attachments/myapp-icon.png  # Optional: an icon your organization uploaded
+  adminPath: /admin              # Optional: the admin page; the app's admin link is its URL plus this path
 ```
+
+An app's icon is a PNG you upload in the publish wizard, so leave `appIcon`
+out of a manifest you write. A manifest you download from the wizard holds the
+path the upload wrote, `/thermo/assets/Company/<your organization's folder>/attachments/<file>`.
+Clouve accepts no other path (release 4.5.3). A path that points anywhere else,
+such as another organization's upload, is refused when the listing is saved or
+published: "Container 1: upload the icon again. A listing can only use images
+your organization uploaded."
+
+### Host aliases (`x-clouve-host-aliases`)
+
+Each public container gets one host. The first public container gets the deployment's own host, such as
+`acme-12.clouve.app`. Every other public container gets `<container>-acme-12.clouve.app`, and the AI Assistant gets
+`ai-acme-12.clouve.app`.
+
+A public container can also answer on up to three more hosts, its host aliases. An alias named `studio` on that
+deployment answers at `studio-acme-12.clouve.app`. The alias host sits beside the deployment's other hosts, under the
+same certificate, and never below them: there is no `studio.acme-12.clouve.app`. The ingress sends it to the same
+container and port, so the app gets the requests for all of its hosts on one port and tells them apart by the `Host`
+header. Open edX needs this: one container runs its learner site and its Studio, each on a host of its own. An alias
+adds no container, so it doesn't change the price.
+
+The customer sees each alias as an app of its own on the deployment page, with its title, icon, URL, admin link and
+status, and the sign-in of the container it runs in. Each alias also has its own custom-domain field, so a customer
+can use `studio.learn.school.org` beside `learn.school.org`. When the customer saves a domain for an alias, Clouve
+writes it into the owning container's environment in place of the alias's host, as it does for a container's own
+domain.
+
+```yaml
+services:
+  openedx:
+    environment:
+      OPENEDX_URL: http://localhost:8080
+      OPENEDX_STUDIO_URL: studio
+    x-clouve-environment-types:
+      OPENEDX_URL: applicationUrl              # https://acme-12.clouve.app
+      OPENEDX_STUDIO_URL: applicationAliasUrl  # https://studio-acme-12.clouve.app
+    x-clouve-metadata:
+      containerName: openedx
+      purpose: Frontend
+      isPublic: true
+    x-clouve-bundle-metadata:
+      appTitle: "Learning Site"
+    x-clouve-host-aliases:
+      - name: studio
+        appTitle: Course Studio
+        appDescription: Build and edit your courses.
+        adminPath: /home
+```
+
+Each entry has a name and the text fields of `x-clouve-bundle-metadata`:
+
+| Field | Meaning |
+| --- | --- |
+| `name` | Required. The first part of the alias's host: 2 to 15 lower-case letters and digits, starting with a letter, with no hyphen. |
+| `appTitle` | The alias's name on the deployment page and in the marketplace, 2 to 100 characters, with no `{{` or `}}`. The publish wizard asks for it on every alias, and for the owning container's own `appTitle`, even when that container is the listing's only public one. A listing saved without it shows the alias's name with a capital first letter. |
+| `appDescription` | Optional. 10 to 1000 characters, with no `{{` or `}}`. Left empty, it is the alias's title followed by "application", such as "Course Studio application". |
+| `appVersion` | Optional, in the format of a container's `appVersion` (`"1.0.0"`, `"2.1"`, `"3.0.0-beta"`). Left empty, it is the owning container's version. |
+| `adminPath` | Optional, with the rules of a container's `adminPath`: it starts with `/`, uses only letters, digits, `-`, `_`, `.`, `~`, `%` and `/`, has no `//`, and is at most 256 characters long. The alias's admin link is its URL plus this path. The owning container's own `adminPath` has to keep these rules too. |
+
+The container that has the aliases can't have `{{` or `}}` in its own `appTitle`, `appDescription` or `appVersion`
+either: Clouve writes these texts into templates that read those marks as their own.
+
+The manifest has no icon field for an alias. Upload each alias's icon, a PNG, in the publish wizard next to its other
+fields; the wizard asks for one, and for the owning container's icon. A manifest you download from the wizard leaves
+the alias icons out as well, so after you upload it again, upload each alias's icon again.
+
+Two environment types give a container the addresses of its own aliases: `applicationAliasUrl` and
+`applicationAliasHost`. The variable's value is the alias's name, and it has to be an alias of the same container.
+They work like `applicationUrl` and `applicationHost`: in the example, `OPENEDX_STUDIO_URL` becomes
+`https://studio-acme-12.clouve.app`, and changes to the alias's custom domain when the customer sets one.
+
+Clouve checks these rules, and the limits in the table, when you upload the manifest, whenever the listing is saved
+and again when it is published:
+
+- A container has at most 3 aliases.
+- Only a public container whose `purpose` is `Frontend` or `Backend` takes aliases. The AI Assistant takes none.
+- No alias is named `default`, `ai`, `icon`, `gcp`, `aws`, `azure`, `clv`, `magneto-agent` or `oauth2-proxy`. Clouve
+  already uses these names: for the deployment's own host, the listing's icon, the AI Assistant, the deployment's
+  single sign-on proxy (`oauth2-proxy`) and its clusters' hosts.
+- No alias has the name of a container in the listing (in any case, public or not), and no two aliases share a name,
+  even on different containers. The same goes the other way round: a container can't be named like an alias.
+
+A listing's first published version also fixes its aliases. From then on, Clouve refuses to save a version that
+doesn't declare the same alias names on the same containers; their titles, descriptions, versions, icons and admin
+paths can change. To add, remove or move an alias, publish a new listing.
+
+One more limit applies when a deployment is installed or copied: each of its hosts has to fit in 63 characters, and
+Clouve refuses the install or the copy when one would be longer. A long alias name leaves less room for the
+organization's part of the host.
+
+In this repo, `./check-manifests.sh` checks every manifest against all of this section's rules except the two only
+Clouve can check: the aliases a published version fixes, and the 63 characters at install. It also needs a container
+with aliases to state `isPublic` and `purpose` in its `x-clouve-metadata`, which an upload would otherwise guess.
+
+### Values Clouve refuses
+
+Clouve writes much of a listing into the templates it deploys from, and those templates read `{{` and `}}` as
+expressions of their own. So Clouve checks every listing against the rules below (release 4.5.3) when you upload a
+manifest, whenever the listing is saved, when a reviewer downloads its manifests and when it is published. A listing
+that breaks one can't be saved or published until you fix it, and deployments that already run don't change. A refusal
+names the container and the field by position, counted from 1 as the publish wizard lists them, and the rule, never the
+text it found. Refusals about a container's settings start with "Check the container settings: ".
+
+- No `{{` or `}}` in these fields: a variable's name or value, whatever its type; `image`; the `path` of
+  `x-clouve-healthcheck`; a volume's name and mount path; a Helm chart's name, version and repository; a global
+  secret's name; and the AI Assistant's `skills.url` and `skills.git.username`. A backslash in front doesn't help, and
+  no placeholder is allowed: the only expressions in a deployment's templates are the ones Clouve writes after this
+  check, such as `tkt-{{ticket.id}}-<name>` for a container reference. Single braces are fine, so the template
+  variables below, such as `{user.userEmail}`, keep working.
+- A variable's name uses only letters, digits, `.`, `-` and `_`, doesn't start with a digit, isn't `.` and doesn't
+  start with `..`: Kubernetes' rule for environment variable names. A global secret's name keeps the same rule. In a
+  manifest with `x-clouve-environment-types`, that name is the value of a `secret` or `applicationPassword` variable,
+  such as `myapp-mysql-password`.
+- No line breaks or other control characters in `image`, the health check's `path`, a volume's name and mount path, a
+  Helm chart's name, version and repository, or the AI Assistant's `skills.url` and `skills.git.username`. Clouve
+  writes each of them into the deployment's manifests on a line of its own. A variable's value may hold line feeds and
+  tabs, but no carriage return or other control character.
+- A `userConfigurable` or `applicationUsername` variable's value can't contain a double quote or a backslash, and a
+  mount path can't contain a quote of either kind or a backslash: Clouve writes these inside quoted strings.
+- A container's Kubernetes labels and annotations, host prefix, service type, headless setting and extra ports are
+  Clouve's own, so a listing can't set them. An upload doesn't read a manifest's compose `labels`.
+- Every container's `adminPath`, with host aliases or without, keeps the rule in the host alias table above: it starts
+  with `/`, uses only letters, digits, `-`, `_`, `.`, `~`, `%` and `/`, has no `//`, and is at most 256 characters
+  long.
+- Icons come only from your organization's uploads: a container's `appIcon`, each host alias's icon and the listing's
+  logo (see [Application Metadata](#application-metadata-x-clouve-bundle-metadata)).
+
+Of these rules, `./check-manifests.sh` checks only the admin path of a container that has host aliases.
 
 ### Environment Variable Types (`x-clouve-environment-types`)
 
@@ -399,7 +574,10 @@ x-clouve-environment-types:
 | `static` | Fixed value, not modified during deployment |
 | `secret` | Auto-generated secure password/token |
 | `containerReference` | Reference to another container name |
-| `applicationUrl` | Replaced with deployment URL |
+| `applicationUrl` | Replaced with the container's own URL, such as `https://acme-12.clouve.app` |
+| `applicationHost` | Replaced with the container's own host, such as `acme-12.clouve.app` |
+| `applicationAliasUrl` | Replaced with the URL of one of the container's host aliases; the value is the alias's name (see "Host aliases") |
+| `applicationAliasHost` | Replaced with the host of one of the container's host aliases; the value is the alias's name |
 | `applicationUsername` | Primary user identifier |
 | `applicationPassword` | Primary user password |
 | `userConfigurable` | User can modify during deployment |

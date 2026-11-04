@@ -32,8 +32,9 @@
 #   - the listing: appVersion (also the Nextcloud version that image/Dockerfile
 #     pins), appTitle, adminPath, and an appDescription of 10 to 1000
 #     characters (the wizard's limits) with no double quote, single quote, {{
-#     or }}, no curly quote or dash, and the AI-usage, no-API-key and
-#     data-ownership sentences that the other agent listings carry;
+#     or }}, no curly quote or dash, and the AI-usage and data-ownership
+#     sentences that the other agent listings carry (the AI-usage ones in
+#     the form without apostrophes);
 #   - x-clouve-agent: enabled, the nextcloud plugin, a 600 s sidecar pull;
 #   - no key is repeated inside a mapping (a YAML parser keeps the last one
 #     without a word).
@@ -253,10 +254,9 @@ DESCRIPTION_PHRASES = [
     # Nextcloud's own sentence: the first start installs the three apps only when the app store answers, so the
     # listing promises them only on that condition.
     "The first start installs the Calendar, Contacts and Team folders apps when the Nextcloud app store is reachable.",
-    "includes an AI usage allowance",
-    "buy more usage at any time",
-    "switch the assistant off and on again",
-    "an API key or an account with an AI provider",
+    "On a paid plan, the price of the AI Assistant includes an AI usage allowance, and you can buy more.",
+    "On a free trial, or with free services, you use it with your own Claude subscription.",
+    "You can turn it on or off.",
     "The tenant owns the Nextcloud data; Clouve hosts the containers.",
 ]
 
@@ -451,7 +451,7 @@ def check_manifest(text, doc):
         expect("x-clouve-bundle-metadata holds appVersion, appTitle, appDescription and adminPath, and nothing else",
                sorted(bundle), BUNDLE_KEYS)
         expect("appVersion", bundle.get("appVersion"), "35.0.2")
-        expect("appTitle", bundle.get("appTitle"), "Nextcloud with AI Assistant")
+        expect("appTitle", bundle.get("appTitle"), "Nextcloud")
         expect("adminPath", bundle.get("adminPath"), "/settings/admin")
         check_description(bundle.get("appDescription"))
         try:

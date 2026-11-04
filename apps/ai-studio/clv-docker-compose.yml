@@ -16,6 +16,9 @@ services:
       isPublic: true
       memoryBase: 2
       cpuBase: 0.5
+    x-clouve-bundle-metadata:
+      appTitle: AI Studio
+      appDescription: A workspace where you build a web app by chatting with the AI Assistant, starting from a running MongoDB, Express, React and Node.js project that you can preview as you go.
     x-clouve-healthcheck:
       enabled: true
       type: TCP
