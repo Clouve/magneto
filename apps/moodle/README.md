@@ -107,7 +107,7 @@ The Moodle DevOps Skill enforces explicit safety gates that the agent does not b
 | Toggle `$CFG->maintenance_enabled` directly | Refuses — directs to `admin/cli/maintenance.php` |
 | `admin/cli/uninstall_plugins.php` | Backup + plugin's `db/uninstall.php` reviewed + user ack |
 | `admin/cli/reset_password.php` | Confirms username + checks user is contactable; never resets primary admin without ack |
-| `admin/cli/kill_all_sessions.php --run` | Confirms target scope + user ack (without `--run` is dry-run by default in 5.2) |
+| `admin/cli/kill_all_sessions.php --run` | Confirms target scope + user ack (without `--run` it is a dry run in 5.2 and 5.3) |
 | Bulk delete users / courses | Use Moodle UI bulk actions or course backup first; never raw SQL on `mdl_user` / `mdl_course` |
 | Rotate DB credentials | Use container env vars, not hand-edit `config.php`; restart pod to apply |
 | Destructive ops over the SSH hop (`apachectl stop`, `mysqld kill`, `rm -rf`, …) | User ack — the gates apply just as strongly when running over SSH as locally |
@@ -545,7 +545,7 @@ For successful integration, ensure:
 - ✅ **AI Agent Companion**: Browser-based Claude Code workspace (the upstream `magneto-agent` image, configured via `MAGNETO_AGENT_SKILLS`) with a Moodle DevOps Skill that can perform upgrades, plugin installs, MUC purges, backups, restores, maintenance-mode toggles, and 500-error diagnostics through natural language.
 - ✅ **Cross-Container Shell Access**: `clouve-ops` SSH operator account in `moodle` and `moodle-mysql` (passwordless sudo, password auth) — the agent has a real shell in both side containers without any shared filesystem with their data.
 - ✅ **Dynamic Configuration Updates**: Automatic synchronization of database credentials, application URL, and SSL-proxy mode.
-- ✅ **Custom Docker Images**: Built from Dockerfiles (Moodle 5.2).
+- ✅ **Custom Docker Images**: Built from Dockerfiles (Moodle 5.3, one pinned build).
 - ✅ **Multi-Platform Support**: amd64 and arm64 architectures.
 - ✅ **Automatic Installation**: Zero-touch Moodle installation.
 - ✅ **MySQL 8.4 Database**: With health checks and retry logic.
@@ -785,6 +785,46 @@ docker-compose exec moodle printenv MOODLE_RELEASE
 docker-compose exec moodle grep '^\$version' /var/www/html/public/version.php
 ```
 
+### Upgrading to a newer image
+
+The image carries one pinned Moodle build: Moodle 5.3 (Build: 20261005), `$version` 2026100500. At each start, the
+entrypoint compares that `$version` with the one recorded in `/var/www/html/clouve/installed/version`. When the image's
+is higher, it upgrades the site once, in maintenance mode, with `image/installer/upgrade.sh`. A site from the 5.2 image
+moves to 5.3 at its first start on this one. Take a database dump and a copy of both volumes first.
+
+What changes for a site that moves from 5.2 to 5.3:
+
+- Moodle 5.3 removed the Classic theme. When the site's theme is Classic, set in the admin pages or forced in
+  `config.php`, Moodle's upgrade switches it to Boost and copies Classic's customised settings there (brand colour, raw
+  SCSS, background images, unaddable blocks). Then it uninstalls Classic, which resets every category, course, cohort
+  and user theme that was Classic. Presets, the dark navbar and block positions don't carry over: blocks from Classic's
+  right-hand column show at the end of Boost's block region. The upgrade can't change `config.php`, so after it
+  `upgrade.sh` turns a line that only sets `$CFG->theme = 'classic';` into an empty statement with a comment that says
+  why. `config.php` must still pass `php -l`, or it stays as it was; any other line that sets Classic is named in the
+  log, to change by hand.
+- Classic was part of Moodle 5.2, so `upgrade.sh` never copies it back into the new code. A school that wants Classic
+  back installs it from <https://github.com/moodlehq/moodle-theme_classic> after the upgrade, as a fresh theme: Classic's
+  old settings and the theme choices of categories, courses, cohorts and users are gone by then. From then on it is a
+  plugin the admin added, and later upgrades keep it. An added theme based on Classic gets a warning in the log: Moodle
+  shows its default theme instead of it until it has a release for 5.3.
+- Plugins that admins added are copied back, except those that won't work with 5.3. That includes a plugin whose
+  `$plugin->supported` range covered 5.2 but not 503: Moodle itself only warns about such a plugin; the image holds it
+  back because its author hasn't said it works on 5.3. A plugin that already ran on 5.2 outside its range is kept, with
+  a warning. The log names each held-back plugin and says why before Moodle's upgrade runs, and its code stays in
+  `clouve/upgrade-stash/<time>/`. Its data stays in the database, so installing a newer release of the plugin brings
+  it back.
+- If Moodle's upgrade fails twice while upgrading a plugin an admin added, that plugin is held back and the upgrade runs
+  once more; only when Moodle doesn't name the plugin are all the added plugins held back.
+- Moodle 5.3 ships two plugins that were add-ons before: `report_aiusage` and `aiprovider_anthropic`. If a site added
+  one of them in a version newer than 5.3's own, Moodle can't take it back to the older one. Then the site isn't
+  upgraded: it keeps running its 5.2 code, the log says `NOT UPGRADED` and why, no new version is recorded, and the next
+  start checks again. To let it upgrade, uninstall that plugin in Moodle while the site still runs its 5.2 code (Site
+  administration > Plugins > Plugins overview, or `php admin/cli/uninstall_plugins.php --plugins=<component> --run`),
+  which deletes its data and the version Moodle recorded, then delete its folder. Deleting only the folder isn't
+  enough: Moodle still records the newer version, and the image checks that too. Or wait for an image whose Moodle has
+  a newer copy of the plugin.
+- Moodle 5.3 needs PHP 8.3 and MySQL 8.4, which the images already have, and upgrades only from 4.4 or later.
+
 ## Building and Deployment
 
 ### Building Images
@@ -847,11 +887,11 @@ The `clv-docker-compose.yml` file contains Clouve-specific extensions for market
 
 **`moodle` image (PHP 8.3 + Apache)**
 
-- `image/Dockerfile` - Custom Moodle Docker image definition. Now also installs `openssh-server` + `sudo` and creates the `clouve-ops` operator account.
+- `image/Dockerfile` - Custom Moodle Docker image definition. Now also installs `openssh-server` + `sudo` and creates the `clouve-ops` operator account. It deletes the SSH host keys that installing openssh-server makes, so each container makes its own (`tests/moodle-ssh-host-keys.test.sh`).
 - `image/installer/entrypoint.sh` - Container entrypoint (install/upgrade/config-update + cron + clouve-ops sshd bring-up).
 - `image/installer/install.sh` - Initial installation logic (non-interactive `admin/cli/install.php`).
-- `image/installer/upgrade.sh` - Upgrade flow: moves the old code tree aside, copies the image's Moodle, copies back the plugins that admins added through Moodle's UI, then runs `admin/cli/upgrade.php --non-interactive`. If that fails twice with added plugins in place, it holds them back and runs it once more without them. The old tree stays in `clouve/upgrade-previous/` until the upgrade succeeds, so a start that is cut off can run the upgrade again.
-- `image/installer/added-plugins.php` - Lists those added plugins for `upgrade.sh`, and holds back the ones that the new Moodle ships itself or whose `version.php` says they won't work with it. Held-back plugins stay in `clouve/upgrade-stash/` on the code volume, and the container log says why.
+- `image/installer/upgrade.sh` - Upgrade flow: moves the old code tree aside, copies the image's Moodle, copies back the plugins that admins added through Moodle's UI, then runs `admin/cli/upgrade.php --non-interactive`. If that fails twice with added plugins in place, it holds them back and runs it once more without them. The old tree stays in `clouve/upgrade-previous/` until the upgrade succeeds, so a start that is cut off can run the upgrade again; that start first clears the upgrade lock Moodle leaves in its config table when its upgrade is cut off, which would otherwise stop every upgrade for 5 minutes. If an added plugin's upgrade step fails twice, that plugin alone is held back when Moodle names it. Afterwards, a line that only sets `$CFG->theme = 'classic';` in `config.php` becomes a comment when the new Moodle has no Classic theme. A site with an added plugin newer than the new Moodle's own copy isn't upgraded at all: `upgrade.sh` exits with status 3 before it changes anything, and the entrypoint keeps the old code running (see [Upgrading to a newer image](#upgrading-to-a-newer-image)).
+- `image/installer/added-plugins.php` - Lists those added plugins for `upgrade.sh`, and holds back the ones that the new Moodle ships itself or whose `version.php` says they won't work with it: marked incompatible, a `$plugin->supported` range that covered the old branch but leaves out the new one, or a dependency the new site won't have. Its "stop" line marks an added plugin that the new Moodle ships in an older version. Held-back plugins stay in `clouve/upgrade-stash/` on the code volume, and the container log says why.
 - `image/installer/update-config.sh` - Configuration update script (DB credentials + `wwwroot` + SSL proxy).
 - `image/installer/moodle-cron.sh` - Wrapper around `admin/cli/cron.php` invoked by cron.
 - `image/installer/start-clouve-ops-sshd.sh` - Applies the per-pod `CLOUVE_OPS_PASSWORD` to the `clouve-ops` user via `chpasswd`, then `exec`s `sshd -D`.
@@ -876,7 +916,7 @@ The compose files reference `r.clv.zone/clouveinc/magneto-agent` directly. There
 **Skill source ([`magneto-skills`](https://github.com/Clouve/magneto-skills) marketplace, shared with the rest of the platform)**
 
 - `plugins/moodle/skills/moodle/SKILL.md` - Skill entry point — when to use, operating principles, pointers into deeper docs.
-- `plugins/moodle/skills/moodle/reference/` - Stack/runtime, install/bootstrap, upgrade, configuration, architecture, caching, file-storage, cron-and-tasks, scaling, performance, observability, data model, backup/restore, security, troubleshooting, **shell-access** (clouve-ops SSH guide), **changes-in-5.2**.
+- `plugins/moodle/skills/moodle/reference/` - Stack/runtime, install/bootstrap, upgrade, configuration, architecture, caching, file-storage, cron-and-tasks, scaling, performance, observability, data model, backup/restore, security, troubleshooting, **shell-access** (clouve-ops SSH guide), **changes-in-5.2** and **changes-in-5.3**.
 - `plugins/moodle/skills/moodle/playbooks/` - Step-by-step procedures (upgrade, plugin install, rollback, credential rotation, end-of-term archive, purge caches, 500 diagnosis, fresh-install hardening).
 - `plugins/moodle/skills/moodle/scripts/` - Audited helpers (`backup.sh`, `verify-health.sh`, `php-info.sh`, `purge-caches.sh`, `maintenance.sh`).
 - The per-skill `CONTEXT.md.tpl` (Moodle DevOps persona + SSH-via-`clouve-ops` runbook) is shipped under [`image/context/moodle/CONTEXT.md.tpl`](image/context/moodle/CONTEXT.md.tpl), baked into the moodle image at `/clouve/context/moodle/CONTEXT.md.tpl`, and appended as `## Skill: moodle` to the rendered `CLAUDE.md` at session start after Magneto Agent pulls it via `clouve-ops` SSH at init.
@@ -907,9 +947,9 @@ Moodle is a globally adopted open-source learning management system designed for
 
 ### Compatibility
 
-- **Moodle Version**: 5.2
+- **Moodle Version**: 5.3 (an LTS release; the image pins build 20261005)
 - **PHP Version**: 8.3
-- **Database**: MariaDB 10.11+, **MySQL 8.4+** (this image), PostgreSQL 16+, MSSQL 15+, Aurora MySQL 8.0+
+- **Database**: MariaDB 11.4+, **MySQL 8.4+** (this image), PostgreSQL 17+, MSSQL 2019 (15.0)+, Aurora MySQL 8.0+
 - **Magneto Agent**: derived from the upstream [`Clouve/magneto-agent`](https://github.com/Clouve/magneto-agent) image — Claude Code (Clouve-managed model access in a deployment; your own key for local runs)
 - **Docker Compose**: 3.8+
 - **Kubernetes**: Compatible with ConfigMaps and Secrets

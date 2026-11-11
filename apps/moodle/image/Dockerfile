@@ -1,11 +1,14 @@
 FROM php:8.3-apache
 
-# Moodle version - using latest stable version
-ENV MOODLE_VERSION=502
-ENV MOODLE_RELEASE=5.2
+# Moodle version: one pinned build (see PINNED BUILD below). MOODLE_VERSION is the branch, MOODLE_RELEASE the release
+# in the download's file name, which also names the folder of the code in the image (/clouve/moodle/moodle-5.3).
+ENV MOODLE_VERSION=503
+ENV MOODLE_RELEASE=5.3
 ENV MOODLE_PATH=moodle/moodle-${MOODLE_RELEASE}
 
-# Setup server and install dependencies
+# Setup server and install dependencies. Installing openssh-server makes SSH host keys, and they're deleted again
+# here: kept, they would ship in the pushed image and every tenant would have the same host key. Each container makes
+# its own when its sshd starts (ssh-keygen -A in start-clouve-ops-sshd.sh); tests/moodle-ssh-host-keys.test.sh checks.
 RUN apt-get update && apt-get -y upgrade && \
     apt-get install -y \
     gettext-base \
@@ -24,7 +27,8 @@ RUN apt-get update && apt-get -y upgrade && \
     unzip \
     openssh-server \
     sudo \
-    && echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen && locale-gen
+    && echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen && locale-gen \
+    && rm -f /etc/ssh/ssh_host_*
 
 # Operator account used by the magneto-agent container's Claude Code agent for shell
 # access into this container. The account password is set at runtime by
@@ -123,13 +127,13 @@ RUN cp /clouve/moodle/installer/clouve-ops-sshd.conf /etc/ssh/sshd_config.d/clou
 # based on the MOODLE_CRON_INTERVAL environment variable
 
 # Download and extract Moodle.
-# PINNED BUILD: the stable${MOODLE_VERSION} URL serves a *rolling* "latest 5.2.x"
-# tarball, so the sha256 below pins this image to ONE exact build —
-# 5.2 (Build: 20260420) / version 2026042000. If upstream publishes a newer 5.2.x
-# the build fails here (checksum mismatch) instead of silently shipping newer code
-# than tenant databases expect. To adopt a new build, bump MOODLE_VERSION/
-# MOODLE_RELEASE above and update this checksum in the same commit.
-ADD --checksum=sha256:48f0f521375006be84c227e6a595313ebcc9dc55455499b5150dcfe865782cfe \
+# PINNED BUILD: Moodle 5.3 (Build: 20261005), $version 2026100500, tag v5.3.0, released on 2026-10-05. The checksum
+# is the one download.moodle.org publishes for this numbered release (moodle-5.3.tgz.sha256), so a different file fails
+# the build here instead of shipping other code than tenant databases expect. Never pin moodle-latest-503.tgz: that is
+# the weekly "5.3+" build, rebuilt every week. To adopt a newer numbered build (5.3.1, ...), set MOODLE_RELEASE to it
+# (and MOODLE_VERSION for a new branch) and this checksum, in the same commit; the entrypoint then upgrades every
+# site once, because the new $version is higher than the one its volume records.
+ADD --checksum=sha256:7e5edf110555956571f40e42acffde0eb23681ebebd212a2fec0fe7d795dd511 \
     https://download.moodle.org/download.php/direct/stable${MOODLE_VERSION}/moodle-${MOODLE_RELEASE}.tgz ./moodle/installer/
 RUN tar -xzf ./moodle/installer/moodle-${MOODLE_RELEASE}.tgz -C ./moodle/ && \
     mv ./moodle/moodle ./moodle/moodle-${MOODLE_RELEASE}

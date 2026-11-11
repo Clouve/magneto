@@ -225,7 +225,7 @@ fi
 
 # Check if an upgrade is needed by comparing the exact Moodle $version baked into
 # this image against the version recorded on the data volume. Keying on the exact
-# build (e.g. 2026042000) — not the coarse "5.2" release — means point-build bumps
+# build (e.g. 2026100500) — not the coarse "5.3" release — means point-build bumps
 # are detected, and a pod restart can never silently run newer code than the DB.
 INSTALLED_VERSION="$(cat "$INSTALLED_VERSION_STAMP" 2>/dev/null || true)"
 
@@ -241,11 +241,19 @@ if [[ -d "$MOODLE_PACKAGE_PATH" && -n "$IMAGE_VERSION" && "$IMAGE_VERSION" -gt "
   echo "##################################################################"
   echo "UPGRADING Moodle $INSTALLED_VERSION -> $IMAGE_VERSION ($MOODLE_RELEASE)"
 
-  "$MOODLE_PACKAGE_INSTALLER"/upgrade.sh
-
-  echo "Marking installed version $MOODLE_RELEASE ($IMAGE_VERSION) ..."
-  echo "$IMAGE_VERSION" > "$INSTALLED_VERSION_STAMP"
-  echo "$TIMESTAMP" > "$INSTALLED_VERSIONS_PATH/$MOODLE_RELEASE"
+  # Status 3: upgrade.sh changed nothing, because the site can't move to this Moodle as it is (it said why). The site
+  # keeps running the code on its volume, no new version is recorded, and the next start checks again.
+  upgrade_status=0
+  "$MOODLE_PACKAGE_INSTALLER"/upgrade.sh || upgrade_status=$?
+  if (( upgrade_status == 3 )); then
+    echo "NOT UPGRADED: Moodle stays at $INSTALLED_VERSION, on the code already on the volume (see above)."
+  elif (( upgrade_status != 0 )); then
+    exit "$upgrade_status"
+  else
+    echo "Marking installed version $MOODLE_RELEASE ($IMAGE_VERSION) ..."
+    echo "$IMAGE_VERSION" > "$INSTALLED_VERSION_STAMP"
+    echo "$TIMESTAMP" > "$INSTALLED_VERSIONS_PATH/$MOODLE_RELEASE"
+  fi
 
   echo "##################################################################"
 fi

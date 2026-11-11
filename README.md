@@ -216,10 +216,10 @@ Three rules come with it:
   Delete them in the same `RUN` (`rm -f /etc/ssh/ssh_host_*`): kept, they ship
   to every deployment, and every tenant has the same host key. Each container
   then makes its own when its sshd starts (`ssh-keygen -A`), so the keys change
-  at every container start. The Odoo and Nextcloud images do this
-  (`tests/ssh-host-keys.test.sh` checks Odoo's). The WordPress, Moodle, Gibbon
-  and AI Studio images, and WordPress's database image, still ship keys; add
-  the `rm -f` when you next rebuild them.
+  at every container start. The Odoo, Nextcloud and Moodle images do this
+  (`tests/ssh-host-keys.test.sh` checks Odoo's, `tests/moodle-ssh-host-keys.test.sh`
+  Moodle's). The WordPress, Gibbon and AI Studio images, and WordPress's database
+  image, still ship keys; add the `rm -f` when you next rebuild them.
 - **Push a rebuilt image only where the AI Assistant keeps no host keys.** An
   AI Assistant older than magneto-agent 4.5.3 saves each sibling's host key,
   and refuses the sibling once that key changes. A rebuilt image's key does

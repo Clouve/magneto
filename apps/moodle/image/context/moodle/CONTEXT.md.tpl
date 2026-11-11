@@ -81,7 +81,7 @@ Authoritative upstream references when the skill is silent:
 - Docs: <https://docs.moodle.org>
 - Source: <https://github.com/moodle/moodle>
 - Admin guide: <https://docs.moodle.org/en/Site_administration>
-- 5.2 admin docs: <https://docs.moodle.org/502/en/Main_page>
+- 5.3 admin docs: <https://docs.moodle.org/503/en/Main_page>
 
 ### Default Operating Posture
 

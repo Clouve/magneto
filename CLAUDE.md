@@ -169,9 +169,28 @@ bash tests/gibbon-school-year.test.sh
 ```bash
 # upgrade.sh keeps the plugins that admins added through Moodle's UI when a newer Moodle replaces the code tree. It
 # holds back, in clouve/upgrade-stash/, the ones the new Moodle ships itself or whose version.php says they won't work
-# with it, and all of them if Moodle's upgrade fails twice with them in place. A start that is cut off runs the
-# upgrade again. Needs Docker: it runs in php:8.3-apache, the image's base.
+# with it (incompatible, a supported range that covered the old branch but not the new, a missing dependency). When
+# Moodle's upgrade fails twice, it holds back the added plugin Moodle failed on, or all of them when Moodle names none.
+# A site with an added plugin newer than the new Moodle's own copy isn't touched (status 3; the entrypoint keeps the old
+# code running). A start that is cut off runs the upgrade again, after clearing the upgrade lock that Moodle leaves
+# when its upgrade is cut off. The old Moodle's Classic theme is never copied back, and after the upgrade a config.php
+# line that only forces Classic becomes a comment (php -l checked). The last run uses the real metadata of the previous
+# pinned Moodle and the Dockerfile's, downloaded once (about 190 MB, checksums checked) into
+# ~/.cache/magneto/moodle-tarballs. Needs Docker: it runs in php:8.3-apache, the image's base
 bash tests/moodle-upgrade-plugins.test.sh
+# The same, with real plugins as the added ones: a folder of plugin ZIPs as Install plugins takes them
+MOODLE_PLUGIN_ZIPS=<folder> bash tests/moodle-upgrade-plugins.test.sh
+# A real site through a real upgrade: the image at --from installs a site with made-up data, the added plugins (ZIPs
+# or stand-ins) and the Classic theme everywhere, then the image at --to (default latest) starts on the same volumes.
+# Checks that the upgrade runs once in maintenance mode, the plugins and data are there, everything is on Boost, GET /
+# answers 200, cron runs and a restart doesn't upgrade again. --cut-off kills the container during Moodle's database
+# upgrade and starts it again; --newer-core-plugin checks that a site with an added plugin newer than the new Moodle's
+# own copy stays on its old code and says why. About 5 minutes. Needs Docker and python3
+bash tests/moodle-site-upgrade.test.sh --from <previous dated tag> [--plugin-zips <folder>] [--cut-off]
+bash tests/moodle-site-upgrade.test.sh --from <previous dated tag> --newer-core-plugin
+# The Moodle and Moodle MySQL images ship no SSH host keys, and each container makes its own (./build.sh moodle first).
+# Needs Docker
+bash tests/moodle-ssh-host-keys.test.sh [--tag <tag>]
 ```
 
 ### Testing the Nextcloud image
@@ -283,7 +302,7 @@ Bundles in `bundles/` combine multiple apps with integration:
 A new volume on a cluster is an empty disk: a top folder of root's (mode 755), `lost+found`, and none of the files the image keeps at that path. Docker named volumes copy the image's folder in instead, which is how Nextcloud's first GKE install broke on 2026-10-26 while every local test passed. So an image's entrypoint starts as root and, before the app's user runs anything, makes each volume's top folder usable when it is root's; it keeps the files it needs outside volume paths and copies them in when they're missing; it treats `lost+found` as empty; and it switches to the app's user only after that. A fix for an app with installs changes only what a working install never has, and passes `--upgrade-from`. `./start.sh` and `tests/new-disk-start.test.sh` reproduce the cluster's volumes locally. The full rules are in README.md, "Volumes on a cluster".
 
 ### The clouve-ops SSH channel
-An image the AI Assistant works in runs an sshd for `clouve-ops`. It ships no SSH host keys (`rm -f /etc/ssh/ssh_host_*` in the `RUN` that installs openssh-server), so each container makes its own at start; the WordPress, Moodle, Gibbon and AI Studio images and WordPress's database image still ship keys until their next rebuild. AI Assistants older than magneto-agent 4.5.3 save each sibling's key and refuse a changed one, so a rebuilt image with openssh-server goes to an environment only after its AI Assistant image is 4.5.3 or later and its AI Assistants have restarted onto it, and the AI Assistant image never goes back below 4.5.3 where such an image runs. PID 1 has to reap what SSH sessions leave behind: tini is PID 1 when the server doesn't reap them (Odoo, MySQL, MariaDB) or takes one for a crashed process of its own (PostgreSQL then ends every connection and restarts). A database image also starts its sshd detached, `( start-clouve-ops-sshd.sh & )`, so that sshd's parent is tini. Both Odoo images do all of this. The full rules are in README.md, "The clouve-ops SSH channel".
+An image the AI Assistant works in runs an sshd for `clouve-ops`. It ships no SSH host keys (`rm -f /etc/ssh/ssh_host_*` in the `RUN` that installs openssh-server), so each container makes its own at start; the WordPress, Gibbon and AI Studio images and WordPress's database image still ship keys until their next rebuild. AI Assistants older than magneto-agent 4.5.3 save each sibling's key and refuse a changed one, so a rebuilt image with openssh-server goes to an environment only after its AI Assistant image is 4.5.3 or later and its AI Assistants have restarted onto it, and the AI Assistant image never goes back below 4.5.3 where such an image runs. PID 1 has to reap what SSH sessions leave behind: tini is PID 1 when the server doesn't reap them (Odoo, MySQL, MariaDB) or takes one for a crashed process of its own (PostgreSQL then ends every connection and restarts). A database image also starts its sshd detached, `( start-clouve-ops-sshd.sh & )`, so that sshd's parent is tini. Both Odoo images do all of this. The full rules are in README.md, "The clouve-ops SSH channel".
 
 ### AI Studio (`apps/ai-studio/`)
 The AI Studio app is an Ubuntu 26.04 LTS workspace **pre-seeded with a running MERN starter project** (Node.js 22 LTS, MongoDB 7.0, Express API on `:4000`, Vite React frontend on `:5173`, mongo-express on `:8081` — all supervised by `supervisord` as PID 1; there is no systemd in the container). It is **not** a UI host — it is a sibling workspace operated by the Magneto Agent. The user talks to the agent in the chat UI (provided automatically because `x-clouve-agent: enabled: true` is always set in [apps/ai-studio/clv-docker-compose.yml](apps/ai-studio/clv-docker-compose.yml)), and the agent SSHes in as `clouve-ops` (passwordless sudo) to iterate on the seeded project at `/home/clouve-ops/projects/starter/`, install software, run services, and verify deploys. In a cluster deploy the dev servers are reached through the fleet clv-proxy at `https://<port>-<workspace-id>.<base>/`; the workspace exposes no public `:80` of its own. Four volumes (`/home`, `/usr`, `/opt`, `/var`) persist across pod restarts, so apt-installed packages, user files and Mongo data survive. The agent's behavioral contract lives in the `ai-studio` skill at [magneto-skills/plugins/ai-studio/](../magneto-skills/plugins/ai-studio/); the per-tenant persona is templated from [apps/ai-studio/image/context/ai-studio/CONTEXT.md.tpl](apps/ai-studio/image/context/ai-studio/CONTEXT.md.tpl); the seed app sources live in [apps/ai-studio/image/seed/](apps/ai-studio/image/seed/). Local dev: `./build.sh ai-studio && ./start.sh ai-studio`, then browse the seeded app at `http://localhost:5173` (API `:4000`, mongo-express `:8082`) or `ssh -p 2222 clouve-ops@localhost` (password `clouve_ops_dev_password`, set in [apps/ai-studio/docker-compose.yml](apps/ai-studio/docker-compose.yml)).

@@ -48,7 +48,7 @@ services:
       memoryBase: 1
       cpuBase: 1
     x-clouve-bundle-metadata:
-      appVersion: '5.2'
+      appVersion: '5.3'
       appTitle: Moodle
       appDescription: A cloud-hosted Moodle Learning Management System paired with a browser-based AI Assistant workspace that knows how to safely operate it. School administrators and instructional designers launch the app and get both a live Moodle instance and an AI agent that can perform upgrades, plugin installs, MUC purges, backups, restores, maintenance-mode toggles, and 500-error diagnostics through natural-language conversation — with built-in safety gates that refuse destructive operations without explicit confirmation. Moodle remains a stock upstream install; the AI Assistant workspace (Magneto Agent) is loaded with a Moodle DevOps Skill containing reference docs, playbooks, and audited scripts scoped to this instance. On a paid plan, the AI Assistant's price includes an AI usage allowance, and you can buy more. On a free trial, or with free services, you use it with your own Claude subscription. You can turn it on or off. The tenant owns the Moodle data; Clouve hosts the containers.
     x-clouve-healthcheck:
