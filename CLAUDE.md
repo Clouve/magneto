@@ -17,8 +17,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Build all apps
 ./build.sh --all
 
-# Build and push to registry
-./build.sh wordpress --push
+# Build and push to registry. --tag pushes that one dated tag; without it a push tags :<DATE> and also moves :latest
+./build.sh wordpress --push --tag 2026.11.11
 
 # Rebuild from scratch, uploading every layer fresh (prunes the builder's cache first)
 ./build.sh wordpress --push --prune
@@ -32,10 +32,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # UAT and prod pushes are gated: build-uat.sh/build-prod.sh --push refuse an app until
 # `bash tests/new-disk-start.test.sh <app>` has passed on its current source (see "Testing on new cluster disks").
 # --skip-new-disk-check pushes anyway, for emergencies only.
+# A push to UAT's or prod's registry also needs --tag <YYYY.MM.DD> (a suffix such as 2026.11.11-2 is fine):
+# build.sh refuses one without it to any project on the hosts UAT's and prod's Harbors answer on (demo.cr0.io and
+# demo.reg.clouve.com, cr0.io and registry.clouve.com), before building, however REGISTRY is set and whichever
+# script calls it. Images reach UAT and prod only as dated tags, through a listing's new version, never as :latest
+# (tests/build-push-tag.test.sh). Pushes to dev.cr0.io and dev.reg.clouve.com (build-dev.sh) and r.clv.zone
+# (build-e2e.sh, build.sh's default) don't need one.
 # A rebuilt image with openssh-server goes to an environment only after that environment's AI Assistant image is
 # magneto-agent 4.5.3 or later (it saves no sibling host keys) and its AI Assistants have restarted onto it. Where such
 # an image runs, the AI Assistant image never goes back below 4.5.3 (README.md, "The clouve-ops SSH channel").
-./build-uat.sh wordpress --push
+./build-uat.sh wordpress --push --tag 2026.11.11
 ```
 
 ### Switch Registry Users
@@ -113,6 +119,10 @@ bash tests/build-prune.test.sh
 # Every build pulls its base image (--pull), a --tag push names that one tag and no :latest, and a push refuses an
 # app whose Dockerfiles name a base with no tag. Stubbed docker
 bash tests/build-pull.test.sh
+# A push to UAT's or prod's registry without a dated --tag is refused (one line, no docker call), through the
+# wrappers or build.sh with REGISTRY set by hand, in every target mode; local builds and pushes to dev's and the
+# rig's registries work as before. Stubbed docker
+bash tests/build-push-tag.test.sh
 # Every FROM and COPY --from names a tag, so --pull never moves a base to a new major version. No Docker needed
 bash tests/dockerfile-base-tags.test.sh
 ```

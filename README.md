@@ -857,6 +857,13 @@ An image follows these rules:
    `tests/new-disk-start.test.sh <app> --upgrade-from <previous build>` (see "Testing on new cluster disks").
 7. `tests/new-disk-start.test.sh <app>` passes before every push to UAT or prod. `build-uat.sh` and `build-prod.sh`
    check for that pass and refuse to push an app whose current source doesn't have one.
+8. A push to UAT or prod names a dated tag: `build.sh` refuses `--push` to UAT's or prod's registry (any project on
+   the hosts their Harbors answer on: `demo.cr0.io` and `demo.reg.clouve.com`, `cr0.io` and `registry.clouve.com`;
+   through `build-uat.sh`, `build-prod.sh` or `REGISTRY` set by hand) without
+   `--tag <YYYY.MM.DD>` (an optional suffix such as `2026.11.11-2` is allowed), before anything is built. Without
+   `--tag`, a push also moves `:latest`, which every deployment that pins it pulls at its next restart. A rebuilt image
+   reaches tenants only through a listing's new version. Pushes to dev's registry (`dev.cr0.io`,
+   `dev.reg.clouve.com`) and the rig's (`r.clv.zone`) don't need a tag.
 
 ---
 
@@ -992,7 +999,8 @@ allows. The Magneto Agent's service is left out unless `--with-agent` is given.
 `build-uat.sh` and `build-prod.sh` push an app only when this test passed on its current source, on the machine that
 pushes: a record of each pass is kept in `~/.cache/magneto/new-disk-passes/` there, and any change to the app's files
 makes it stale. A pass counts only from a full run, built by the test itself and with the full 90-second settle. In an
-emergency, `--skip-new-disk-check` pushes anyway and says so.
+emergency, `--skip-new-disk-check` pushes anyway and says so. It doesn't lift the dated-tag rule: a push there still
+needs `--tag <YYYY.MM.DD>`.
 
 ### Local Testing Workflow
 

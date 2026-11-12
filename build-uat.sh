@@ -5,5 +5,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # The new-disk gate: every app pushed here must have passed tests/new-disk-start.test.sh on its current
 # source (see build.sh). --skip-new-disk-check overrides it.
 export NEW_DISK_GATE=1
+# A push needs --tag <YYYY.MM.DD>: images reach this environment only as dated
+# tags, through a listing's new version, never as :latest (see build.sh).
+export PUSH_NEEDS_DATED_TAG=1
 export REGISTRY=demo.cr0.io/clouveinc8
-"$SCRIPT_DIR"/build.sh $@
+"$SCRIPT_DIR"/build.sh "$@"

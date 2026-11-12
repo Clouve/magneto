@@ -25,6 +25,18 @@
 #                  ":<DATE>" + ":latest" pair (e.g. --tag 2025.11.20)
 #   --skip-new-disk-check  Push to UAT or prod without a new-disk pass (below)
 #
+# Dated tags: a push to UAT's or prod's registry (any project on the hosts their
+# Harbors answer on: demo.cr0.io and demo.reg.clouve.com, cr0.io and
+# registry.clouve.com) needs
+# --tag <YYYY.MM.DD> (an optional suffix such as 2026.11.11-2 is allowed), or
+# nothing is built or pushed, however REGISTRY is set and whichever script
+# calls this one: without --tag a push moves :latest, and images reach UAT and
+# prod only as dated tags, through a listing's new version. Pushes to dev's
+# registry (dev.cr0.io, dev.reg.clouve.com) and the rig's (r.clv.zone) don't
+# need one.
+# PUSH_NEEDS_DATED_TAG=1 turns the rule on for any registry; build-uat.sh and
+# build-prod.sh set it too.
+#
 # New-disk gate: build-uat.sh and build-prod.sh set NEW_DISK_GATE=1. With it and
 # --push, every app about to be pushed must have passed
 # tests/new-disk-start.test.sh on its current source (it starts the app the way
@@ -516,6 +528,38 @@ while [ $# -gt 0 ]; do
     esac
     shift
 done
+
+# The dated-tag rule, checked before any docker call: without --tag a push also
+# moves :latest, which every deployment that pins it pulls at its next restart.
+# UAT's and prod's Harbor hosts. Each Harbor answers on two: the one
+# build-uat.sh (demo.cr0.io/clouveinc8) and build-prod.sh (cr0.io/clouveinc327)
+# push to, and its externalURL host, which strato copies Harbor's whole Ingress
+# rule to (strato cluster/k8s/manifests/clouve-<env>/harbor/values.yaml,
+# setup-harbor, upgrade-harbor). tests/build-push-tag.test.sh reads the wrappers
+# (and strato's values, when a checkout is there) to keep this list in step.
+DATED_TAG_HOSTS="demo.cr0.io demo.reg.clouve.com cr0.io registry.clouve.com"
+
+# registry_host REF: REF's host, lower case, without a scheme, a port or a
+# trailing dot, so CR0.IO:443 and cr0.io name the same registry.
+registry_host() {
+    local host="${1#*://}"
+    host="${host%%/*}"
+    host="${host%%:*}"
+    host="${host%.}"
+    printf '%s' "$host" | tr '[:upper:]' '[:lower:]'
+}
+
+NEEDS_DATED_TAG=false
+[ "${PUSH_NEEDS_DATED_TAG:-}" = 1 ] && NEEDS_DATED_TAG=true
+PUSH_HOST="$(registry_host "${REGISTRY:-r.clv.zone/e2eorg}")"
+for dated_host in $DATED_TAG_HOSTS; do
+    [ "$PUSH_HOST" = "$dated_host" ] && NEEDS_DATED_TAG=true
+done
+if [ "$NEEDS_DATED_TAG" = true ] && [ "$PUSH_IMAGES" = true ] \
+        && ! [[ "$CUSTOM_TAG" =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]{2}([.-][A-Za-z0-9]+)?$ ]]; then
+    echo "✗ --push needs --tag <YYYY.MM.DD> here (no :latest): images reach UAT and prod only as dated tags, through a listing's new version"
+    exit 1
+fi
 
 # If --all mode, build all targets
 if [ "$BUILD_ALL" = true ]; then

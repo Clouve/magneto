@@ -459,7 +459,7 @@ cd magneto/apps/gibbon
 # Before a push to UAT or prod: start it the way a cluster starts a new install. build-uat.sh and build-prod.sh
 # push an app only after this passed on its current source (--skip-new-disk-check overrides, for emergencies).
 bash tests/new-disk-start.test.sh gibbon
-./build-uat.sh gibbon --push
+./build-uat.sh gibbon --push --tag 2026.11.11   # a push to UAT or prod needs a dated --tag, never :latest
 ```
 
 ### URL Update Testing Workflow
