@@ -21,11 +21,15 @@
 #     types naming an alias of the same container;
 #   - the check that was there first (appDescription at most 1000 characters)
 #     still works;
+#   - every container's own adminPath and appVersion keep the publish
+#     wizard's formats, with host aliases or without (Gibbon's 30.0.01 is
+#     refused), and a containerName is a DNS-1123 label (release 4.5.5);
 #   - a malformed manifest (a block that isn't a mapping, a YAML syntax error,
 #     a file that isn't UTF-8) gets a message that names the rule and echoes
 #     none of the file's text, and the run goes on to the next manifest;
 #   - lengths are counted as the publish wizard counts them (UTF-16 units,
-#     after JavaScript's trim), and only ASCII digits make a version.
+#     after JavaScript's trim, which keeps U+0085), and only ASCII digits make
+#     a version.
 #
 # Usage: bash tests/check-manifests.test.sh [path/to/check-manifests.sh]
 # ============================================================================
@@ -178,6 +182,10 @@ refused() {
 }
 
 APP_FILE="apps/bad/clv-docker-compose.yml"
+# The rules every container's own fields are held to (release 4.5.5).
+OWN_PATH_RULE="x-clouve-bundle-metadata.adminPath must be a path such as /admin: a / first, then letters, digits and - _ . ~ % /, no //, at most 256 characters (the publish wizard and Clouve check it on every container)"
+OWN_VERSION_RULE='x-clouve-bundle-metadata.appVersion must be a quoted version such as "1.0.0", "2.1" or "3.0.0-beta", with no leading zeros (the publish wizard checks it on every container)'
+CNAME_RULE="x-clouve-metadata.containerName must be a DNS-1123 label: 1 to 63 lower-case letters, digits and hyphens, starting and ending with a letter or a digit (the container name rule)"
 
 # ============================================================================
 # Manifests that pass
@@ -574,7 +582,8 @@ CLASH_RULE="a container in this manifest has the same name (aliases and containe
 assert_eq "exits 1" "1" "$RC"
 assert_contains "a public container's name" "$OUT" "FAIL bundles/bad/clv-docker-compose.yml [gibbon]: host alias 1: $CLASH_RULE"
 assert_contains "a private container's name, upper-cased" "$OUT" "FAIL bundles/bad/clv-docker-compose.yml [gibbon]: host alias 2: $CLASH_RULE"
-assert_contains "two problems" "$OUT" "3 manifests checked, 2 problem(s)"
+assert_contains "an upper-case containerName breaks the container name rule too" "$OUT" "FAIL bundles/bad/clv-docker-compose.yml [worker]: $CNAME_RULE"
+assert_contains "three problems" "$OUT" "3 manifests checked, 3 problem(s)"
 
 echo "S14: a name used twice in one manifest is refused, on one container or two"
 fresh
@@ -647,7 +656,7 @@ YAML
 run_check
 refused "no owner title" "FAIL $APP_FILE [app]: a container with host aliases needs an appTitle in x-clouve-bundle-metadata (the publish wizard asks for it)" 1
 
-echo "S17: a container with aliases has its own adminPath held to the alias rule; one without aliases doesn't"
+echo "S17: every container's own adminPath is held to the rule, with host aliases or without"
 fresh
 put apps/bad <<'YAML'
 services:
@@ -676,9 +685,10 @@ services:
 YAML
 run_check
 assert_eq "exits 1" "1" "$RC"
-assert_contains "the owner's adminPath with no /" "$OUT" "FAIL $APP_FILE [app]: x-clouve-bundle-metadata.adminPath must be a path such as /admin: a / first, then letters, digits and - _ . ~ % /, no //, at most 256 characters (Clouve checks it on a container with host aliases)"
-assert_eq "a container without aliases is left as it was" "0" "$(count "$OUT" "apps/bad2/")"
-assert_contains "one problem in four manifests" "$OUT" "4 manifests checked, 1 problem(s)"
+assert_contains "the owner's adminPath with no /" "$OUT" "FAIL $APP_FILE [app]: $OWN_PATH_RULE"
+assert_contains "a container without aliases is held to it too" "$OUT" "FAIL apps/bad2/clv-docker-compose.yml [web]: $OWN_PATH_RULE"
+assert_eq "one message per container" "1" "$(count "$OUT" "[app]: x-clouve-bundle-metadata.adminPath")"
+assert_contains "two problems in four manifests" "$OUT" "4 manifests checked, 2 problem(s)"
 
 echo "S18: {{ or }} in an alias's title or description, or in the title, description or version of its container, is refused"
 fresh
@@ -723,9 +733,11 @@ assert_contains "an alias's description with }} alone" "$OUT" "FAIL $APP_FILE [a
 assert_contains "the owner's title" "$OUT" "FAIL $APP_FILE [app]: x-clouve-bundle-metadata.appTitle $OWNER_BRACES"
 assert_contains "the owner's description" "$OUT" "FAIL $APP_FILE [app]: x-clouve-bundle-metadata.appDescription $OWNER_BRACES"
 assert_contains "the owner's version" "$OUT" "FAIL $APP_FILE [app]: x-clouve-bundle-metadata.appVersion $OWNER_BRACES"
-assert_eq "a container without aliases is left as it was" "0" "$(count "$OUT" "apps/bad2/")"
+assert_contains "the owner's version also breaks the version rule" "$OUT" "FAIL $APP_FILE [app]: $OWN_VERSION_RULE"
+assert_contains "a container without aliases gets the version rule" "$OUT" "FAIL apps/bad2/clv-docker-compose.yml [web]: $OWN_VERSION_RULE"
+assert_eq "and no brace message: braces are checked only with aliases" "1" "$(count "$OUT" "apps/bad2/")"
 assert_eq "no text from the file is echoed" "0" "$(count "$OUT" "{{name}}")"
-assert_contains "seven problems in four manifests" "$OUT" "4 manifests checked, 7 problem(s)"
+assert_contains "nine problems in four manifests" "$OUT" "4 manifests checked, 9 problem(s)"
 
 echo "S19: alias text outside the publish wizard's limits is refused"
 fresh
@@ -1033,6 +1045,113 @@ assert_contains "a lone surrogate counts one unit, with no traceback" "$OUT" "FA
 assert_eq "one emoji is 2 units, a title that fits" "0" "$(count "$OUT" "[web]: host alias 3:")"
 assert_eq "no traceback" "0" "$(count "$OUT" "Traceback")"
 assert_contains "seven problems" "$OUT" "3 manifests checked, 7 problem(s)"
+
+echo "S27: every container's own appVersion keeps the publish wizard's rule, with host aliases or without"
+fresh
+put apps/bad <<'YAML'
+services:
+  gibbon:
+    x-clouve-metadata:
+      containerName: gibbon
+      purpose: Frontend
+      isPublic: true
+    x-clouve-bundle-metadata:
+      appVersion: 30.0.01
+      appTitle: Gibbon
+  moodle:
+    x-clouve-metadata:
+      containerName: moodle
+      purpose: Frontend
+      isPublic: true
+    x-clouve-bundle-metadata:
+      appVersion: 5.3
+      appTitle: Moodle
+YAML
+put apps/good <<'YAML'
+services:
+  gibbon:
+    x-clouve-metadata:
+      containerName: gibbon
+      purpose: Frontend
+      isPublic: true
+    x-clouve-bundle-metadata:
+      appVersion: 30.0.1
+      appTitle: Gibbon
+  moodle:
+    x-clouve-metadata:
+      containerName: moodle
+      purpose: Frontend
+      isPublic: true
+    x-clouve-bundle-metadata:
+      appVersion: '5.3'
+      appTitle: Moodle
+YAML
+run_check
+assert_eq "exits 1" "1" "$RC"
+assert_contains "a leading zero (Gibbon's 30.0.01) is refused" "$OUT" "FAIL $APP_FILE [gibbon]: $OWN_VERSION_RULE"
+assert_contains "an unquoted 5.3 is a number, not a version" "$OUT" "FAIL $APP_FILE [moodle]: $OWN_VERSION_RULE"
+assert_eq "30.0.1 and '5.3' pass" "0" "$(count "$OUT" "apps/good/")"
+assert_eq "the value isn't echoed" "0" "$(count "$OUT" "30.0.01")"
+assert_contains "two problems in four manifests" "$OUT" "4 manifests checked, 2 problem(s)"
+
+echo "S28: x-clouve-metadata.containerName must be a DNS-1123 label"
+fresh
+NAME63="$(printf 'a%.0s' {1..63})"
+NAME64="$(printf 'b%.0s' {1..64})"
+bad_names=("Web" "-web" "web-" "web_1" "web.app" "$NAME64")
+{
+  echo "services:"
+  i=0
+  for n in "${bad_names[@]}"; do
+    i=$((i + 1))
+    printf '  s%d:\n    x-clouve-metadata:\n      containerName: %s\n' "$i" "$n"
+  done
+  printf '  s7:\n    x-clouve-metadata:\n      containerName: "web\\n"\n'
+  printf '  s8:\n    x-clouve-metadata:\n      containerName: 123\n'
+  printf '  s9:\n    x-clouve-metadata:\n      containerName: [web]\n'
+  printf '  s10:\n    x-clouve-metadata:\n      containerName: web-1\n'
+  printf '  s11:\n    x-clouve-metadata:\n      containerName: %s\n' "$NAME63"
+  printf '  s12:\n    x-clouve-metadata:\n      purpose: Backend\n'
+} | put apps/bad
+run_check
+assert_eq "exits 1" "1" "$RC"
+for i in 1 2 3 4 5 6 7 8 9; do
+  assert_contains "refused: s$i" "$OUT" "FAIL $APP_FILE [s$i]: $CNAME_RULE"
+done
+assert_eq "web-1 passes" "0" "$(count "$OUT" "[s10]")"
+assert_eq "63 characters pass" "0" "$(count "$OUT" "[s11]")"
+assert_eq "a service with no containerName isn't checked here" "0" "$(count "$OUT" "[s12]")"
+assert_eq "no name is echoed" "0" "$(grep -cE "web_1|web\.app|bbbbbbbb|: Web|-web|web-$" <<< "$OUT")"
+assert_contains "nine problems" "$OUT" "3 manifests checked, 9 problem(s)"
+
+echo "S29: JavaScript's trim keeps U+0085, so a description of it alone is one character, too short"
+fresh
+aliases_app <<'YAML' | put apps/bad
+- name: studio
+  appTitle: Studio
+  appDescription: "\x85"
+YAML
+run_check
+refused "a NEL description" "FAIL $APP_FILE [app]: host alias 1: $DESC_RULE" 1
+
+echo "S30: a container that can't take aliases gets that message alone, not the brace rule on top"
+fresh
+put apps/bad <<'YAML'
+services:
+  app-worker:
+    x-clouve-metadata:
+      containerName: app-worker
+      purpose: Backend
+      isPublic: false
+    x-clouve-bundle-metadata:
+      appTitle: 'Worker {{x}}'
+    x-clouve-host-aliases:
+      - name: jobs
+        appTitle: Jobs
+YAML
+run_check
+refused "a private container with braces" "FAIL $APP_FILE [app-worker]: only a public container takes host aliases (x-clouve-metadata.isPublic is not true)" 1
+assert_eq "no brace message" "0" "$(count "$OUT" "can't contain {{ or }}")"
 
 echo
 if [[ $FAILED -eq 0 ]]; then

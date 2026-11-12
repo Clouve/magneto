@@ -4,7 +4,7 @@
 # tini, PID 1, runs this script as root. It:
 # 1. Waits for PostgreSQL to be ready
 # 2. Writes /etc/odoo/odoo.conf, which holds the passwords: it is odoo's, and
-#    no other user can read it
+#    no other user can read it. It also locks Odoo's database manager
 # 3. Gives the volumes to the odoo user (a new disk, or files of root's that
 #    an older image left)
 # 4. Initializes the Odoo database if not already initialized
@@ -20,11 +20,17 @@ NC='\033[0m' # No Color
 # Set error handling
 set -e
 
+# What this script and install.sh share: the rule for a secret's name,
+# odoo_unset_secrets and odoo_dbfilter.
+# shellcheck source=apps/odoo/image/installer/lib.sh
+. /clouve/odoo/installer/lib.sh
+
 # Odoo configuration
 ODOO_DATA_DIR="/var/lib/odoo"
 ODOO_ADDONS_DIR="/mnt/extra-addons"
 ODOO_CONF="/etc/odoo/odoo.conf"
 INSTALLED_MARKER="$ODOO_DATA_DIR/.odoo_initialized"
+OWNER_PASS_MARKER="$ODOO_DATA_DIR/.odoo_owner_pass"
 
 echo -e "${YELLOW}[INFO]${NC} Starting Odoo initialization..."
 echo -e "${YELLOW}[INFO]${NC} Odoo version: 19.0"
@@ -74,6 +80,13 @@ mkdir -p "$(dirname "$ODOO_CONF")"
 # Master password for database manager
 ODOO_MASTER_PASSWORD="${ODOO_MASTER_PASSWORD:-}"
 
+# The database a browser reaches: the deployment's own, through dbfilter.
+DB_NAME="${ODOO_DB_NAME:-odoo}"
+if ! ODOO_DBFILTER="$(odoo_dbfilter "$DB_NAME")"; then
+    echo -e "${RED}[ERROR]${NC} ODOO_DB_NAME isn't a database name Odoo accepts: 2 or more letters, digits, '_', '.' or '-', starting with a letter or a digit"
+    exit 1
+fi
+
 # Create Odoo configuration file
 echo -e "${YELLOW}[INFO]${NC} Creating Odoo configuration file at $ODOO_CONF..."
 
@@ -97,6 +110,16 @@ data_dir = $ODOO_DATA_DIR
 ; warning while no module is in it, then loads it once one is.
 addons_path = /usr/lib/python3/dist-packages/odoo/addons,/mnt/extra-addons*
 
+; The database manager stays locked: with list_db = False, Odoo refuses every
+; /web/database action and the database list, and dbfilter lets a browser
+; reach this deployment's database only. dbfilter, not db_name: Odoo 19
+; creates a missing db_name database at every start, with the admin
+; password "admin". odoo db (dump, load) turns the lock off for itself. The
+; AI Assistant can open the manager for one task (the odoo skill's
+; harden-db-manager playbook), and the next start locks it again.
+list_db = False
+dbfilter = $ODOO_DBFILTER
+
 ; Master password for database manager
 ; This password protects database management operations (create, delete, backup, restore)
 EOF
@@ -115,7 +138,9 @@ else
 fi
 
 # Set proper permissions on configuration file: odoo's, read and written by
-# odoo only (Odoo saves a new master password set in its database manager here)
+# odoo only. Odoo writes to it when someone sets a new master password in its
+# database manager, which is locked unless opened for one task, and the next
+# start writes ODOO_MASTER_PASSWORD back.
 chmod 600 "$ODOO_CONF"
 chown odoo:odoo "$ODOO_CONF"
 
@@ -130,13 +155,16 @@ echo -e "${GREEN}[SUCCESS]${NC} Odoo configuration file created successfully"
 #     in it. While the top folder is root's, it goes to odoo. Its mode stays.
 #   - An older image ran Odoo as root, and it left files of root's in
 #     /var/lib/odoo: filestore folders, sessions, backups, the marker file.
-#     Every file there that isn't odoo's goes to odoo. find looks for one
-#     first, so a start with nothing to fix costs one pass over the folder.
-# lost+found belongs to the disk and stays as it is. /mnt/extra-addons only
-# has to be readable, since Odoo reads the modules in it and never writes
-# there. Its top folder goes to odoo on a new disk, as the first install
-# always did, and the modules in it keep their owner (the AI Assistant gives
-# the ones it adds to odoo).
+#     Every file there that isn't odoo's goes to odoo. That pass reads the
+#     whole folder, the filestore included, so it runs once per volume: it
+#     then writes $OWNER_PASS_MARKER, and later starts skip it (the start
+#     has 360 s before the health check gives up). Removing the marker runs
+#     it again at the next start.
+#   - /mnt/extra-addons holds module code, which Odoo has to read. A module
+#     copied in as root can be unreadable to odoo, so every file there that
+#     isn't odoo's goes to odoo, at every start: modules come and go between
+#     starts, and the folder is small.
+# lost+found belongs to the disk and stays as it is in both.
 
 # claim_top_folder DIR: gives DIR to odoo while it is root's.
 claim_top_folder() {
@@ -149,17 +177,42 @@ claim_top_folder() {
 claim_top_folder "$ODOO_DATA_DIR"
 claim_top_folder "$ODOO_ADDONS_DIR"
 
-if [ -n "$(find "$ODOO_DATA_DIR" -mindepth 1 -path "$ODOO_DATA_DIR/lost+found" -prune -o ! -user odoo -print -quit)" ]; then
-    echo -e "${YELLOW}[INFO]${NC} Giving the files in $ODOO_DATA_DIR that aren't odoo's to odoo (an older image ran Odoo as root)..."
-    # -h: a symbolic link is given to odoo itself, and what it points to is left alone.
-    find "$ODOO_DATA_DIR" -mindepth 1 -path "$ODOO_DATA_DIR/lost+found" -prune -o ! -user odoo -exec chown -h odoo:odoo {} +
-fi
+# give_to_odoo DIR WHY: gives every file under DIR that isn't odoo's to odoo,
+# lost+found aside. find looks for one first, so a folder with nothing to fix
+# costs one pass. -h: a symbolic link is given to odoo itself, and what it
+# points to is left alone (find never follows one).
+give_to_odoo() {
+    if [ -n "$(find "$1" -mindepth 1 -path "$1/lost+found" -prune -o ! -user odoo -print -quit)" ]; then
+        echo -e "${YELLOW}[INFO]${NC} Giving the files in $1 that aren't odoo's to odoo ($2)..."
+        find "$1" -mindepth 1 -path "$1/lost+found" -prune -o ! -user odoo -exec chown -h odoo:odoo {} +
+    fi
+}
 
-# The AI Assistant's backups go in $ODOO_DATA_DIR/backups. Its backup.sh runs
-# as root and makes that folder when it is missing, and odoo db dump, which
-# runs as odoo, couldn't write into a folder of root's. So the folder is made
-# here, as odoo's, and set to mode 700 at every start: only odoo and root can
-# read the backups in it. Code that ran as odoo can have left something else
+# write_as_odoo FILE: writes the date into FILE as odoo, with no environment
+# but PATH. FILE is in odoo's folder, so code that ran as odoo can have left
+# a link at that path: root removes whatever is there (rm never follows a
+# link), and odoo writes the file, so no link can make root write anywhere
+# else.
+write_as_odoo() {
+    rm -rf -- "$1"
+    # shellcheck disable=SC2016  # the script is for the sh that runs as odoo
+    env -i PATH="$PATH" setpriv --reuid=odoo --regid=odoo --init-groups --no-new-privs -- sh -c 'date > "$1"' sh "$1"
+}
+
+if [ -f "$OWNER_PASS_MARKER" ] && [ ! -L "$OWNER_PASS_MARKER" ]; then
+    echo -e "${GREEN}[INFO]${NC} The ownership pass over $ODOO_DATA_DIR ran at an earlier start ($OWNER_PASS_MARKER). Skipping it."
+else
+    give_to_odoo "$ODOO_DATA_DIR" "an older image ran Odoo as root"
+    write_as_odoo "$OWNER_PASS_MARKER"
+fi
+give_to_odoo "$ODOO_ADDONS_DIR" "modules Odoo has to read"
+
+# The AI Assistant's backups go in $ODOO_DATA_DIR/backups, and odoo db dump,
+# which runs as odoo, can't write into a folder of root's. The odoo skill's
+# backup.sh makes a missing folder as odoo's, mode 700, from skill 0.1.5 on;
+# older ones made it as root's. So the folder is made here too, as odoo's,
+# and set to mode 700 at every start: only odoo and root can read the backups
+# in it. Code that ran as odoo can have left something else
 # at that path, a file or a link. That goes first, because root never follows
 # a link in odoo's folder (chmod would change what the link points to).
 BACKUPS_DIR="$ODOO_DATA_DIR/backups"
@@ -184,14 +237,10 @@ else
     # Run the installation script
     /clouve/odoo/installer/install.sh
 
-    # Create marker file to indicate initialization is complete. It is in
-    # odoo's folder, so code that ran as odoo can have left a link at that
-    # path (a dangling one also lands here, since [ -f ] follows it). Root
-    # removes whatever is there (rm never follows a link), and the marker is
-    # written as odoo, so no link can make root write a file anywhere else.
-    rm -rf -- "$INSTALLED_MARKER"
-    # shellcheck disable=SC2016  # the script is for the sh that runs as odoo
-    setpriv --reuid=odoo --regid=odoo --init-groups --no-new-privs -- sh -c 'date > "$1"' sh "$INSTALLED_MARKER"
+    # Create marker file to indicate initialization is complete. A dangling
+    # link at that path also lands here, since [ -f ] follows it;
+    # write_as_odoo removes it first.
+    write_as_odoo "$INSTALLED_MARKER"
     echo -e "${GREEN}[SUCCESS]${NC} Odoo initialization completed!"
 fi
 
@@ -229,12 +278,13 @@ echo -e "${YELLOW}[INFO]${NC} Starting Odoo server as the odoo user..."
 # line for each one odoo.conf lacks, and any process in the container can
 # read a command line. Step 1 has waited for PostgreSQL already.
 #
-# None of the passwords in this environment goes on to Odoo. Odoo doesn't
+# No secret in this environment goes on to Odoo: odoo_unset_secrets takes
+# out every variable whose name is a secret's, and PGPASSWORD. Odoo doesn't
 # need them, and a process of odoo's can read Odoo's environment: with
 # CLOUVE_OPS_PASSWORD, that would be root over SSH. A PGPASSWORD would also
 # win over odoo.conf's db_password. PID 1 (tini) keeps them, for the AI
 # Assistant, which reads its settings from PID 1's environment.
-unset ODOO_DB_PASSWORD ODOO_MASTER_PASSWORD ODOO_ADMIN_PASSWORD CLOUVE_OPS_PASSWORD PGPASSWORD
+odoo_unset_secrets
 
 # /usr/local/bin/odoo drops to the odoo user and becomes Odoo, exec after
 # exec, so Odoo is tini's child. tini passes it SIGHUP (the AI Assistant's

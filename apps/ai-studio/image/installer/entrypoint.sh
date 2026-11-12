@@ -43,5 +43,5 @@ echo "clouve-ops:$CLOUVE_OPS_PASSWORD" | chpasswd
 # recreate it in case the image-baked one didn't survive the mount.
 mkdir -p /run/sshd
 
-echo "$PREFIX Starting supervisord (PID 1) — sshd, mongod, backend, frontend, mongo-express"
+echo "$PREFIX Starting supervisord (PID 1) — sshd, page, mongod, backend, frontend, mongo-express"
 exec /usr/bin/supervisord -n -c /etc/supervisor/supervisord.conf

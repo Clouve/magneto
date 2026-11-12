@@ -84,25 +84,25 @@ if [[ ! -d "$INSTALLED_VERSIONS_PATH" ]]; then
 
         # Execute SQL to create views
         echo "Executing SQL to create integration views..."
-        if mysql --skip-ssl -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" < /tmp/gibbon-integration.sql 2>&1; then
+        if MYSQL_PWD="$DB_PASSWORD" mysql --skip-ssl -h "$DB_HOST" -u "$DB_USER" "$DB_NAME" < /tmp/gibbon-integration.sql 2>&1; then
           echo "✓ Integration views created successfully"
 
           # Verify views were created
           echo "Verifying integration views..."
 
-          if mysql --skip-ssl -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" -e "SELECT COUNT(*) as user_count FROM moodleUser;" 2>/dev/null; then
+          if MYSQL_PWD="$DB_PASSWORD" mysql --skip-ssl -h "$DB_HOST" -u "$DB_USER" "$DB_NAME" -e "SELECT COUNT(*) as user_count FROM moodleUser;" 2>/dev/null; then
             echo "✓ moodleUser view is accessible"
           else
             echo "⚠ Warning: moodleUser view verification failed"
           fi
 
-          if mysql --skip-ssl -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" -e "SELECT COUNT(*) as course_count FROM moodleCourse;" 2>/dev/null; then
+          if MYSQL_PWD="$DB_PASSWORD" mysql --skip-ssl -h "$DB_HOST" -u "$DB_USER" "$DB_NAME" -e "SELECT COUNT(*) as course_count FROM moodleCourse;" 2>/dev/null; then
             echo "✓ moodleCourse view is accessible"
           else
             echo "⚠ Warning: moodleCourse view verification failed"
           fi
 
-          if mysql --skip-ssl -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" -e "SELECT COUNT(*) as enrollment_count FROM moodleEnrolment;" 2>/dev/null; then
+          if MYSQL_PWD="$DB_PASSWORD" mysql --skip-ssl -h "$DB_HOST" -u "$DB_USER" "$DB_NAME" -e "SELECT COUNT(*) as enrollment_count FROM moodleEnrolment;" 2>/dev/null; then
             echo "✓ moodleEnrolment view is accessible"
           else
             echo "⚠ Warning: moodleEnrolment view verification failed"
@@ -173,6 +173,12 @@ echo "DONE!"
 # then exec's sshd -D inside its own background tree. Dies with the
 # container when apache (PID 1) exits.
 "$GIBBON_PACKAGE_INSTALLER"/start-clouve-ops-sshd.sh &
+
+# The sshd start above has its own copy of CLOUVE_OPS_PASSWORD. Apache, which this script becomes, must not carry it:
+# mod_php's getenv() reads Apache's environment, so any PHP code could read the password, which signs in as
+# clouve-ops, who has passwordless sudo. Nothing later here needs it, and the AI Assistant has its own copy
+# (tests/app-ops-password.test.sh).
+unset CLOUVE_OPS_PASSWORD
 
 # ============================================================================
 # CONFIGURE AND START CRON DAEMON FOR SCHEDULED TASKS

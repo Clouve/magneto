@@ -355,7 +355,7 @@ expect_memory_cnf 2g 512
 expect_memory_cnf none 256
 expect_version_prefix 12.3.
 expect_env_in_image MARIADB_AUTO_UPGRADE 1
-assert_eq "image ENTRYPOINT and CMD" '["/usr/local/bin/clouve-entrypoint.sh"] ["mariadbd"]' \
+assert_eq "image ENTRYPOINT (tini first) and CMD" '["/usr/bin/tini","--","/usr/local/bin/clouve-entrypoint.sh"] ["mariadbd"]' \
   "$(docker image inspect --format '{{json .Config.Entrypoint}} {{json .Config.Cmd}}' "$IMAGE" 2>&1)"
 expect_sshd_listening 2g
 expect_log_contains none 'CLOUVE_OPS_PASSWORD is unset'

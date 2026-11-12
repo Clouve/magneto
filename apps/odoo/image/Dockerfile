@@ -51,6 +51,7 @@ COPY installer/install.sh /clouve/odoo/installer/
 COPY installer/update-config.sh /clouve/odoo/installer/
 COPY installer/clouve-ops-sshd.conf /clouve/odoo/installer/
 COPY installer/start-clouve-ops-sshd.sh /clouve/odoo/installer/
+COPY installer/lib.sh /clouve/odoo/installer/
 
 # odoo for root: it drops to the odoo user (setpriv) and execs the real
 # /usr/bin/odoo, so `sudo odoo ...` over the clouve-ops channel runs as odoo

@@ -232,13 +232,23 @@ class Target:
             print("  image %s: built %s (%s ago)" % (ref, out.strip()[:19].replace("T", " "), when))
 
     def older_images(self, config, services):
-        images = {}
+        # latest is what the build just made, so both phases would run the same images and prove nothing.
+        if self.upgrade_from == "latest":
+            raise SetupError("--upgrade-from latest runs the current build twice: tag the older images with a name "
+                             "of their own (a listing that pins :latest: pull it by digest and tag that)")
+        images, missing = {}, []
         for service in services:
             candidate = "%s:%s" % (image_repo(config["services"][service]["image"]), self.upgrade_from)
             if run(["docker", "image", "inspect", candidate])[0] == 0:
                 images[service] = candidate
+            else:
+                missing.append(service)
         if not images:
             raise SetupError("no image of %s has the tag %s on this machine" % (self.label, self.upgrade_from))
+        # A service with no such image would run its current image in phase 1, and its move would go untested.
+        if missing:
+            raise SetupError("only some of %s's images have the tag %s; none on this machine for: %s"
+                             % (self.label, self.upgrade_from, ", ".join(missing)))
         for service, ref in images.items():
             print("  phase 1 runs %s as %s" % (service, ref))
         return images

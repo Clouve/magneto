@@ -7,28 +7,44 @@
 // plugins live in that tree, so upgrade.sh asks this script which ones to carry
 // over.
 //
-// Usage: php added-plugins.php <old Moodle root> <new Moodle root>
+// Usage: php added-plugins.php <old Moodle root> <new Moodle root> [<recorded versions>]
+//
+// <recorded versions> is a file of "<component><TAB><version>" lines, the
+// plugin versions that the site's database records (its config_plugins table).
 //
 // A root is the folder that holds lib/components.json and lib/plugins.json:
 // the previous code tree that upgrade.sh moved aside, and the image's pristine
 // copy. A plugin was added when the old tree has it and the old Moodle's
 // lib/plugins.json does not list it as standard. So a plugin that was part of
-// the old Moodle and is gone from the new one (mod_chat in Moodle 5.0) is never
-// carried over.
+// the old Moodle and is gone from the new one (mod_chat in Moodle 5.0, the
+// Classic theme in Moodle 5.3) is never carried over. A Classic theme that an
+// admin installed again after 5.3 is an added plugin like any other.
 //
 // It prints one tab-separated line per added plugin, sorted by component, with
 // paths relative to the roots, and then a last line "end":
-//   keep  <component>  <old path>  <new path>  -
+//   keep  <component>  <old path>  <new path>  - (or a warning)
 //   skip  <component>  <old path>  -           <reason>
+//   stop  <component>  <old path>  -           <reason>
 // "skip" holds back a plugin that the new Moodle ships itself, one whose
 // version.php says it won't work with the new Moodle (marked incompatible with
-// the new branch, or needing a plugin that the new site won't have), one whose
-// version.php can't be read, and one whose plugin type the new Moodle no longer
-// has. Moodle would stop its upgrade for the incompatible ones
-// (upgrade_plugins()) and the ones missing a dependency
-// (core_plugin_manager::all_plugins_ok()). A plugin that breaks in other ways is
-// caught by upgrade.sh, which holds back every carried plugin when Moodle's
-// upgrade fails twice and then runs it once more.
+// the new branch, a $plugin->supported range that leaves the new branch out, or
+// needing a plugin that the new site won't have), one whose version.php can't be
+// read, and one whose plugin type the new Moodle no longer has. Moodle would stop
+// its upgrade for the incompatible ones (upgrade_plugins()) and the ones missing
+// a dependency (core_plugin_manager::all_plugins_ok()). For a plugin outside its
+// supported range Moodle only warns, and this script holds it back because its
+// author hasn't said it works with the new branch; but a plugin that already ran
+// outside its range on the old Moodle is kept, with a warning. A plugin that
+// breaks in other ways is caught by upgrade.sh, which holds back the plugin that
+// Moodle's upgrade failed on, or every carried plugin, and runs it once more.
+//
+// "stop" means the site can't move to the new Moodle as it is: the new Moodle
+// ships a plugin that the site's admin added, and the added copy is newer than
+// the new Moodle's (report_aiusage and aiprovider_anthropic became part of
+// Moodle 5.3). Moodle refuses to go back to an older version of a plugin, so
+// upgrade.sh leaves the site on its old code and says why. That also holds
+// when the added copy's folder is gone but the database still records its
+// newer version (the recorded versions file): Moodle compares with that.
 //
 // Each version.php runs in a PHP process of its own, with a time limit, so one
 // that exits, fails or hangs only holds back its own plugin.
@@ -70,8 +86,8 @@ ob_start();
     include $file;
 })($argv[1], $plugin);
 ob_end_clean();
-echo "\nVERSIONINFO ", json_encode(['incompatible' => $plugin->incompatible ?? null,
-    'dependencies' => $plugin->dependencies ?? null]), "\n";
+echo "\nVERSIONINFO ", json_encode(['version' => $plugin->version ?? null, 'incompatible' => $plugin->incompatible ?? null,
+    'supported' => $plugin->supported ?? null, 'dependencies' => $plugin->dependencies ?? null]), "\n";
 PHP;
 
 // A folder path as Moodle's own plugin types have them: plain, relative, no "..".
@@ -199,8 +215,8 @@ function is_standard(string $component, array $standard): bool {
     return in_array($name, $standard[$type] ?? [], true);
 }
 
-if ($argc !== 3) {
-    fwrite(STDERR, "Usage: php added-plugins.php <old Moodle root> <new Moodle root>\n");
+if ($argc !== 3 && $argc !== 4) {
+    fwrite(STDERR, "Usage: php added-plugins.php <old Moodle root> <new Moodle root> [<recorded versions>]\n");
     exit(2);
 }
 $oldroot = rtrim($argv[1], '/');
@@ -208,6 +224,7 @@ $newroot = rtrim($argv[2], '/');
 [$oldtypes, $oldstandard] = plugin_types($oldroot);
 [$newtypes, $newstandard] = plugin_types($newroot);
 $newbranch = moodle_branch($newroot);
+$oldbranch = moodle_branch($oldroot);
 
 // The added plugins of the old tree.
 $added = [];
@@ -229,7 +246,7 @@ foreach ($oldtypes as $type => $dir) {
 $plan = [];
 $dependencies = [];
 foreach ($added as $component => $p) {
-    $plan[$component] = ['old' => $p['old'], 'new' => '-', 'reason' => '-'];
+    $plan[$component] = ['old' => $p['old'], 'new' => '-', 'reason' => '-', 'stop' => false];
     if (!isset($newtypes[$p['type']])) {
         $plan[$component]['reason'] = "the new Moodle has no {$p['type']} plugins";
         continue;
@@ -237,6 +254,14 @@ foreach ($added as $component => $p) {
     $new = "{$newtypes[$p['type']]}/{$p['name']}";
     if (is_standard($component, $newstandard) || file_exists("$newroot/$new")) {
         $plan[$component]['reason'] = 'the new Moodle has its own copy';
+        $added = read_version_file("$oldroot/{$p['old']}/version.php");
+        $core = read_version_file("$newroot/$new/version.php");
+        if (is_numeric($added['version'] ?? null) && is_numeric($core['version'] ?? null)
+                && (float)$added['version'] > (float)$core['version']) {
+            $plan[$component]['stop'] = true;
+            $plan[$component]['reason'] = "the site has version {$added['version']} of it, newer than the new Moodle's " .
+                "{$core['version']}, and Moodle can't go back to an older version";
+        }
         continue;
     }
     $info = read_version_file("$oldroot/{$p['old']}/version.php");
@@ -253,6 +278,23 @@ foreach ($added as $component => $p) {
         $plan[$component]['reason'] = "incompatible with Moodle $incompatible and later";
         continue;
     }
+    $supported = $info['supported'];
+    if ($supported !== null) {
+        if (!is_array($supported) || !array_is_list($supported) || count($supported) !== 2
+                || !is_int($supported[0]) || !is_int($supported[1])) {
+            $plan[$component]['reason'] = 'its version.php has a supported value this script cannot read';
+            continue;
+        }
+        if ($newbranch < $supported[0] || $newbranch > $supported[1]) {
+            $range = "its version.php supports Moodle {$supported[0]} to {$supported[1]}, not $newbranch";
+            if ($oldbranch >= $supported[0] && $oldbranch <= $supported[1]) {
+                $plan[$component]['reason'] = $range;
+                continue;
+            }
+            // It already ran outside its range on the old Moodle: keep it, as Moodle would, and say so.
+            $plan[$component]['reason'] = "$range, and it already ran on $oldbranch outside that range";
+        }
+    }
     $needs = $info['dependencies'] ?? [];
     if (!is_array($needs) || array_filter(array_keys($needs), fn($k) => !is_string($k) || !preg_match(COMPONENT, $k))) {
         $plan[$component]['reason'] = 'its version.php has dependencies this script cannot read';
@@ -260,6 +302,9 @@ foreach ($added as $component => $p) {
     }
     $plan[$component]['new'] = $new;
     $dependencies[$component] = array_keys($needs);
+    if (!str_contains($plan[$component]['reason'], 'already ran')) {
+        $plan[$component]['reason'] = '-';
+    }
 }
 
 // A kept plugin needs each dependency to be standard in the new Moodle or kept too.
@@ -282,8 +327,37 @@ do {
     }
 } while ($changed);
 
+// Plugins the new Moodle ships and the old one didn't, whose version the database records as newer than the new
+// Moodle's copy: an admin added one and later deleted only its folder. Moodle would refuse to go back to the older
+// version, so the site can't move to the new Moodle as it is.
+if ($argc === 4) {
+    $recorded = [];
+    foreach (file($argv[3], FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
+        [$name, $version] = array_pad(explode("\t", $line, 2), 2, '');
+        if (preg_match(COMPONENT, $name) && is_numeric($version)) {
+            $recorded[$name] = $version;
+        }
+    }
+    foreach ($newstandard as $type => $names) {
+        foreach ($names as $name) {
+            $component = "{$type}_$name";
+            if (!isset($recorded[$component], $newtypes[$type]) || is_standard($component, $oldstandard)
+                    || !empty($plan[$component]['stop'])) {
+                continue;
+            }
+            $core = read_version_file("$newroot/{$newtypes[$type]}/$name/version.php");
+            if (is_numeric($core['version'] ?? null) && (float)$recorded[$component] > (float)$core['version']) {
+                $plan[$component] = ['old' => $plan[$component]['old'] ?? '-', 'new' => '-', 'stop' => true,
+                    'reason' => "Moodle has version {$recorded[$component]} of it recorded, newer than the new " .
+                        "Moodle's {$core['version']}, and Moodle can't go back to an older version"];
+            }
+        }
+    }
+}
+
 ksort($plan);
 foreach ($plan as $component => $p) {
-    echo implode("\t", [$p['new'] === '-' ? 'skip' : 'keep', $component, $p['old'], $p['new'], $p['reason']]), "\n";
+    $action = $p['stop'] ? 'stop' : ($p['new'] === '-' ? 'skip' : 'keep');
+    echo implode("\t", [$action, $component, $p['old'], $p['new'], $p['reason']]), "\n";
 }
 echo "end\n";

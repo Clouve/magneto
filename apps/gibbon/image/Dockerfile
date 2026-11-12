@@ -3,11 +3,15 @@ FROM php:8.3-apache
 ENV GIBBON_VERSION=30.0.01
 ENV GIBBON_PATH=gibbon/gibbon-${GIBBON_VERSION}
 
-#Setup server
+# Setup server. Installing openssh-server makes SSH host keys, and they go
+# again at the end: kept, they would ship in the pushed image and every tenant
+# would share one host key. Each container makes its own at start
+# (ssh-keygen -A in start-clouve-ops-sshd.sh).
 RUN apt-get update && apt-get -y upgrade && \
     apt-get install -y gettext-base locales git default-mysql-client cron \
         openssh-server sudo && \
-    echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen && locale-gen
+    echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen && locale-gen && \
+    rm -f /etc/ssh/ssh_host_*
 
 # Operator account used by gibbon-magneto-agent's Claude Code agent for shell
 # access into this container. The account password is set at runtime by

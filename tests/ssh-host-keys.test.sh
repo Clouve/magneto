@@ -1,34 +1,41 @@
 #!/bin/bash
 
 # ============================================================================
-# SSH host keys in the Odoo images
+# SSH host keys in the images with a clouve-ops sshd
 # ============================================================================
 # Installing openssh-server makes SSH host keys. Kept in an image, those keys
 # ship to every deployment, and every tenant's container has the same host
-# key. The Odoo images delete them at build time, and each container makes its
+# key. The images delete them at build time, and each container makes its
 # own when its clouve-ops sshd starts (ssh-keygen -A in
-# start-clouve-ops-sshd.sh). The AI Assistant keeps no sibling's host key from
+# start-clouve-ops-sshd.sh, or AI Studio's entrypoint.sh). The MySQL images
+# (Oracle Linux) never had any. Moodle's image has its own test
+# (tests/moodle-ssh-host-keys.test.sh). The AI Assistant keeps no sibling's host key from
 # magneto-agent 4.5.3 on, so new keys at each start don't lock it out there
 # (README.md, "The clouve-ops SSH channel", says where such an image can run).
 #
-# For each image (odoo and odoo-postgres) the test checks that:
+# For each image the test checks that:
 #   - the image holds no /etc/ssh/ssh_host_* file (and its /etc/ssh can be
 #     listed: a failed listing finds no key either);
 #   - a container that starts the image's clouve-ops sshd (with
 #     CLOUVE_OPS_PASSWORD set) has host keys once sshd listens;
 #   - a second container from the same image has different keys.
-# The containers run the sshd script as their entrypoint, so neither Odoo nor
-# PostgreSQL starts, and they have no network (--network none).
+# The containers run the sshd script as their entrypoint, so the app and its
+# database don't start, and they have no network (--network none). AI Studio
+# has no such script: its sshd runs under supervisord, so its containers start
+# the image's own entrypoint.
 #
-# --image NAME=REF uses an image that is already built (NAME is odoo or
-# odoo-postgres) instead of building it, and the test leaves it in place.
+# --image NAME=REF uses an image that is already built instead of building it,
+# and the test leaves it in place. Naming images limits the run to them.
 #
-# Needs Docker. The build pulls odoo:19.0 and postgres:18 and runs apt-get.
+# Needs Docker. A build pulls the image's base and runs its package installs.
 # Every container the test starts is named ssh-keys-t-*. The containers and
 # the images the test built are removed when it exits.
 # tests/ssh-host-keys-checks.test.sh runs these checks with a fake docker.
 #
-# Usage: bash tests/ssh-host-keys.test.sh [--image NAME=REF]...
+# Usage: bash tests/ssh-host-keys.test.sh [--image NAME=REF]... [NAME...]
+#   NAME  odoo, odoo-postgres, wordpress, wordpress-mariadb, gibbon,
+#         gibbon-mysql, moodle-mysql, nextcloud, nextcloud-mariadb or ai-studio
+#         (default: all)
 # ============================================================================
 
 set -uo pipefail
@@ -39,24 +46,43 @@ export LC_ALL=C
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PREFIX="ssh-keys-t-"    # every container this test starts begins with this
-WAIT_SECONDS=60
+WAIT_SECONDS=120
 
-# The images, where each is built from, and the script that starts its clouve-ops sshd.
-NAMES=(odoo odoo-postgres)
+# The images, where each is built from, and the script that starts its clouve-ops sshd ("" for the image's own
+# entrypoint).
+ALL=(odoo odoo-postgres wordpress wordpress-mariadb gibbon gibbon-mysql moodle-mysql nextcloud nextcloud-mariadb ai-studio)
 declare -A CONTEXT=(
   [odoo]="$REPO_DIR/apps/odoo/image"
   [odoo-postgres]="$REPO_DIR/apps/odoo/image/postgres"
+  [wordpress]="$REPO_DIR/apps/wordpress/image"
+  [wordpress-mariadb]="$REPO_DIR/apps/wordpress/image/mariadb"
+  [gibbon]="$REPO_DIR/apps/gibbon/image"
+  [gibbon-mysql]="$REPO_DIR/apps/gibbon/image/mysql"
+  [moodle-mysql]="$REPO_DIR/apps/moodle/image/mysql"
+  [nextcloud]="$REPO_DIR/apps/nextcloud/image"
+  [nextcloud-mariadb]="$REPO_DIR/apps/nextcloud/image/mariadb"
+  [ai-studio]="$REPO_DIR/apps/ai-studio/image"
 )
 declare -A SSHD_SCRIPT=(
   [odoo]=/clouve/odoo/installer/start-clouve-ops-sshd.sh
   [odoo-postgres]=/usr/local/bin/start-clouve-ops-sshd.sh
+  [wordpress]=/clouve/wordpress/installer/start-clouve-ops-sshd.sh
+  [wordpress-mariadb]=/usr/local/bin/start-clouve-ops-sshd.sh
+  [gibbon]=/clouve/gibbon/installer/start-clouve-ops-sshd.sh
+  [gibbon-mysql]=/usr/local/bin/start-clouve-ops-sshd.sh
+  [moodle-mysql]=/usr/local/bin/start-clouve-ops-sshd.sh
+  [nextcloud]=/clouve/nextcloud/installer/start-clouve-ops-sshd.sh
+  [nextcloud-mariadb]=/usr/local/bin/start-clouve-ops-sshd.sh
+  [ai-studio]=""
 )
 declare -A IMAGE=()
 
 usage() {
-  sed -n 's/^# \{0,1\}//; /^Usage:/p' "${BASH_SOURCE[0]}" >&2
+  sed -n 's/^# \{0,1\}//; /^Usage:/,/(default: all)/p' "${BASH_SOURCE[0]}" >&2
   exit 2
 }
+
+NAMES=()
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -67,10 +93,14 @@ while [ $# -gt 0 ]; do
       IMAGE[$name]="${2#*=}"
       shift
       ;;
-    *) usage ;;
+    *)
+      [ -n "${CONTEXT[$1]+set}" ] || usage
+      NAMES+=("$1")
+      ;;
   esac
   shift
 done
+[ "${#NAMES[@]}" -gt 0 ] || NAMES=("${ALL[@]}")
 
 GREEN=$'\033[0;32m'
 RED=$'\033[0;31m'
@@ -108,11 +138,14 @@ trap 'exit 143' TERM
 
 remove_test_containers    # leftovers of a run that was killed
 
-# start_sshd <container> <image> <script>: a container whose only process is the image's clouve-ops sshd.
+# start_sshd <container> <image> <script>: a container whose only process is the image's clouve-ops sshd, or, with no
+# script, one that runs the image's own entrypoint.
 start_sshd() {
+  local entrypoint=()
+  [ -n "$3" ] && entrypoint=(--entrypoint "$3")
   docker run -d --pull=never --name "$1" --network none \
     -e "CLOUVE_OPS_PASSWORD=$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')" \
-    --entrypoint "$3" "$2" >/dev/null
+    "${entrypoint[@]}" "$2" >/dev/null
 }
 
 # fingerprints <container>: the SHA256 fingerprint of each host key, one per line, once sshd listens on port 22.

@@ -18,8 +18,22 @@ MOODLE_EMAIL="${MOODLE_EMAIL:-admin@example.com}"
 MOODLE_FULLNAME="${MOODLE_FULLNAME:-Administrator}"
 MOODLE_SHORTNAME="${MOODLE_SHORTNAME:-Admin}"
 
-# Run the installation
-php "$MOODLE_INSTALL_PATH/admin/cli/install.php" \
+# Run the installation. install.php reads its options from $_SERVER['argv']. The two passwords never go on a command
+# line, where every process in the container can read them: this short PHP program adds --dbpass and --adminpass to
+# that list from its environment and then runs install.php in the same process. The other options go as before.
+# shellcheck disable=SC2016  # PHP code, for php
+CLV_DB_PASSWORD="$DB_PASSWORD" CLV_ADMIN_PASSWORD="$MOODLE_PASSWORD" \
+CLV_INSTALL_PHP="$MOODLE_INSTALL_PATH/admin/cli/install.php" php -r '
+    $script = getenv("CLV_INSTALL_PHP");
+    $argv = array_merge([$script], array_slice($argv, 1), [
+        "--dbpass=" . getenv("CLV_DB_PASSWORD"),
+        "--adminpass=" . getenv("CLV_ADMIN_PASSWORD"),
+    ]);
+    $argc = count($argv);
+    $_SERVER["argv"] = $argv;
+    $_SERVER["argc"] = $argc;
+    require $script;
+' -- \
   --lang=en \
   --wwwroot="${MOODLE_URL:-http://localhost}" \
   --dataroot="$MOODLEDATA_PATH" \
@@ -27,14 +41,12 @@ php "$MOODLE_INSTALL_PATH/admin/cli/install.php" \
   --dbhost="$DB_HOST" \
   --dbname="$DB_NAME" \
   --dbuser="$DB_USER" \
-  --dbpass="$DB_PASSWORD" \
   --dbport=3306 \
   --prefix=mdl_ \
   --fullname="$MOODLE_SITE_NAME" \
   --shortname="$MOODLE_SITE_NAME" \
   --summary="Moodle Learning Management System" \
   --adminuser="$MOODLE_USERNAME" \
-  --adminpass="$MOODLE_PASSWORD" \
   --adminemail="$MOODLE_EMAIL" \
   --non-interactive \
   --agree-license

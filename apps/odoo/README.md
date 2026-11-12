@@ -8,7 +8,7 @@ This bundle includes:
 - **Odoo 19.0**: Latest stable version with modern features
 - **PostgreSQL 16**: Reliable and performant database backend
 - **Custom Docker Images**: Production-ready images with automatic initialization
-- **Security Configuration**: Pre-configured master password protection
+- **Security Configuration**: A master password, and Odoo's database manager locked at every start
 - **Persistent Storage**: Data persists across container restarts
 
 ## Quick Start
@@ -24,12 +24,9 @@ docker-compose down
 ## Access Odoo
 
 - **URL**: http://localhost:8069
-- **Initial Setup**: On first access, you'll be prompted to create a database and set up an admin account
-- **Master Password**: Required for database management operations (see Security Configuration below)
-- **Database Name**: Choose any name (e.g., "odoo")
-- **Email**: Your admin email
-- **Password**: Your admin password
-- **Demo Data**: Choose whether to load demo data
+- **Initial Setup**: The first start creates the database (`ODOO_DB_NAME`, default `odoo`) and its admin account by
+  itself; sign in with `ODOO_ADMIN_EMAIL` and `ODOO_ADMIN_PASSWORD`
+- **Database Manager**: Locked at every start (see Security Configuration below)
 
 ## Configuration
 
@@ -45,7 +42,7 @@ Edit `docker-compose.yml` to customize environment variables:
 #### Security Configuration
 - `ODOO_MASTER_PASSWORD`: Master password for database manager (default: odoo_master_password)
 
-**Important**: The master password protects database management operations (create, delete, backup, restore). This is different from the admin password for individual Odoo databases.
+**Important**: The master password protects database management operations (create, delete, backup, restore). This is different from the admin password for individual Odoo databases. The image also locks the database manager at every start (see "Verifying Configuration" below).
 
 ### Configuration File
 
@@ -157,9 +154,9 @@ Odoo comes with a wide range of built-in applications:
 
 **Solution**:
 1. Check if `ODOO_MASTER_PASSWORD` is set in docker-compose.yml
-2. Verify configuration file exists:
+2. Verify configuration file exists (without printing its passwords):
    ```bash
-   docker exec odoo_app cat /etc/odoo/odoo.conf
+   docker exec odoo_app grep -vE '^[[:space:]]*(db_password|admin_passwd)[[:space:]]*=' /etc/odoo/odoo.conf   # passwords left out
    ```
 3. Check that `admin_passwd` is present in the configuration
 4. Restart containers with clean volumes:
@@ -169,6 +166,11 @@ Odoo comes with a wide range of built-in applications:
    ```
 
 ### Cannot Access Database Manager
+
+**Symptom**: The database manager says it has been disabled, or refuses every action
+
+**Cause**: The image locks it at every start (`list_db = False`). Open it for one task as "Verifying Configuration"
+below shows.
 
 **Symptom**: Incorrect password when accessing database manager
 
@@ -427,15 +429,29 @@ docker exec odoo_app grep '^admin_passwd' /etc/odoo/odoo.conf
 
 #### Verifying Configuration
 
-1. Check the configuration file:
+1. Check the configuration file (without printing its passwords):
 ```bash
-docker exec odoo_app cat /etc/odoo/odoo.conf
+docker exec odoo_app grep -vE '^[[:space:]]*(db_password|admin_passwd)[[:space:]]*=' /etc/odoo/odoo.conf   # passwords left out
 ```
 
-2. Test database manager access:
-   - Navigate to `http://localhost:8069/web/database/manager`
-   - You should be prompted for the master password
-   - Enter the password configured via `ODOO_MASTER_PASSWORD`
+2. Check that the database manager is locked: the database list answers an error.
+```bash
+curl -s -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","method":"call","params":{}}' \
+  http://localhost:8069/web/database/list
+```
+
+The image locks Odoo's database manager at every start: `odoo.conf` gets `list_db = False` and
+`dbfilter = ^<ODOO_DB_NAME>\Z`, so `/web/database/*` refuses every action and a browser reaches that one database.
+`odoo db` (dump, load, duplicate) works with the lock on. To use the manager page on a local container for one task,
+open it, restart Odoo in place, and close it the same way afterwards (a new container locks it again):
+
+```bash
+docker exec odoo_app sed -i 's/^list_db = False$/list_db = True/' /etc/odoo/odoo.conf
+docker exec odoo_app kill -HUP 1      # tini passes it on; Odoo re-reads odoo.conf
+# ... the task at http://localhost:8069/web/database/manager, with ODOO_MASTER_PASSWORD ...
+docker exec odoo_app sed -i 's/^list_db = True$/list_db = False/' /etc/odoo/odoo.conf
+docker exec odoo_app kill -HUP 1
+```
 
 ### Security Best Practices
 
@@ -515,7 +531,7 @@ For Odoo-specific issues, consult:
 For Docker image or deployment issues:
 - Check container logs: `docker-compose logs odoo`
 - Review this README's Troubleshooting section
-- Inspect configuration: `docker exec odoo_app cat /etc/odoo/odoo.conf`
+- Inspect configuration, passwords left out: `docker exec odoo_app grep -vE '^[[:space:]]*(db_password|admin_passwd)[[:space:]]*=' /etc/odoo/odoo.conf`
 
 ## License
 

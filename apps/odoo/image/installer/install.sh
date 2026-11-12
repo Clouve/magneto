@@ -15,6 +15,10 @@ NC='\033[0m' # No Color
 
 set -e
 
+# The rule for a secret's name and odoo_unset_secrets.
+# shellcheck source=apps/odoo/image/installer/lib.sh
+. /clouve/odoo/installer/lib.sh
+
 echo -e "${YELLOW}[INFO]${NC} Running Odoo installation script..."
 
 # Database connection details
@@ -35,11 +39,13 @@ ADMIN_PASSWORD="${ODOO_ADMIN_PASSWORD:-admin}"
 ODOO_LANGUAGE="${ODOO_LANGUAGE:-en_US}"
 ODOO_COUNTRY="${ODOO_COUNTRY:-US}"
 
-# The odoo commands below get none of the container's passwords in their
-# environment. Odoo reads the database password from odoo.conf. The admin
-# step gets the admin's password by itself, and each psql gets PGPASSWORD by
-# itself (Odoo would take a PGPASSWORD over odoo.conf).
-unset ODOO_DB_PASSWORD ODOO_MASTER_PASSWORD ODOO_ADMIN_PASSWORD CLOUVE_OPS_PASSWORD PGPASSWORD
+# The odoo commands below get none of the container's secrets in their
+# environment: odoo_unset_secrets takes out every variable whose name is a
+# secret's, and PGPASSWORD. Odoo reads the database password from odoo.conf.
+# The admin step gets the admin's password by itself, and each psql gets
+# PGPASSWORD by itself (Odoo would take a PGPASSWORD over odoo.conf). The
+# copies above (DB_PASSWORD, ADMIN_PASSWORD) aren't exported, so they stay.
+odoo_unset_secrets
 
 # ============================================================================
 # STEP 1: Verify PostgreSQL connection
@@ -73,7 +79,7 @@ if PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d p
     echo -e "${GREEN}[INFO]${NC} Database '$ODOO_DB_NAME' already exists. Skipping database initialization."
     echo -e "${GREEN}[SUCCESS]${NC} Odoo is ready to use!"
     echo -e "${GREEN}[INFO]${NC} Access Odoo at: http://localhost:8069"
-    echo -e "${GREEN}[INFO]${NC} Login with email: $ODOO_ADMIN_EMAIL"
+    echo -e "${GREEN}[INFO]${NC} The admin signs in with the address in ODOO_ADMIN_EMAIL"
     exit 0
 fi
 
@@ -93,7 +99,7 @@ echo -e "${YELLOW}[INFO]${NC} This may take a few minutes..."
     --stop-after-init 2>&1 | tee /tmp/odoo_init.log
 
 # Check if initialization was successful
-if [ ${PIPESTATUS[0]} -eq 0 ]; then
+if [ "${PIPESTATUS[0]}" -eq 0 ]; then
     echo -e "${GREEN}[SUCCESS]${NC} Odoo database initialized successfully!"
 else
     echo -e "${RED}[ERROR]${NC} Failed to initialize Odoo database"
@@ -112,6 +118,8 @@ echo -e "${YELLOW}[INFO]${NC} Configuring admin user..."
 # This ensures all hooks and validations are properly executed
 # The admin's login and password reach the shell through its environment,
 # never on a command line, where any process in the container could read them.
+# What the shell prints goes to the container's log, so it names the admin by
+# user id, never by address: the address is the deploying person's own.
 # The shell runs as the odoo user (/usr/local/bin/odoo drops to it).
 ODOO_ADMIN_EMAIL="$ODOO_ADMIN_EMAIL" ODOO_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
     /usr/local/bin/odoo shell -c "$ODOO_CONF" -d "$ODOO_DB_NAME" --stop-after-init << 'PYTHON_SCRIPT' 2>&1 | tee /tmp/odoo_user_config.log
@@ -121,15 +129,14 @@ import os
 admin_email = os.environ.get('ODOO_ADMIN_EMAIL', 'admin@example.com')
 admin_password = os.environ.get('ODOO_ADMIN_PASSWORD', 'admin')
 
-print(f"Configuring admin user with login: {admin_email}")
-
 # Get the admin user (id=2)
 admin = env['res.users'].browse(2)
+print(f"Configuring the admin user (res.users id {admin.id})")
 
 if admin.exists():
     # Update login to use email address
     admin.write({'login': admin_email})
-    print(f"Updated admin login to: {admin_email}")
+    print("Updated the admin's login")
 
     # Update password using the proper method
     admin.write({'password': admin_password})
@@ -138,7 +145,7 @@ if admin.exists():
     # Update email in the related partner
     if admin.partner_id:
         admin.partner_id.write({'email': admin_email})
-        print(f"Updated admin email to: {admin_email}")
+        print("Updated the admin's email")
 
     # Commit the changes
     env.cr.commit()
@@ -156,24 +163,11 @@ else
     echo -e "${YELLOW}[INFO]${NC} Check logs at /tmp/odoo_user_config.log for details"
 fi
 
-# ============================================================================
-# STEP 6: Configure database to be used by default
-# ============================================================================
-
-echo -e "${YELLOW}[INFO]${NC} Configuring Odoo to use database '$ODOO_DB_NAME' by default..."
-
-# Add db_name to configuration file to make this database the default
-if ! grep -q "^db_name" "$ODOO_CONF"; then
-    echo "" >> "$ODOO_CONF"
-    echo "; Default database" >> "$ODOO_CONF"
-    echo "db_name = $ODOO_DB_NAME" >> "$ODOO_CONF"
-    echo -e "${GREEN}[SUCCESS]${NC} Default database configured!"
-else
-    echo -e "${GREEN}[INFO]${NC} Default database already configured"
-fi
+# The entrypoint's odoo.conf pins this database with dbfilter at every
+# start, so nothing more is written there.
 
 # ============================================================================
-# STEP 7: Installation complete
+# STEP 6: Installation complete
 # ============================================================================
 
 echo -e "${GREEN}[SUCCESS]${NC} Odoo installation completed successfully!"
@@ -182,6 +176,6 @@ echo -e "${GREEN}[INFO]${NC} Odoo is ready to use!"
 echo -e "${GREEN}[INFO]${NC} ================================================"
 echo -e "${GREEN}[INFO]${NC} Access Odoo at: http://localhost:8069"
 echo -e "${GREEN}[INFO]${NC} Database: $ODOO_DB_NAME"
-echo -e "${GREEN}[INFO]${NC} Admin email/login: $ODOO_ADMIN_EMAIL"
+echo -e "${GREEN}[INFO]${NC} Admin: res.users id 2, signing in with the address in ODOO_ADMIN_EMAIL"
 echo -e "${GREEN}[INFO]${NC} ================================================"
 

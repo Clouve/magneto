@@ -31,31 +31,36 @@ per-pod password named `CLOUVE_OPS_PASSWORD`. On current agents it isn't in
 your environment, so a command fetches it with
 `${CLOUVE_OPS_PASSWORD:-$(clv-secret CLOUVE_OPS_PASSWORD)}`. That form also
 works on older agents, which still have it in the environment. Never run
-`clv-secret CLOUVE_OPS_PASSWORD` on its own or print it. Use `sshpass -e`:
+`clv-secret CLOUVE_OPS_PASSWORD` on its own or print it. Give it to
+`sshpass -e` in `SSHPASS` on the same command, as below: an `export` is gone
+by your next command.
 
 ```bash
-export SSHPASS="${CLOUVE_OPS_PASSWORD:-$(clv-secret CLOUVE_OPS_PASSWORD)}"
-sshpass -e ssh clouve-ops@${ODOO_HOST}            # the Odoo app container
-sshpass -e ssh clouve-ops@${ODOO_DB_HOST}         # the PostgreSQL container
-sshpass -e ssh clouve-ops@${ODOO_HOST} "sudo grep -vE '^[[:space:]]*(db_password|admin_passwd)[[:space:]]*=' /etc/odoo/odoo.conf"   # config, passwords left out
+SSHPASS="${CLOUVE_OPS_PASSWORD:-$(clv-secret CLOUVE_OPS_PASSWORD)}" sshpass -e ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null clouve-ops@${ODOO_HOST}      # the Odoo app container
+SSHPASS="${CLOUVE_OPS_PASSWORD:-$(clv-secret CLOUVE_OPS_PASSWORD)}" sshpass -e ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null clouve-ops@${ODOO_DB_HOST}   # the PostgreSQL container
+SSHPASS="${CLOUVE_OPS_PASSWORD:-$(clv-secret CLOUVE_OPS_PASSWORD)}" sshpass -e ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null clouve-ops@${ODOO_HOST} "sudo grep -vE '^[[:space:]]*(db_password|admin_passwd)[[:space:]]*=' /etc/odoo/odoo.conf"   # config, passwords left out
 ```
 
-Both containers make new SSH host keys each time they start, and the AI
-Assistant's SSH settings accept a sibling's key without saving it. If `ssh`
-still stops at the host key, add
-`-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null`. It
-stops there in one of two ways. For a key ssh hasn't seen, `sshpass` exits
-with status 6 and prints nothing. For a key that differs from the one ssh
-saved for that host, ssh prints "REMOTE HOST IDENTIFICATION HAS CHANGED" and
-"Host key verification failed.", and exits with status 255.
-Use this channel for things that must run inside the target: `odoo` commands
-(run them with `sudo` and the config; they run as the `odoo` user, so the files
-they read or write must be ones `odoo` can reach: `/tmp` and
+Pass `-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null` on
+every connection, as every command here and in the skill does. The two
+options take the key the container shows and save nothing. Both containers
+make new SSH host keys each time they start, so a key saved earlier is wrong,
+and ssh refuses it ("REMOTE HOST IDENTIFICATION HAS CHANGED", exit status
+255). Newer agents' own SSH settings keep no key for these hosts either.
+Older agents have no such settings, and there a command without the options
+fails: `sshpass` can't answer the prompt for a key it doesn't know, and exits
+with status 6 without printing anything.
+
+Use this channel for things that must run inside the target: `odoo`
+commands, inspecting `/etc/odoo/odoo.conf` (its `db_password` and
+`admin_passwd` lines are secrets: never print them), the filestore at
+`/var/lib/odoo/filestore/${ODOO_DB_NAME}`, postgres config, disk usage.
+Routine SQL goes through the TCP `psql` client from this container.
+
+Run `odoo` commands with `sudo` and the config. They run as the `odoo` user,
+so the files they read or write must be ones `odoo` can reach: `/tmp` and
 `/var/lib/odoo/backups` work, your home folder `/home/clouve-ops` (mode 0750)
-and `/root` don't), inspecting `/etc/odoo/odoo.conf` (its
-`db_password` and `admin_passwd` lines are secrets: never print them), the
-filestore at `/var/lib/odoo/filestore/${ODOO_DB_NAME}`, postgres config, disk
-usage. Routine SQL goes through the TCP `psql` client from this container.
+and `/root` don't.
 
 The Odoo DevOps Skill is mounted at `~/.claude/skills/odoo/` (its `SKILL.md`
 is the entry point). Read it before non-trivial operations — it carries the
@@ -76,7 +81,7 @@ These rules apply to *every* Odoo-touching action.
    them (missing files read back as empty). Take it by piping the skill's own
    script into the Odoo container, where it runs `odoo db dump` and checks the
    ZIP holds dump.sql, manifest.json and the filestore:
-   `sshpass -e ssh -o StrictHostKeyChecking=accept-new clouve-ops@${ODOO_HOST} "sudo bash -s -- ${ODOO_DB_NAME}" < /clouve/skills/odoo/plugin/skills/odoo/scripts/backup.sh`
+   `SSHPASS="${CLOUVE_OPS_PASSWORD:-$(clv-secret CLOUVE_OPS_PASSWORD)}" sshpass -e ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null clouve-ops@${ODOO_HOST} "sudo bash -s -- ${ODOO_DB_NAME}" < /clouve/skills/odoo/plugin/skills/odoo/scripts/backup.sh`
    By hand, inside the Odoo container:
    `sudo ODOO_RC=/etc/odoo/odoo.conf odoo db dump ${ODOO_DB_NAME} <out.zip>`
    (`odoo db` reads its config from `ODOO_RC`; it takes no `-c` after `dump`).
@@ -114,12 +119,18 @@ These rules apply to *every* Odoo-touching action.
    `/mnt/extra-addons*`: Odoo loads the folder at its next start once a module
    is in it, so restart Odoo (rule 9) after copying new code in, before
    installing.
-8. **Never expose the database manager.** The `/web/database/*` routes are
+8. **Keep the database manager locked.** The `/web/database/*` routes are
    `auth='none'`, gated only by the master password (Odoo's `admin_passwd`,
-   named `ODOO_MASTER_PASSWORD`). Where a command needs it, pass
-   `${ODOO_MASTER_PASSWORD:-$(clv-secret ODOO_MASTER_PASSWORD)}`. Treat that value like any
-   other secret: never print or transmit it. The platform locks the manager (`list_db=False` +
-   ingress block); do not re-enable it.
+   named `ODOO_MASTER_PASSWORD`). The Odoo image writes `list_db = False` and
+   a `dbfilter` for `${ODOO_DB_NAME}` into `odoo.conf` at every start, so the
+   manager refuses every action and a browser reaches that database only.
+   Clouve's ingress doesn't block the routes. `odoo db` (dump, load) works
+   with the lock on. Open the manager only for one task, as the skill's
+   `playbooks/harden-db-manager.md` says, and close it right after; a new
+   container locks it again. Where a command needs the master password, pass
+   `${ODOO_MASTER_PASSWORD:-$(clv-secret ODOO_MASTER_PASSWORD)}` on stdin,
+   never on a command line. Treat that value like any other secret: never
+   print or transmit it.
 9. **Restart Odoo inside its container, with `SIGHUP`.** tini, the
    container's PID 1, passes the signal on to Odoo, which re-executes itself
    in place, in the same container and back within seconds, on
@@ -134,6 +145,9 @@ These rules apply to *every* Odoo-touching action.
     `sudo odoo neutralize -c /etc/odoo/odoo.conf -d <db>` (`--stdout` to audit
     first) disables mail servers, crons, payment providers, and webhooks.
     Never run a clone that can email, charge, or webhook production systems.
+    Odoo runs the scheduled jobs of every database it holds, whatever a
+    browser can reach, so neutralize in the very command that makes the copy
+    (`odoo db load -n`), and drop the copy once its task is done.
 11. **Never print, copy, or transmit the AI Assistant's access key** or any
     other secret you discover. On a paid deployment, Clouve manages the key,
     one per deployment, and rotates it; you never replace it. It is in the

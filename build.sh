@@ -25,6 +25,18 @@
 #                  ":<DATE>" + ":latest" pair (e.g. --tag 2025.11.20)
 #   --skip-new-disk-check  Push to UAT or prod without a new-disk pass (below)
 #
+# Dated tags: a push to UAT's or prod's registry (any project on the hosts their
+# Harbors answer on: demo.cr0.io and demo.reg.clouve.com, cr0.io and
+# registry.clouve.com) needs
+# --tag <YYYY.MM.DD> (an optional suffix such as 2026.11.11-2 is allowed), or
+# nothing is built or pushed, however REGISTRY is set and whichever script
+# calls this one: without --tag a push moves :latest, and images reach UAT and
+# prod only as dated tags, through a listing's new version. Pushes to dev's
+# registry (dev.cr0.io, dev.reg.clouve.com) and the rig's (r.clv.zone) don't
+# need one.
+# PUSH_NEEDS_DATED_TAG=1 turns the rule on for any registry; build-uat.sh and
+# build-prod.sh set it too.
+#
 # New-disk gate: build-uat.sh and build-prod.sh set NEW_DISK_GATE=1. With it and
 # --push, every app about to be pushed must have passed
 # tests/new-disk-start.test.sh on its current source (it starts the app the way
@@ -301,6 +313,41 @@ prune_builder_cache() {
 }
 
 # ============================================================================
+# Base image tags
+# ============================================================================
+# untagged_bases DIR BASE: prints "<Dockerfile, from BASE>: <image>" for each
+# FROM or COPY --from=<image> in DIR's Dockerfiles that names no tag. A build stage's
+# name, a stage number, scratch and a digest are not untagged images. A push
+# refuses such a target: every build passes --pull, so it would push whatever
+# :latest is that day, a new major version included
+# (tests/dockerfile-base-tags.test.sh checks the whole repository).
+untagged_bases() {
+    local file
+    while IFS= read -r file; do
+        awk -v file="${file#"$2"/}" '
+            /\\$/ { joined = joined substr($0, 1, length($0) - 1) " "; next }
+            {
+                line = joined $0; joined = ""
+                n = split(line, w, /[ \t]+/); i = 1
+                while (i <= n && w[i] == "") i++
+                if (i > n || substr(w[i], 1, 1) == "#") next
+                cmd = toupper(w[i]); refs = 0
+                if (cmd == "FROM") {
+                    for (j = i + 1; j <= n; j++) if (w[j] != "" && substr(w[j], 1, 2) != "--") break
+                    if (j <= n) { ref[++refs] = w[j]; if (toupper(w[j + 1]) == "AS") stage[tolower(w[j + 2])] = 1 }
+                } else if (cmd == "COPY" || cmd == "ADD") {
+                    for (j = i + 1; j <= n; j++) if (substr(w[j], 1, 7) == "--from=") ref[++refs] = substr(w[j], 8)
+                }
+                for (k = 1; k <= refs; k++) {
+                    r = ref[k]; last = r; sub(/.*\//, "", last)
+                    if (tolower(r) in stage || r ~ /^[0-9]+$/ || tolower(r) == "scratch" || r ~ /@/ || last ~ /:/) continue
+                    print file ": " r
+                }
+            }' "$file"
+    done < <(find "$1" -name 'Dockerfile*' -type f | sort)
+}
+
+# ============================================================================
 # The new-disk gate (build-uat.sh and build-prod.sh turn it on)
 # ============================================================================
 # new_disk_gate TARGET_DIR...: with NEW_DISK_GATE=1 and --push, stops the whole
@@ -481,6 +528,38 @@ while [ $# -gt 0 ]; do
     esac
     shift
 done
+
+# The dated-tag rule, checked before any docker call: without --tag a push also
+# moves :latest, which every deployment that pins it pulls at its next restart.
+# UAT's and prod's Harbor hosts. Each Harbor answers on two: the one
+# build-uat.sh (demo.cr0.io/clouveinc8) and build-prod.sh (cr0.io/clouveinc327)
+# push to, and its externalURL host, which strato copies Harbor's whole Ingress
+# rule to (strato cluster/k8s/manifests/clouve-<env>/harbor/values.yaml,
+# setup-harbor, upgrade-harbor). tests/build-push-tag.test.sh reads the wrappers
+# (and strato's values, when a checkout is there) to keep this list in step.
+DATED_TAG_HOSTS="demo.cr0.io demo.reg.clouve.com cr0.io registry.clouve.com"
+
+# registry_host REF: REF's host, lower case, without a scheme, a port or a
+# trailing dot, so CR0.IO:443 and cr0.io name the same registry.
+registry_host() {
+    local host="${1#*://}"
+    host="${host%%/*}"
+    host="${host%%:*}"
+    host="${host%.}"
+    printf '%s' "$host" | tr '[:upper:]' '[:lower:]'
+}
+
+NEEDS_DATED_TAG=false
+[ "${PUSH_NEEDS_DATED_TAG:-}" = 1 ] && NEEDS_DATED_TAG=true
+PUSH_HOST="$(registry_host "${REGISTRY:-r.clv.zone/e2eorg}")"
+for dated_host in $DATED_TAG_HOSTS; do
+    [ "$PUSH_HOST" = "$dated_host" ] && NEEDS_DATED_TAG=true
+done
+if [ "$NEEDS_DATED_TAG" = true ] && [ "$PUSH_IMAGES" = true ] \
+        && ! [[ "$CUSTOM_TAG" =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]{2}([.-][A-Za-z0-9]+)?$ ]]; then
+    echo "✗ --push needs --tag <YYYY.MM.DD> here (no :latest): images reach UAT and prod only as dated tags, through a listing's new version"
+    exit 1
+fi
 
 # If --all mode, build all targets
 if [ "$BUILD_ALL" = true ]; then
@@ -810,6 +889,17 @@ for config in "${CONTAINER_CONFIGS[@]}"; do
     fi
 done
 
+# A push takes only bases with a tag (untagged_bases above).
+if [ "$PUSH_IMAGES" = true ]; then
+    UNTAGGED="$(untagged_bases "$APP_IMAGE_DIR" "$TARGET_DIR")"
+    if [ -n "$UNTAGGED" ]; then
+        echo "✗ $DISPLAY_NAME: a Dockerfile names a base image with no tag, and --pull would push whatever :latest is now:"
+        printf '%s\n' "$UNTAGGED" | sed 's/^/    /'
+        echo "  Give each one the tag of the version the listing runs, then push."
+        exit 1
+    fi
+fi
+
 # ============================================================================
 # Cleanup images if requested
 # ============================================================================
@@ -859,6 +949,9 @@ fi
 # ============================================================================
 # STEP 1: Build application image from Dockerfile
 # ============================================================================
+# Every build passes --pull, so it starts from the newest image of the tag its
+# Dockerfile names, not from an older copy this machine kept: a local test then
+# runs on the same base as the push (tests/build-pull.test.sh).
 TOTAL_STEPS=$((1 + ${#CONTAINER_CONFIGS[@]}))
 
 echo "Step 1/$TOTAL_STEPS: Building $DISPLAY_NAME image from Dockerfile for platforms: $PLATFORMS..."
@@ -869,6 +962,7 @@ if [ "$PUSH_IMAGES" = true ]; then
         --platform "$PLATFORMS" \
         "${TAG_ARGS[@]}" \
         --provenance=false \
+        --pull \
         --push \
         .; then
         echo "✓ $DISPLAY_NAME multi-platform image built and pushed successfully!"
@@ -882,6 +976,7 @@ else
         --platform "$LOCAL_PLATFORM" \
         "${TAG_ARGS[@]}" \
         --provenance=false \
+        --pull \
         --load \
         .; then
         echo "✓ $DISPLAY_NAME image built and loaded into Docker successfully!"
@@ -924,6 +1019,7 @@ if [ ${#CONTAINER_CONFIGS[@]} -gt 0 ]; then
                 --platform "$PLATFORMS" \
                 "${TAG_ARGS[@]}" \
                 --provenance=false \
+                --pull \
                 --push \
                 "${dockerfile_args[@]}" \
                 "$build_context"; then
@@ -938,6 +1034,7 @@ if [ ${#CONTAINER_CONFIGS[@]} -gt 0 ]; then
                 --platform "$LOCAL_PLATFORM" \
                 "${TAG_ARGS[@]}" \
                 --provenance=false \
+                --pull \
                 --load \
                 "${dockerfile_args[@]}" \
                 "$build_context"; then

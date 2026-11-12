@@ -125,7 +125,7 @@ if [[ -n "$MOODLE_INTEGRATION_SQL_1" ]]; then
           views_ready=false
 
           while [ $view_attempt -lt $view_check_attempts ]; do
-            if mysql --skip-ssl -h "$GIBBON_DB_HOST" -u "$GIBBON_DB_USER" -p"$GIBBON_DB_PASSWORD" "$GIBBON_DB_NAME" \
+            if MYSQL_PWD="$GIBBON_DB_PASSWORD" mysql --skip-ssl -h "$GIBBON_DB_HOST" -u "$GIBBON_DB_USER" "$GIBBON_DB_NAME" \
                -e "SELECT 1 FROM moodleUser LIMIT 1;" 2>/dev/null >/dev/null; then
               echo "✓ Gibbon integration views are ready"
               views_ready=true
@@ -178,12 +178,12 @@ if [[ -n "$MOODLE_INTEGRATION_SQL_1" ]]; then
 
             # Execute SQL to configure Moodle
             echo "Executing SQL to configure Moodle plugins..."
-            if mysql --skip-ssl -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" < /tmp/moodle-integration.sql 2>&1; then
+            if MYSQL_PWD="$DB_PASSWORD" mysql --skip-ssl -h "$DB_HOST" -u "$DB_USER" "$DB_NAME" < /tmp/moodle-integration.sql 2>&1; then
               echo "✓ Moodle integration configured successfully"
 
               # Test connection to Gibbon database
               echo "Testing connection to Gibbon database..."
-              if mysql --skip-ssl -h "$GIBBON_DB_HOST" -u "$GIBBON_DB_USER" -p"$GIBBON_DB_PASSWORD" "$GIBBON_DB_NAME" \
+              if MYSQL_PWD="$GIBBON_DB_PASSWORD" mysql --skip-ssl -h "$GIBBON_DB_HOST" -u "$GIBBON_DB_USER" "$GIBBON_DB_NAME" \
                  -e "SELECT COUNT(*) as user_count FROM moodleUser;" 2>/dev/null; then
                 echo "✓ Moodle can successfully connect to Gibbon database"
               else
@@ -225,7 +225,7 @@ fi
 
 # Check if an upgrade is needed by comparing the exact Moodle $version baked into
 # this image against the version recorded on the data volume. Keying on the exact
-# build (e.g. 2026042000) — not the coarse "5.2" release — means point-build bumps
+# build (e.g. 2026100500) — not the coarse "5.3" release — means point-build bumps
 # are detected, and a pod restart can never silently run newer code than the DB.
 INSTALLED_VERSION="$(cat "$INSTALLED_VERSION_STAMP" 2>/dev/null || true)"
 
@@ -241,11 +241,19 @@ if [[ -d "$MOODLE_PACKAGE_PATH" && -n "$IMAGE_VERSION" && "$IMAGE_VERSION" -gt "
   echo "##################################################################"
   echo "UPGRADING Moodle $INSTALLED_VERSION -> $IMAGE_VERSION ($MOODLE_RELEASE)"
 
-  "$MOODLE_PACKAGE_INSTALLER"/upgrade.sh
-
-  echo "Marking installed version $MOODLE_RELEASE ($IMAGE_VERSION) ..."
-  echo "$IMAGE_VERSION" > "$INSTALLED_VERSION_STAMP"
-  echo "$TIMESTAMP" > "$INSTALLED_VERSIONS_PATH/$MOODLE_RELEASE"
+  # Status 3: upgrade.sh changed nothing, because the site can't move to this Moodle as it is (it said why). The site
+  # keeps running the code on its volume, no new version is recorded, and the next start checks again.
+  upgrade_status=0
+  "$MOODLE_PACKAGE_INSTALLER"/upgrade.sh || upgrade_status=$?
+  if (( upgrade_status == 3 )); then
+    echo "NOT UPGRADED: Moodle stays at $INSTALLED_VERSION, on the code already on the volume (see above)."
+  elif (( upgrade_status != 0 )); then
+    exit "$upgrade_status"
+  else
+    echo "Marking installed version $MOODLE_RELEASE ($IMAGE_VERSION) ..."
+    echo "$IMAGE_VERSION" > "$INSTALLED_VERSION_STAMP"
+    echo "$TIMESTAMP" > "$INSTALLED_VERSIONS_PATH/$MOODLE_RELEASE"
+  fi
 
   echo "##################################################################"
 fi
@@ -313,6 +321,12 @@ echo "DONE!"
 # then exec's sshd -D inside its own background tree. Dies with the
 # container when apache (PID 1) exits.
 "$MOODLE_PACKAGE_INSTALLER"/start-clouve-ops-sshd.sh &
+
+# The sshd start above has its own copy of CLOUVE_OPS_PASSWORD. Apache, which this script becomes, must not carry it:
+# mod_php's getenv() reads Apache's environment, so any PHP code could read the password, which signs in as
+# clouve-ops, who has passwordless sudo. Nothing later here needs it, and the AI Assistant has its own copy
+# (tests/app-ops-password.test.sh).
+unset CLOUVE_OPS_PASSWORD
 
 # ============================================================================
 # CONFIGURE AND START CRON DAEMON FOR SCHEDULED TASKS

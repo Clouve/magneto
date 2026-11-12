@@ -43,34 +43,40 @@ via `chpasswd` on each side container's start. On current agents it isn't
 in your environment, so a command fetches it with
 `${CLOUVE_OPS_PASSWORD:-$(clv-secret CLOUVE_OPS_PASSWORD)}`. That form
 also works on older agents, which still have it in the environment. Never
-run `clv-secret CLOUVE_OPS_PASSWORD` on its own or print it. Use
-`sshpass -e`, which reads the password from `SSHPASS` rather than the
-command line, so it never lands in shell history or `ps`:
+run `clv-secret CLOUVE_OPS_PASSWORD` on its own or print it. Set
+`SSHPASS` on each `sshpass -e` command, as below: `sshpass -e` reads the
+password from `SSHPASS` rather than the command line, so it never lands in
+shell history or `ps`, and your next Bash call wouldn't have an exported
+one.
 
 ```bash
-# Make the per-pod password available to sshpass (do this once per shell):
-export SSHPASS="${CLOUVE_OPS_PASSWORD:-$(clv-secret CLOUVE_OPS_PASSWORD)}"
-
 # Open an interactive shell in the gibbon container
-sshpass -e ssh clouve-ops@${GIBBON_HOST}
+SSHPASS="${CLOUVE_OPS_PASSWORD:-$(clv-secret CLOUVE_OPS_PASSWORD)}" sshpass -e ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null clouve-ops@${GIBBON_HOST}
 
 # Open an interactive shell in the gibbon-mysql container
-sshpass -e ssh clouve-ops@${GIBBON_DB_HOST}
+SSHPASS="${CLOUVE_OPS_PASSWORD:-$(clv-secret CLOUVE_OPS_PASSWORD)}" sshpass -e ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null clouve-ops@${GIBBON_DB_HOST}
 
 # Run a one-shot command (preferred for scripted operations)
-sshpass -e ssh clouve-ops@${GIBBON_HOST} \
-    "sudo tail -50 /var/log/apache2/error.log"
+SSHPASS="${CLOUVE_OPS_PASSWORD:-$(clv-secret CLOUVE_OPS_PASSWORD)}" sshpass -e ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null clouve-ops@${GIBBON_HOST} \
+    "sudo tail -50 /var/log/gibbon-cron.log"
 ```
 
-The first connection prints a host-key fingerprint warning — accept it
-once (StrictHostKeyChecking interactively, or pass
-`-o StrictHostKeyChecking=accept-new` on the first run; the host key is
-captured to `~/.ssh/known_hosts` for subsequent connections).
+Pass `-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null`
+on every connection, as every command here and in the skill does. The two
+options take the key the container shows and save nothing. The containers
+make new SSH host keys at every start, so a key saved earlier is wrong and ssh
+refuses it. An older agent has no SSH settings of its own for the app's
+containers, so there a command without the options stops at the first
+connection: `sshpass` can't answer the yes/no prompt for a key it doesn't
+know, and exits 6 without printing anything.
 
 Use this channel for the things that actually need to run inside the
-target container: `sudo apachectl …`, tailing `/var/log/apache2/*`,
-running Gibbon CLI scripts (`sudo php /var/www/html/cli/foo.php`),
-inspecting `/etc/mysql/`, restarting `mysqld`, etc. Routine SQL still
+target container: `sudo apachectl graceful`, reading
+`/var/log/gibbon-cron.log`, running Gibbon CLI scripts
+(`sudo php /var/www/html/cli/foo.php`), inspecting MySQL's files and disk
+use, etc. Apache's error log is the container's own output, which SSH
+can't read (the skill's `reference/shell-access.md` says what to do
+instead). Routine SQL still
 goes through the TCP `mysql` client from this container — faster and
 doesn't require the SSH hop.
 
@@ -97,12 +103,13 @@ session — the safety gates documented in the skill's `SKILL.md`.
    Use the audited helper at
    `~/.claude/skills/gibbon/scripts/backup.sh` rather than
    composing `mysqldump` by hand.
-2. **Never edit `config.php` without showing the diff first**, and
-   never without an explicit user `yes`. The container auto-syncs the
-   `databaseServer` / `databaseName` / `databaseUsername` /
-   `databasePassword` PHP fields in `config.php` from env vars on
-   restart — prefer the env-driven path for credential rotation over
-   hand-editing the file.
+2. **Never edit `config.php` without first showing the lines you
+   change, with the database password masked (never a diff or a print
+   of the file)**, and never without an explicit user `yes`. The image
+   writes the `databaseServer` / `databaseName` / `databaseUsername` /
+   `databasePassword` fields from the deployment's settings at every
+   start, so leave those four alone: the database password is Clouve
+   support's to rotate.
 3. **No destructive SQL without an explicit ack.** `DROP`, `TRUNCATE`,
    schema-altering `ALTER`, and any multi-row `UPDATE`/`DELETE` are
    gated. For multi-row writes, run the equivalent `SELECT COUNT(*)`

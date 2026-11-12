@@ -216,10 +216,9 @@ Three rules come with it:
   Delete them in the same `RUN` (`rm -f /etc/ssh/ssh_host_*`): kept, they ship
   to every deployment, and every tenant has the same host key. Each container
   then makes its own when its sshd starts (`ssh-keygen -A`), so the keys change
-  at every container start. The Odoo and Nextcloud images do this
-  (`tests/ssh-host-keys.test.sh` checks Odoo's). The WordPress, Moodle, Gibbon
-  and AI Studio images, and WordPress's database image, still ship keys; add
-  the `rm -f` when you next rebuild them.
+  at every container start. Every image with the sshd does this since 4.5.5
+  (`tests/ssh-host-keys.test.sh` checks them, `tests/moodle-ssh-host-keys.test.sh`
+  Moodle's); the MySQL images (Oracle Linux) never made any.
 - **Push a rebuilt image only where the AI Assistant keeps no host keys.** An
   AI Assistant older than magneto-agent 4.5.3 saves each sibling's host key,
   and refuses the sibling once that key changes. A rebuilt image's key does
@@ -241,9 +240,22 @@ Three rules come with it:
   restart still reach the server. In a database image, also start the sshd
   detached, `( start-clouve-ops-sshd.sh & )`: the subshell exits at once, so
   sshd's parent is tini, not the database server that the entrypoint's `exec`
-  turns the shell into. Both Odoo images do this (`tests/odoo-init.test.sh`).
-  `tests/db-image-zombies.test.sh` shows which database images still need it;
-  add a new database image to its lists.
+  turns the shell into. Both Odoo images and the four MySQL and MariaDB images
+  do this (`tests/odoo-init.test.sh`, `tests/db-image-zombies.test.sh`). Oracle
+  Linux, the MySQL images' base, has no tini package, so they copy Debian's
+  static build from a build stage. Add a new database image to
+  `tests/db-image-zombies.test.sh`'s lists.
+- **The password stays with sshd.** The entrypoint unsets `CLOUVE_OPS_PASSWORD`
+  after it starts sshd and before it execs its server, in every image whose
+  server runs code a tenant controls or reaches: the database images before
+  the database server (anything that runs as the database's user can read the
+  server's environment), and the app images before Apache or the app (PHP's
+  getenv() reads Apache's environment). The password signs in as clouve-ops,
+  who has sudo. The WordPress, Gibbon, Moodle, Odoo and Nextcloud images do
+  this (`tests/app-ops-password.test.sh` for the three PHP apps,
+  `tests/db-image-zombies.test.sh` for the database images); a new image does
+  it too. Where tini is PID 1 it keeps the password, in an environment only
+  root can read, and the AI Assistant never copies it.
 
 ---
 
@@ -398,7 +410,7 @@ thermo's `docs/OPTIONAL_MAGNETO_AGENT.md`.
 
 ```yaml
 x-clouve-metadata:
-  containerName: myapp           # Unique container identifier
+  containerName: myapp           # Unique container name: 1 to 63 lower-case letters, digits and hyphens
   purpose: Frontend              # Frontend, Backend, Database, Cache, etc.
   protocol: TCP                  # TCP or UDP
   isPublic: true                 # Whether to expose via ingress
@@ -542,10 +554,12 @@ text it found. Refusals about a container's settings start with "Check the conta
 - Every container's `adminPath`, with host aliases or without, keeps the rule in the host alias table above: it starts
   with `/`, uses only letters, digits, `-`, `_`, `.`, `~`, `%` and `/`, has no `//`, and is at most 256 characters
   long.
+- A container's name (`x-clouve-metadata.containerName`) is a DNS-1123 label, as Kubernetes needs: 1 to 63 lower-case
+  letters, digits and hyphens, starting and ending with a letter or a digit.
 - Icons come only from your organization's uploads: a container's `appIcon`, each host alias's icon and the listing's
   logo (see [Application Metadata](#application-metadata-x-clouve-bundle-metadata)).
 
-Of these rules, `./check-manifests.sh` checks only the admin path of a container that has host aliases.
+Of these rules, `./check-manifests.sh` checks every container's admin path and the container name rule.
 
 ### Environment Variable Types (`x-clouve-environment-types`)
 
@@ -843,6 +857,13 @@ An image follows these rules:
    `tests/new-disk-start.test.sh <app> --upgrade-from <previous build>` (see "Testing on new cluster disks").
 7. `tests/new-disk-start.test.sh <app>` passes before every push to UAT or prod. `build-uat.sh` and `build-prod.sh`
    check for that pass and refuse to push an app whose current source doesn't have one.
+8. A push to UAT or prod names a dated tag: `build.sh` refuses `--push` to UAT's or prod's registry (any project on
+   the hosts their Harbors answer on: `demo.cr0.io` and `demo.reg.clouve.com`, `cr0.io` and `registry.clouve.com`;
+   through `build-uat.sh`, `build-prod.sh` or `REGISTRY` set by hand) without
+   `--tag <YYYY.MM.DD>` (an optional suffix such as `2026.11.11-2` is allowed), before anything is built. Without
+   `--tag`, a push also moves `:latest`, which every deployment that pins it pulls at its next restart. A rebuilt image
+   reaches tenants only through a listing's new version. Pushes to dev's registry (`dev.cr0.io`,
+   `dev.reg.clouve.com`) and the rig's (`r.clv.zone`) don't need a tag.
 
 ---
 
@@ -978,7 +999,8 @@ allows. The Magneto Agent's service is left out unless `--with-agent` is given.
 `build-uat.sh` and `build-prod.sh` push an app only when this test passed on its current source, on the machine that
 pushes: a record of each pass is kept in `~/.cache/magneto/new-disk-passes/` there, and any change to the app's files
 makes it stale. A pass counts only from a full run, built by the test itself and with the full 90-second settle. In an
-emergency, `--skip-new-disk-check` pushes anyway and says so.
+emergency, `--skip-new-disk-check` pushes anyway and says so. It doesn't lift the dated-tag rule: a push there still
+needs `--tag <YYYY.MM.DD>`.
 
 ### Local Testing Workflow
 
