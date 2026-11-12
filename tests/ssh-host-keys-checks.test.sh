@@ -14,7 +14,9 @@
 #     share only one. comm finds a shared line only when it and sort agree on
 #     the order, so the cases run in en_US.UTF-8 (when this machine has it), a
 #     locale in which uutils' sort and comm disagree;
-#   - two containers with different keys pass, with no warning from comm.
+#   - two containers with different keys pass, with no warning from comm;
+#   - an image with no sshd script (AI Studio) starts its containers with its
+#     own entrypoint, never --entrypoint.
 # Nothing is built and no container starts; no Docker daemon is needed.
 #
 # Usage: bash tests/ssh-host-keys-checks.test.sh [path/to/ssh-host-keys.test.sh]
@@ -105,7 +107,7 @@ new_case() {
 # run_case: ssh-host-keys.test.sh on the case's answers; sets OUT (its output, without colours) and RC.
 run_case() {
   OUT="$(PATH="$WORK/bin:$PATH" FAKE_DOCKER="$CASE" \
-    bash "$KEYS_TEST" --image odoo=fake/odoo --image odoo-postgres=fake/odoo-postgres 2>&1)"
+    bash "$KEYS_TEST" --image odoo=fake/odoo --image odoo-postgres=fake/odoo-postgres odoo odoo-postgres 2>&1)"
   RC=$?
   OUT="$(printf '%s\n' "$OUT" | sed 's/\x1b\[[0-9;]*m//g')"
 }
@@ -183,6 +185,25 @@ run_case
 expect "it fails, and names the shared key" 1 \
   "  FAIL a second container from the same image has different keys" \
   "       in both: SHA256:Xyzw1234vutsRQPO"
+
+echo
+echo "An image with no sshd script starts its containers with its own entrypoint"
+CASE="$WORK/own-entrypoint"
+mkdir -p "$CASE"
+printf '%s\n' "$GOOD_LS" > "$CASE/ls-fake_ai-studio"
+printf '%s\n' "$KEYS_1" > "$CASE/keys-ssh-keys-t-ai-studio-1"
+printf '%s\n' "$KEYS_2" > "$CASE/keys-ssh-keys-t-ai-studio-2"
+OUT="$(PATH="$WORK/bin:$PATH" FAKE_DOCKER="$CASE" bash "$KEYS_TEST" --image ai-studio=fake/ai-studio ai-studio 2>&1)"
+RC=$?
+OUT="$(printf '%s\n' "$OUT" | sed 's/\x1b\[[0-9;]*m//g')"
+expect "it passes" 0 "  PASS a second container from the same image has different keys"
+starts="$(grep -E '^run -d .*ssh-keys-t-ai-studio-' "$CASE/calls")"
+if [ "$(grep -c . <<< "$starts")" = 2 ] && ! grep -q -- '--entrypoint' <<< "$starts"; then
+  pass "both containers start with no --entrypoint"
+else
+  fail "both containers start with no --entrypoint"
+  printf '%s\n' "$starts" | sed 's/^/       | /'
+fi
 
 echo
 if [ "$FAILED" -eq 0 ]; then

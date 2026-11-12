@@ -39,34 +39,39 @@ Authenticate with the per-pod password named `CLOUVE_OPS_PASSWORD`. On
 current agents it isn't in your environment, so a command fetches it with
 `${CLOUVE_OPS_PASSWORD:-$(clv-secret CLOUVE_OPS_PASSWORD)}`. That form
 also works on older agents, which still have it in the environment. Never
-run `clv-secret CLOUVE_OPS_PASSWORD` on its own or print it. Use
-`sshpass -e`, which reads the password from `SSHPASS` rather than the
-command line, so it never lands in shell history or `ps`:
+run `clv-secret CLOUVE_OPS_PASSWORD` on its own or print it. Set
+`SSHPASS` on each `sshpass -e` command, as below: `sshpass -e` reads the
+password from `SSHPASS` rather than the command line, so it never lands in
+shell history or `ps`, and your next Bash call wouldn't have an exported
+one.
 
 ```bash
-# Make the per-pod password available to sshpass (do this once per shell):
-export SSHPASS="${CLOUVE_OPS_PASSWORD:-$(clv-secret CLOUVE_OPS_PASSWORD)}"
-
 # Open an interactive shell in the moodle container
-sshpass -e ssh clouve-ops@${MOODLE_HOST}
+SSHPASS="${CLOUVE_OPS_PASSWORD:-$(clv-secret CLOUVE_OPS_PASSWORD)}" sshpass -e ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null clouve-ops@${MOODLE_HOST}
 
 # Open an interactive shell in the moodle-mysql container
-sshpass -e ssh clouve-ops@${MOODLE_DB_HOST}
+SSHPASS="${CLOUVE_OPS_PASSWORD:-$(clv-secret CLOUVE_OPS_PASSWORD)}" sshpass -e ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null clouve-ops@${MOODLE_DB_HOST}
 
 # Run a one-shot command (preferred for scripted operations)
-sshpass -e ssh clouve-ops@${MOODLE_HOST} \
-    "sudo tail -50 /var/log/apache2/error.log"
+SSHPASS="${CLOUVE_OPS_PASSWORD:-$(clv-secret CLOUVE_OPS_PASSWORD)}" sshpass -e ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null clouve-ops@${MOODLE_HOST} \
+    "df -h /var/moodledata"
 ```
 
-The first connection prints a host-key fingerprint warning — accept it
-once (StrictHostKeyChecking interactively, or pass
-`-o StrictHostKeyChecking=accept-new` on the first run; the host key is
-captured to `~/.ssh/known_hosts` for subsequent connections).
+Pass `-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null`
+on every connection, as every command here and in the skill does. The two
+options take the key the container shows and save nothing. The containers
+make new SSH host keys at every start, so a key saved earlier is wrong and ssh
+refuses it. An older agent has no SSH settings of its own for the app's
+containers, so there a command without the options stops at the first
+connection: `sshpass` can't answer the yes/no prompt for a key it doesn't
+know, and exits 6 without printing anything.
 
 Use this channel for the things that actually need to run inside the
-target container: `sudo apachectl …`, tailing `/var/log/apache2/*`,
-running Moodle CLI scripts (`sudo -u www-data php /var/www/html/admin/cli/foo.php`),
-inspecting `/etc/mysql/`, restarting `mysqld`, etc. Routine SQL still
+target container: `sudo apachectl graceful`, running Moodle CLI scripts
+(`sudo -u www-data php /var/www/html/admin/cli/foo.php`), inspecting
+MySQL's files and disk use, etc. Apache's error log is the container's
+own output, which SSH can't read (the skill's `reference/shell-access.md`
+says what to do instead). Routine SQL still
 goes through the TCP `mysql` (or `psql`) client from this container —
 faster and doesn't require the SSH hop.
 
@@ -95,11 +100,14 @@ session — the safety gates documented in the skill's `SKILL.md`.
    broken). Use the audited helper at
    `~/.claude/skills/moodle/scripts/backup.sh` rather than
    composing `mysqldump` and tar by hand.
-2. **Never edit `config.php` without showing the diff first**, and
-   never without an explicit user `yes`. It encodes the DB credentials,
-   `dataroot`, `wwwroot`, MUC mappings, session handler, and CFG flags
-   that change Moodle's behaviour site-wide. Prefer the env-driven
-   path for credential rotation over hand-editing the file.
+2. **Never edit `config.php` without first showing the lines you
+   change, with the database password masked (never a diff or a print
+   of the file)**, and never without an explicit user `yes`. It encodes
+   the DB credentials, `dataroot`, `wwwroot`, MUC mappings, session
+   handler, and CFG flags that change Moodle's behaviour site-wide. The
+   image writes the database and `wwwroot` lines from the deployment's
+   settings at every start, so leave those alone: the database password
+   is Clouve support's to rotate.
 3. **No destructive SQL without an explicit ack.** `DROP`, `TRUNCATE`,
    schema-altering `ALTER`, and any multi-row `UPDATE`/`DELETE` are
    gated. For multi-row writes, run the equivalent `SELECT COUNT(*)`

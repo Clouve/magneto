@@ -51,12 +51,9 @@ Deployed, each HTTP port is served through clv-proxy at
 on `5173`, API on `4000`, mongo-express on `8081`. The browser app stays on
 one origin: Vite proxies `/api` to the backend (see `vite.config.js`).
 
-MongoDB itself never leaves loopback. Browse data with mongo-express, or for
-native clients (`mongosh`, Compass) tunnel: 
-
-```bash
-ssh -L 27017:localhost:27017 -p <NodePort> clouve-ops@nodes.<base>
-```
+MongoDB itself never leaves loopback. Browse data with mongo-express, or ask
+the AI Assistant to run `mongosh` for you. There is no outside SSH or raw TCP
+path into the workspace, so native clients such as Compass can't connect.
 
 ## Dev loop
 

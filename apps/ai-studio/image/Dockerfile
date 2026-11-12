@@ -17,6 +17,10 @@ ARG SEED_SLUG=starter
 # systemd in this container (see installer/supervisord.conf).
 # NOTE: cleanup removes only the apt list cache — /var/lib/dpkg must stay
 # intact because the runtime agent apt-installs packages on the live server.
+# Installing openssh-server makes SSH host keys, and they go again at the end:
+# kept, they would ship in the pushed image and every workspace would share one
+# host key. entrypoint.sh makes new ones at every start (ssh-keygen -A); /etc
+# isn't a volume, so they change at every pod start.
 RUN apt-get update && apt-get install -y \
         openssh-server \
         sudo \
@@ -30,7 +34,8 @@ RUN apt-get update && apt-get install -y \
     && echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen && locale-gen \
     && apt-get clean autoclean \
     && apt-get autoremove -y \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -f /etc/ssh/ssh_host_*
 
 # --- MERN runtime: Node.js 22 LTS + MongoDB 7.0 -------------------------------
 # Version pins per the mern skill (magneto-skills/plugins/mern). NodeSource's
@@ -118,7 +123,7 @@ RUN mkdir -p /run/sshd
 # entrypoint.sh exec's supervisord, which starts and restarts the whole stack
 # on every boot: sshd (the agent's path in), mongod, the seed project's
 # backend and frontend dev servers, and mongo-express. Two include dirs:
-#   /etc/supervisor/conf.d/      image-owned (sshd only). /etc resets to image
+#   /etc/supervisor/conf.d/      image-owned (sshd, page). /etc resets to image
 #                                state every boot, so the agent's SSH lifeline
 #                                can't be lost to a bad persistent-side edit.
 #   /opt/clouve/supervisord.d/   the seeded app stack + anything the agent adds
@@ -126,6 +131,13 @@ RUN mkdir -p /run/sshd
 #                                changes here survive pod restarts.
 COPY installer/supervisord.conf /etc/supervisor/supervisord.conf
 COPY installer/supervisor-sshd.conf /etc/supervisor/conf.d/sshd.conf
+# The workspace's own page on port 80, what the deployment's address shows
+# (page/serve.sh). Its program and files are image-owned: /etc resets at every
+# boot, and /clouve is never a volume.
+COPY installer/supervisor-page.conf /etc/supervisor/conf.d/page.conf
+COPY page/ /clouve/page/
+RUN chmod 755 /clouve/page /clouve/page/serve.sh \
+    && chmod 644 /clouve/page/index.html.tpl /clouve/page/httpd.conf
 COPY installer/supervisord.d/ /opt/clouve/supervisord.d/
 RUN mkdir -p /var/log/supervisor \
     && sed -i "s|@SLUG@|${SEED_SLUG}|g" /opt/clouve/supervisord.d/*.conf
@@ -195,11 +207,11 @@ RUN chmod +x /clouve/init.sh /usr/local/bin/entrypoint.sh \
     && /clouve/busybox tar -cf - -C /clouve/varseed . | /clouve/busybox gzip -9 > /clouve/seed/var.tar.gz \
     && rm -rf /clouve/varseed
 
-# 22 sshd (agent-internal + raw-TCP SSH tunnel) · 4000 Express API ·
-# 5173 Vite dev server · 8081 mongo-express. The HTTP ports are reached
-# through clv-proxy at https://<port>-<workspace-id>.<base>/ — the workspace
-# itself exposes no public :80 and runs no nginx.
-EXPOSE 22 4000 5173 8081
+# 22 sshd (the AI Assistant's way in) · 80 the workspace's own page, which
+# the deployment's address shows · 4000 Express API · 5173 Vite dev server ·
+# 8081 mongo-express. The dev ports are reached through clv-proxy at
+# https://<port>-<workspace-id>.<base>/, which signs the user in first.
+EXPOSE 22 80 4000 5173 8081
 # PID 1 chain: busybox init.sh seeds the volumes, exec's entrypoint.sh, which
 # exec's supervisord — so supervisord ends up as PID 1 supervising sshd,
 # mongod, backend, frontend and mongo-express. When supervisord exits, the

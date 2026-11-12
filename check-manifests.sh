@@ -28,9 +28,7 @@
 #       alias anywhere in the manifest.
 #     - appTitle on every alias and on the container that has them, 2 to 100
 #       characters. appDescription 10 to 1000 characters. appVersion and
-#       adminPath in the formats the wizard takes for a container's. The
-#       container's own adminPath keeps that rule too: thermo checks it on a
-#       container with aliases, and only there.
+#       adminPath in the formats the wizard takes for a container's.
 #     - No {{ or }} in an alias's appTitle or appDescription, or in the
 #       appTitle, appDescription or appVersion of the container that has the
 #       aliases: thermo refuses them there, as it may write those texts into a
@@ -38,6 +36,16 @@
 #     - An environment variable of type applicationAliasUrl or
 #       applicationAliasHost has a value that names an alias of its own
 #       container.
+#
+#   Every container, with host aliases or without (release 4.5.5):
+#     - x-clouve-metadata.containerName, when set, is a DNS-1123 label: 1 to
+#       63 lower-case letters, digits and hyphens, starting and ending with a
+#       letter or a digit. Kubernetes needs one, and thermo and Tropo refuse
+#       any other name. The message never repeats the name.
+#     - x-clouve-bundle-metadata.adminPath keeps the format above (the publish
+#       wizard and thermo check it on every container), and appVersion the
+#       wizard's version format: 1 to 3 numbers with no leading zeros and an
+#       optional pre-release part, written as text ("5.3", not 5.3).
 #
 #   Lengths are counted as the wizard counts them: in UTF-16 units (an emoji
 #   counts 2), after JavaScript's trim(). Only the digits 0 to 9 make a version.
@@ -78,6 +86,10 @@ VERSION = re.compile(r"(0|[1-9]\d*)(\.(0|[1-9]\d*)){0,2}"
                      r"(-((0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(\.(0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?",
                      re.ASCII)
 ADMIN_PATH = re.compile(r"/[a-zA-Z0-9\-_./~%]*", re.ASCII)
+# A container's name is a DNS-1123 label, as Kubernetes needs: Tropo's rule (thermo/app/internal/validator,
+# containerName) and thermo's (containerNameValidation.js). fullmatch, so a trailing line break can't pass.
+CONTAINER_NAME = re.compile(r"[a-z0-9]([-a-z0-9]*[a-z0-9])?", re.ASCII)
+MAX_CONTAINER_NAME = 63
 # The characters JavaScript's String.prototype.trim() removes: its white space and line terminators.
 JS_TRIMMED = "\t\n\v\f\r " + "".join(map(chr, (0xA0, 0x1680, *range(0x2000, 0x200B),
                                                0x2028, 0x2029, 0x202F, 0x205F, 0x3000, 0xFEFF)))
@@ -214,18 +226,34 @@ def check_aliases(problem, service, svc, meta, containers, taken):
     if not present(bundle_meta.get("appTitle")):
         problem(service, "a container with host aliases needs an appTitle in x-clouve-bundle-metadata "
                          "(the publish wizard asks for it)")
-    # thermo holds the owner's admin path to the alias rule (its admin link shares a host part with the aliases'),
-    # and only on a container with aliases.
-    if present(bundle_meta.get("adminPath")) and not good_admin_path(bundle_meta.get("adminPath")):
-        problem(service, "x-clouve-bundle-metadata.adminPath must be a path such as /admin: a / first, then letters, "
-                         "digits and - _ . ~ % /, no //, at most 256 characters "
-                         "(Clouve checks it on a container with host aliases)")
     for field in ("appTitle", "appDescription", "appVersion"):
         if has_braces(bundle_meta.get(field)):
             problem(service, "x-clouve-bundle-metadata.%s can't contain {{ or }} "
                              "(Clouve checks it on a container with host aliases)" % field)
     for number, entry in enumerate(entries, 1):
         check_alias(problem, service, number, entry, containers, taken)
+
+
+def check_container_text(problem, service, bundle_meta):
+    """Every container's own admin path and version, with host aliases or without: the publish wizard checks both on
+    every container, and thermo the admin path (release 4.5.3)."""
+    if present(bundle_meta.get("adminPath")) and not good_admin_path(bundle_meta.get("adminPath")):
+        problem(service, "x-clouve-bundle-metadata.adminPath must be a path such as /admin: a / first, then letters, "
+                         "digits and - _ . ~ % /, no //, at most 256 characters "
+                         "(the publish wizard and Clouve check it on every container)")
+    if present(bundle_meta.get("appVersion")) and not good_version(bundle_meta.get("appVersion")):
+        problem(service, 'x-clouve-bundle-metadata.appVersion must be a quoted version such as "1.0.0", "2.1" or '
+                         '"3.0.0-beta", with no leading zeros (the publish wizard checks it on every container)')
+
+
+def check_container_name(problem, service, meta):
+    """x-clouve-metadata.containerName, when it is set, is a DNS-1123 label. The message never repeats the name."""
+    name = meta.get("containerName")
+    if name is None:
+        return
+    if not (isinstance(name, str) and len(name) <= MAX_CONTAINER_NAME and CONTAINER_NAME.fullmatch(name)):
+        problem(service, "x-clouve-metadata.containerName must be a DNS-1123 label: 1 to 63 lower-case letters, "
+                         "digits and hyphens, starting and ending with a letter or a digit (the container name rule)")
 
 
 def declared_names(svc):
@@ -289,6 +317,8 @@ def check_manifest(path, doc):
         if length(desc) > MAX_APP_DESCRIPTION:
             problem(name, "appDescription is %d characters (the publish wizard allows %d)"
                     % (length(desc), MAX_APP_DESCRIPTION))
+        check_container_name(problem, name, meta)
+        check_container_text(problem, name, bundle_meta)
         if ALIASES_KEY in svc:
             check_aliases(problem, name, svc, meta, containers, taken)
         check_alias_types(problem, name, svc)

@@ -41,8 +41,9 @@ RUN useradd --create-home --shell /bin/bash --comment "Clouve operator (Claude C
     echo "clouve-ops ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/clouve-ops && \
     chmod 0440 /etc/sudoers.d/clouve-ops
 
-# Install Composer (required for Moodle 5.1+ dependencies)
-COPY --from=composer /usr/bin/composer /usr/local/bin/composer
+# Install Composer (required for Moodle 5.1+ dependencies). Composer 2: build.sh pulls the newest image of this tag at
+# every build, and a bare `composer` would take a new major version with no one choosing it.
+COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
 
 # Install PHP extensions required by Moodle
 ADD https://github.com/mlocati/docker-php-extension-installer/releases/latest/download/install-php-extensions /usr/local/bin/

@@ -301,6 +301,41 @@ prune_builder_cache() {
 }
 
 # ============================================================================
+# Base image tags
+# ============================================================================
+# untagged_bases DIR BASE: prints "<Dockerfile, from BASE>: <image>" for each
+# FROM or COPY --from=<image> in DIR's Dockerfiles that names no tag. A build stage's
+# name, a stage number, scratch and a digest are not untagged images. A push
+# refuses such a target: every build passes --pull, so it would push whatever
+# :latest is that day, a new major version included
+# (tests/dockerfile-base-tags.test.sh checks the whole repository).
+untagged_bases() {
+    local file
+    while IFS= read -r file; do
+        awk -v file="${file#"$2"/}" '
+            /\\$/ { joined = joined substr($0, 1, length($0) - 1) " "; next }
+            {
+                line = joined $0; joined = ""
+                n = split(line, w, /[ \t]+/); i = 1
+                while (i <= n && w[i] == "") i++
+                if (i > n || substr(w[i], 1, 1) == "#") next
+                cmd = toupper(w[i]); refs = 0
+                if (cmd == "FROM") {
+                    for (j = i + 1; j <= n; j++) if (w[j] != "" && substr(w[j], 1, 2) != "--") break
+                    if (j <= n) { ref[++refs] = w[j]; if (toupper(w[j + 1]) == "AS") stage[tolower(w[j + 2])] = 1 }
+                } else if (cmd == "COPY" || cmd == "ADD") {
+                    for (j = i + 1; j <= n; j++) if (substr(w[j], 1, 7) == "--from=") ref[++refs] = substr(w[j], 8)
+                }
+                for (k = 1; k <= refs; k++) {
+                    r = ref[k]; last = r; sub(/.*\//, "", last)
+                    if (tolower(r) in stage || r ~ /^[0-9]+$/ || tolower(r) == "scratch" || r ~ /@/ || last ~ /:/) continue
+                    print file ": " r
+                }
+            }' "$file"
+    done < <(find "$1" -name 'Dockerfile*' -type f | sort)
+}
+
+# ============================================================================
 # The new-disk gate (build-uat.sh and build-prod.sh turn it on)
 # ============================================================================
 # new_disk_gate TARGET_DIR...: with NEW_DISK_GATE=1 and --push, stops the whole
@@ -810,6 +845,17 @@ for config in "${CONTAINER_CONFIGS[@]}"; do
     fi
 done
 
+# A push takes only bases with a tag (untagged_bases above).
+if [ "$PUSH_IMAGES" = true ]; then
+    UNTAGGED="$(untagged_bases "$APP_IMAGE_DIR" "$TARGET_DIR")"
+    if [ -n "$UNTAGGED" ]; then
+        echo "✗ $DISPLAY_NAME: a Dockerfile names a base image with no tag, and --pull would push whatever :latest is now:"
+        printf '%s\n' "$UNTAGGED" | sed 's/^/    /'
+        echo "  Give each one the tag of the version the listing runs, then push."
+        exit 1
+    fi
+fi
+
 # ============================================================================
 # Cleanup images if requested
 # ============================================================================
@@ -859,6 +905,9 @@ fi
 # ============================================================================
 # STEP 1: Build application image from Dockerfile
 # ============================================================================
+# Every build passes --pull, so it starts from the newest image of the tag its
+# Dockerfile names, not from an older copy this machine kept: a local test then
+# runs on the same base as the push (tests/build-pull.test.sh).
 TOTAL_STEPS=$((1 + ${#CONTAINER_CONFIGS[@]}))
 
 echo "Step 1/$TOTAL_STEPS: Building $DISPLAY_NAME image from Dockerfile for platforms: $PLATFORMS..."
@@ -869,6 +918,7 @@ if [ "$PUSH_IMAGES" = true ]; then
         --platform "$PLATFORMS" \
         "${TAG_ARGS[@]}" \
         --provenance=false \
+        --pull \
         --push \
         .; then
         echo "✓ $DISPLAY_NAME multi-platform image built and pushed successfully!"
@@ -882,6 +932,7 @@ else
         --platform "$LOCAL_PLATFORM" \
         "${TAG_ARGS[@]}" \
         --provenance=false \
+        --pull \
         --load \
         .; then
         echo "✓ $DISPLAY_NAME image built and loaded into Docker successfully!"
@@ -924,6 +975,7 @@ if [ ${#CONTAINER_CONFIGS[@]} -gt 0 ]; then
                 --platform "$PLATFORMS" \
                 "${TAG_ARGS[@]}" \
                 --provenance=false \
+                --pull \
                 --push \
                 "${dockerfile_args[@]}" \
                 "$build_context"; then
@@ -938,6 +990,7 @@ if [ ${#CONTAINER_CONFIGS[@]} -gt 0 ]; then
                 --platform "$LOCAL_PLATFORM" \
                 "${TAG_ARGS[@]}" \
                 --provenance=false \
+                --pull \
                 --load \
                 "${dockerfile_args[@]}" \
                 "$build_context"; then

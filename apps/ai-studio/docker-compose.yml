@@ -53,6 +53,9 @@ services:
       # poking; the Magneto Agent reaches ai-studio over the compose network,
       # not via these host ports.
       - "${TEST_SSH_PORT:-2222}:22"
+      # The workspace's own page: what a deployment's address shows (port 80).
+      # With no AI_STUDIO_APP_HOST here, it has no link to the AI Assistant.
+      - "${TEST_PAGE_PORT:-8090}:80"
       # Vite dev server (HMR) — the seeded React app
       - "${TEST_FRONTEND_PORT:-5173}:5173"
       # Express API — the seeded backend

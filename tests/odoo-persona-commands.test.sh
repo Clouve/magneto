@@ -20,6 +20,19 @@
 #   5. An odoo command given -d (shell, module, neutralize, -i/-u) without the
 #      config. sudo over ssh has no ODOO_RC, so Odoo can't find the database:
 #      `odoo neutralize -d <db>` ends "THE DATABASE IS NOT NEUTRALIZED!".
+#   6. A claim that the platform or the ingress blocks /web/database/. Nothing
+#      does: the Odoo image locks the manager itself, writing list_db = False
+#      and a dbfilter into odoo.conf at every start, and the persona says so
+#      and points at the skill's harden-db-manager playbook for the one-task
+#      open step.
+#   7. An ssh command to clouve-ops@ without both host-key options or without
+#      the password on the same command. The containers make new host keys at
+#      every start, so each command passes -o StrictHostKeyChecking=accept-new
+#      -o UserKnownHostsFile=/dev/null (an older agent without its own SSH
+#      settings stops at the key otherwise), and sets
+#      SSHPASS="${CLOUVE_OPS_PASSWORD:-$(clv-secret CLOUVE_OPS_PASSWORD)}" on
+#      the sshpass command itself: an `export SSHPASS` is gone by the
+#      assistant's next command.
 #
 # Plus positive checks: restarts are `kill -HUP 1`, and every
 # /clouve/skills/odoo/plugin/<path> the persona names exists in the sibling
@@ -81,6 +94,22 @@ rule "every odoo command given -d (shell, module, neutralize, -i/-u) passes the 
   "[[:space:]]${cfg}|ODOO_RC="
 
 has "restarts Odoo in place with SIGHUP to PID 1" 'kill -HUP 1'
+
+rule "no line says the platform or the ingress blocks /web/database/ (the image locks it)" \
+  'ingress[[:space:]]+block|platform[[:space:]]+locks[[:space:]]+the[[:space:]]+manager|block(s|ed)?[^.]*at[[:space:]]+the[[:space:]]+ingress'
+has "says the image writes list_db = False" 'list_db = False'
+has "points at the skill's harden-db-manager playbook for opening the manager" 'harden-db-manager'
+
+rule "no export SSHPASS (set it on each sshpass command)" 'export[[:space:]]+SSHPASS'
+# shellcheck disable=SC2016  # a literal: the text every persona command must hold
+ssh_form='SSHPASS="${CLOUVE_OPS_PASSWORD:-$(clv-secret CLOUVE_OPS_PASSWORD)}" sshpass -e ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null clouve-ops@'
+bad_ssh="$(grep -n 'clouve-ops@' "${persona}" | grep -vF -- "${ssh_form}" || true)"
+n_ssh="$(grep -c 'clouve-ops@' "${persona}" || true)"
+if [ "${n_ssh}" -ge 3 ] && [ -z "${bad_ssh}" ]; then
+  ok "every clouve-ops@ command sets SSHPASS on itself and passes both host-key options (${n_ssh})"
+else
+  bad "every clouve-ops@ command sets SSHPASS on itself and passes both host-key options" "${bad_ssh:-only ${n_ssh} found}"
+fi
 
 if [ -d "${skills_plugin}" ]; then
   missing=""

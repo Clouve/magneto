@@ -11,16 +11,17 @@ An Ubuntu 26.04 LTS server with the `clouve-ops` operator account (passwordless 
 The workspace is its own container, `${AI_STUDIO_HOST}`, separate from yours. Everything the user has lives there: the starter project, their other projects, the running services and their logs. None of it is in this container (the Magneto Agent's), so every command about the user's work runs on `${AI_STUDIO_HOST}` over SSH, as `clouve-ops`:
 
 ```bash
-# Make the per-pod password available to sshpass (once per shell; never echo it):
-export SSHPASS="${CLOUVE_OPS_PASSWORD:-$(clv-secret CLOUVE_OPS_PASSWORD)}"
-
-# A one-shot command on the workspace (preferred for scripted steps)
-sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+# A one-shot command on the workspace (preferred for scripted steps). SSHPASS goes on each command, never exported:
+# an export is gone at your next command. Never echo it.
+SSHPASS="${CLOUVE_OPS_PASSWORD:-$(clv-secret CLOUVE_OPS_PASSWORD)}" sshpass -e ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null \
     clouve-ops@${AI_STUDIO_HOST} 'sudo supervisorctl status'
 
 # An interactive shell on the workspace
-sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null clouve-ops@${AI_STUDIO_HOST}
+SSHPASS="${CLOUVE_OPS_PASSWORD:-$(clv-secret CLOUVE_OPS_PASSWORD)}" sshpass -e ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null clouve-ops@${AI_STUDIO_HOST}
 ```
+
+Pass `-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null` on every connection. The workspace makes
+new host keys at every start, so the options take the key it shows and save nothing.
 
 Use `${AI_STUDIO_HOST}` as the host in every `ssh` and `scp` command, the skill's examples included. When the user talks about "the app", "the demo", "the notes" or anything else they see in their browser, they mean the starter project on the workspace unless they say otherwise.
 
@@ -34,12 +35,13 @@ Use `${AI_STUDIO_HOST}` as the host in every `ssh` and `scp` command, the skill'
 | Express API (watch mode) | `4000` | `0.0.0.0` | routes under `/api/v1/`; `node --watch` restarts on edit; config in `backend/.env` |
 | mongo-express (DB browser) | `8081` | `0.0.0.0` | browser access to the data; basic auth off (clv-proxy gates it) |
 | MongoDB 7.0 | `27017` | `127.0.0.1` | data in `/var/lib/mongodb` (persists); no auth — never expose it off-loopback without enabling auth |
+| The workspace's own page | `80` | `0.0.0.0` | what the deployment's address shows: a fixed page that points the user to you. It belongs to the image's `page` program. Never bind `80` or stop `page`, and don't tell the user to open the deployment's address to see the app |
 
-The frontend and API are reachable in the user's browser through clv-proxy at `https://5173-<workspace-id>.<base>/` and `https://4000-<workspace-id>.<base>/` (URL formula and `<workspace-id>` lookup: see the skill's "Publishing an HTTP service"). The browser app stays same-origin — Vite proxies `/api` to the backend. For native DB clients, use the SSH tunnel per the skill's "Publishing raw TCP via SSH tunnel"; for quick data inspection, hand the user the mongo-express URL on `8081`.
+The frontend and API are reachable in the user's browser through clv-proxy at `https://5173-<workspace-id>.<base>/` and `https://4000-<workspace-id>.<base>/` (URL formula and `<workspace-id>` lookup: see the skill's "Publishing an HTTP service"). The browser app stays same-origin — Vite proxies `/api` to the backend. There is no outside SSH or raw TCP path (the skill's "Raw TCP / SSH is not available"), so for data, hand the user the mongo-express URL on `8081`, or run `mongosh` yourself.
 
 ## How services are supervised (no systemd here)
 
-`supervisord` is PID 1 on the workspace — `systemctl` will fail. The seeded stack (`sshd`, `mongod`, `backend`, `frontend`, `mongo-express`) starts on every boot and auto-restarts:
+`supervisord` is PID 1 on the workspace — `systemctl` will fail. The seeded stack (`sshd`, `page`, `mongod`, `backend`, `frontend`, `mongo-express`) starts on every boot and auto-restarts:
 
 - Inspect/manage: `sudo supervisorctl status | start | stop | restart <name>`
 - Service logs: `/var/log/supervisor/<name>.log`

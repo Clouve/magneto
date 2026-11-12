@@ -38,6 +38,14 @@ fix_uploads_permissions() {
 # Set error handling - don't exit on error, just log it
 set +e
 
+# WORDPRESS_DEBUG='false' would turn WP_DEBUG on: the official wp-config.php reads it at every request as
+# !!getenv_docker('WORDPRESS_DEBUG', ''), so any value that isn't empty means on. Unset it when it says off (false, off
+# or no, in any case). Apache, which this script becomes, and the AI Assistant's wp.sh, which reads PID 1's environment,
+# then see WP_DEBUG off. Any other value, such as 1, keeps it on. tests/wordpress-debug.test.sh checks.
+case "${WORDPRESS_DEBUG:-}" in
+    [Ff][Aa][Ll][Ss][Ee] | [Oo][Ff][Ff] | [Nn][Oo]) unset WORDPRESS_DEBUG ;;
+esac
+
 # ============================================================================
 # STEP 1: Extract WordPress files from the base image
 # ============================================================================
@@ -47,7 +55,9 @@ echo -e "${YELLOW}[INFO]${NC} Running WordPress entrypoint to extract files..."
 # Call the original WordPress docker-entrypoint.sh at its original location (untouched)
 # This extracts WordPress files and generates wp-config.php
 if [ -f "$ORIGINAL_ENTRYPOINT" ]; then
-    "$ORIGINAL_ENTRYPOINT" apache2-foreground &
+    # This Apache serves the site for the few seconds the official entrypoint takes, so it doesn't get
+    # CLOUVE_OPS_PASSWORD either (see the unset below).
+    env -u CLOUVE_OPS_PASSWORD "$ORIGINAL_ENTRYPOINT" apache2-foreground &
     WORDPRESS_PID=$!
 
     # Give WordPress entrypoint time to extract files
@@ -82,6 +92,12 @@ fi
 # processes started after the shutdown survive.
 /clouve/wordpress/installer/start-clouve-ops-sshd.sh &
 
+# The sshd start above has its own copy of CLOUVE_OPS_PASSWORD. Apache, which this script becomes, must not carry it:
+# mod_php's getenv() reads Apache's environment, so any PHP code could read the password, which signs in as
+# clouve-ops, who has passwordless sudo. Nothing later here needs it, and the AI Assistant has its own copy
+# (tests/app-ops-password.test.sh).
+unset CLOUVE_OPS_PASSWORD
+
 # ============================================================================
 # STEP 2: Wait for database to be ready
 # ============================================================================
@@ -101,13 +117,20 @@ fi
 while [ $attempt -lt $max_attempts ]; do
     if command -v mysql &> /dev/null; then
         # Use mysql client if available
-        if mysql -h "$DB_HOST" -P "$DB_PORT" -u "${WORDPRESS_DB_USER}" -p"${WORDPRESS_DB_PASSWORD}" -e "SELECT 1" > /dev/null 2>&1; then
+        # The password goes in MYSQL_PWD, in this one command's environment: a command line can be read by every
+        # process in the container.
+        if MYSQL_PWD="${WORDPRESS_DB_PASSWORD}" mysql -h "$DB_HOST" -P "$DB_PORT" -u "${WORDPRESS_DB_USER}" -e "SELECT 1" > /dev/null 2>&1; then
             echo -e "${GREEN}[SUCCESS]${NC} Database is ready!"
             break
         fi
     else
-        # Use PHP as fallback
-        if php -r "mysqli_connect('$DB_HOST', '${WORDPRESS_DB_USER}', '${WORDPRESS_DB_PASSWORD}', '${WORDPRESS_DB_NAME}', $DB_PORT);" > /dev/null 2>&1; then
+        # Use PHP as fallback. The code reads the settings from its environment, so no password is on its command line.
+        # shellcheck disable=SC2016  # PHP code, for php
+        if CLV_DB_HOST="$DB_HOST" CLV_DB_PORT="$DB_PORT" php -r '
+            mysqli_report(MYSQLI_REPORT_OFF);
+            $c = @mysqli_connect(getenv("CLV_DB_HOST"), getenv("WORDPRESS_DB_USER"), getenv("WORDPRESS_DB_PASSWORD"),
+                getenv("WORDPRESS_DB_NAME"), (int) getenv("CLV_DB_PORT"));
+            exit($c ? 0 : 1);' > /dev/null 2>&1; then
             echo -e "${GREEN}[SUCCESS]${NC} Database is ready!"
             break
         fi
@@ -141,7 +164,7 @@ fi
 # Check if WordPress is already installed by checking for wp_options table
 WORDPRESS_INSTALLED=false
 if command -v mysql &> /dev/null; then
-    if mysql -h "$DB_HOST" -P "$DB_PORT" -u "${WORDPRESS_DB_USER}" -p"${WORDPRESS_DB_PASSWORD}" "${WORDPRESS_DB_NAME}" -e "SELECT 1 FROM wp_options LIMIT 1" > /dev/null 2>&1; then
+    if MYSQL_PWD="${WORDPRESS_DB_PASSWORD}" mysql -h "$DB_HOST" -P "$DB_PORT" -u "${WORDPRESS_DB_USER}" "${WORDPRESS_DB_NAME}" -e "SELECT 1 FROM wp_options LIMIT 1" > /dev/null 2>&1; then
         WORDPRESS_INSTALLED=true
         echo -e "${GREEN}[INFO]${NC} WordPress appears to be already installed."
     fi
@@ -217,16 +240,29 @@ if ! command -v wp &> /dev/null; then
     exit 1
 fi
 
-# Run wp-cli core install command with --allow-root flag
+# Run wp-cli core install command with --allow-root flag.
+# The admin's password never goes on a command line, where every process in the container can read it. The install
+# runs without one, so wp-cli makes a random one, and --quiet keeps wp-cli from printing it to the log. Then wp eval
+# sets the real password from WORDPRESS_ADMIN_PASSWORD in its environment, trimmed at both ends as wp_install would
+# store it (WordPress's sign-in trims what's typed too). Apache hasn't started yet, so no one can sign in with the
+# random one in between. The login is looked up as wp_install stored it (sanitize_user, strict).
 echo -e "${YELLOW}[INFO]${NC} Running wp core install..."
+# shellcheck disable=SC2016  # PHP code, for wp eval
 if wp core install \
     --url="${WORDPRESS_SITE_URL}" \
     --title="${WORDPRESS_SITE_TITLE}" \
     --admin_user="${WORDPRESS_ADMIN_USER}" \
-    --admin_password="${WORDPRESS_ADMIN_PASSWORD}" \
     --admin_email="${WORDPRESS_ADMIN_EMAIL}" \
     --skip-email \
-    --allow-root 2>&1; then
+    --quiet \
+    --allow-root 2>&1 &&
+    wp eval '
+        $user = get_user_by("login", sanitize_user(getenv("WORDPRESS_ADMIN_USER"), true));
+        if (!$user || getenv("WORDPRESS_ADMIN_PASSWORD") === false || getenv("WORDPRESS_ADMIN_PASSWORD") === "") {
+            exit(1);
+        }
+        wp_set_password(trim(getenv("WORDPRESS_ADMIN_PASSWORD")), $user->ID);
+        echo "Admin account: WordPress user " . $user->ID . "\n";' --allow-root 2>&1; then
     echo -e "${GREEN}[SUCCESS]${NC} WordPress installation completed successfully!"
 else
     INSTALL_EXIT_CODE=$?
@@ -254,8 +290,8 @@ fix_uploads_permissions
 
 echo -e "${GREEN}[SUCCESS]${NC} WordPress is now ready to use!"
 echo -e "${GREEN}[INFO]${NC} Access WordPress at: ${WORDPRESS_SITE_URL}"
-echo -e "${GREEN}[INFO]${NC} Admin username: ${WORDPRESS_ADMIN_USER}"
-echo -e "${GREEN}[INFO]${NC} Admin email: ${WORDPRESS_ADMIN_EMAIL}"
+# The admin is named in the log by WordPress user id only (printed at the install above): their login is made of their
+# name, and a log line about a person never holds their name or email address.
 
 echo -e "${YELLOW}[INFO]${NC} Starting Apache..."
 exec apache2-foreground

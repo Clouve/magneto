@@ -3,7 +3,11 @@ services:
   ai-studio:
     image: ai-studio
     ports:
-      - '5173:5173'
+      - '80:80'
+    environment:
+      AI_STUDIO_APP_HOST: localhost
+    x-clouve-environment-types:
+      AI_STUDIO_APP_HOST: applicationHost
     volumes:
       - aistudiohome:/home
       - aistudiousr:/usr

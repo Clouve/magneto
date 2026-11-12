@@ -18,24 +18,41 @@
 # starts as a new cluster disk does: a top folder of root's with lost+found in
 # it (lib/new-disk-volumes.sh). The passwords are throwaway values made for
 # this run. The test looks for them inside the container and never prints
-# them.
+# them. Odoo's container also gets a throwaway T_API_TOKEN (a secret of some
+# other app's) and a wrong PGPASSWORD, which Odoo 19 would take over odoo.conf
+# if it reached Odoo. A stand-in setpriv, mounted at /usr/local/sbin/setpriv
+# (ahead of the real one in root's PATH and sudo's secure_path), logs each
+# call's arguments and the names, never the values, of its environment, then
+# runs the real setpriv: every drop to the odoo user goes through it.
 #
 # 1. First start, with no ODOO_MASTER_PASSWORD (the image makes one up):
 #    - no process in the container has a password on its command line: the
 #      test looks about five times a second through the whole start, the
 #      first install included, and once more when Odoo answers;
+#    - no drop to odoo (the install's odoo commands, the markers, the server)
+#      had a secret's name or PGPASSWORD in its environment, apart from the
+#      admin's password, which the install's admin step (odoo shell) gets
+#      through its environment by design, and the two markers were written
+#      with PATH alone (env -i);
 #    - the Odoo server is PID 1's child (tini, whose command line still holds
 #      "odoo"), runs as odoo (user, group, no root group, no capabilities),
 #      can't gain privileges (no_new_privs) and has no password in its
 #      environment (read as odoo, since root in a container can't read it);
 #    - the container's log holds no password, the made-up master password
-#      included, and Odoo never logged that it runs as root;
+#      included, nor the admin's email address (the platform sets the
+#      deploying person's own), and Odoo never logged that it runs as root;
 #    - odoo.conf is odoo's, mode 600 or tighter, and holds the database
 #      password;
 #    - the new disks' top folders went to odoo, nothing under /var/lib/odoo
 #      is root's (lost+found aside), a sign-in as the admin works, with Odoo
 #      writing its session as odoo, and the admin downloads a PDF report
 #      (the server runs wkhtmltopdf).
+#    The database manager: the first install ran with odoo.conf already
+#    holding list_db = False and dbfilter = ^odoo\Z (and no db_name); a POST to
+#    /web/database/backup with the right master password (sent on curl's stdin)
+#    returns no ZIP; /web/database/list answers an error; and a POST to
+#    /web/database/change_password with the right one leaves odoo.conf's
+#    admin_passwd as it was.
 # 2. The SSH check the release runbook makes, from the client:
 #    sshpass -e ssh -o StrictHostKeyChecking=accept-new clouve-ops@<host> true
 #    (the password in SSHPASS). Then the AI Assistant's restart, over SSH:
@@ -45,18 +62,38 @@
 #    client saved.
 # 3. Odoo commands that clouve-ops runs with sudo, as the AI Assistant does:
 #    odoo shell (it reports its user and no_new_privs, and saves an
-#    attachment), odoo --stop-after-init, and a backup the way the skill's
-#    backup.sh takes one: root's mkdir -p of /var/lib/odoo/backups (the
-#    entrypoint has made that folder already), then odoo db dump into it.
-#    Each runs as odoo, an error keeps Odoo's exit status, and nothing under
-#    /var/lib/odoo is root's afterwards.
+#    attachment), odoo --stop-after-init, odoo -u base, and two backups: one
+#    into the backups folder the entrypoint made, and one after the folder
+#    has gone, the way the odoo skill's backup.sh (0.1.5 on) takes it: that
+#    script itself, piped in, when a magneto-skills checkout sits next to this
+#    repo, or its steps (mkdir -m 700, chown -h odoo:odoo, odoo db dump)
+#    otherwise. Then odoo db load of the backup into a second database. Each
+#    runs as odoo, an error keeps Odoo's exit status, and nothing under
+#    /var/lib/odoo is root's afterwards. With the second database there,
+#    /web/login still serves the deployment's own (with ?db=t-second too) and
+#    the admin signs in. Then the AI Assistant's one-task open step, as the
+#    skill's harden-db-manager playbook writes it, over SSH: sed to
+#    list_db = True and the SIGHUP restart (the database list answers, naming
+#    odoo only, and the backup POST returns a ZIP), then sed back and restart
+#    (locked again); odoo.conf stays odoo's, mode 600. The test leaves it open
+#    at the end, for part 4.
 # 4. An upgraded disk: the test stops Odoo and gives root, as an older image
 #    that ran Odoo as root left them, the sessions folder, the filestore, the
-#    backups (mode 755), Odoo's addons folder and the install marker. A new
-#    container starts on the same volumes, now with ODOO_MASTER_PASSWORD set.
-#    Those files go to odoo, the backups folder is mode 700 again, a sign-in
-#    and an attachment work again, and the given master password is in
-#    odoo.conf but on no command line and not in the log.
+#    backups (mode 755), Odoo's addons folder and the install marker, and
+#    removes the ownership-pass marker (an older image never wrote one). It
+#    also leaves a module of root's in /mnt/extra-addons (folder 700, files
+#    600). A new container starts on the same volumes, now with
+#    ODOO_MASTER_PASSWORD set. Those files go to odoo, the module too (odoo can
+#    read it), the backups folder is mode 700 again, a sign-in and an
+#    attachment work again, and the given master password is in odoo.conf but
+#    on no command line and not in the log. The manager that part 3 left open
+#    is locked again, and /web/login serves the deployment's database with
+#    the second one there (a second start).
+#    Then the skip: with the ownership-pass marker in place, a file of root's
+#    left in /var/lib/odoo/sessions stays root's at the next start (the log
+#    says the pass was skipped), while a new module of root's in
+#    /mnt/extra-addons still goes to odoo; with the marker removed, the next
+#    start gives the file to odoo and writes the marker again, as odoo's.
 # 5. What code running as odoo could leave in its own folder for root to
 #    trip on, one new container each: the install marker as a link to a file
 #    that doesn't exist in /etc, and backups as a file, as a link to nothing
@@ -75,11 +112,11 @@
 #    name in /proc/<pid>/environ, read as postgres: root in a container has no
 #    CAP_SYS_PTRACE, so it can't read another user's environment; and through
 #    COPY ... FROM PROGRAM), while tini (PID 1) keeps it for the AI Assistant's
-#    settings read. The SSH check
-#    (sshpass -e ssh -o StrictHostKeyChecking=accept-new
-#    -o UserKnownHostsFile=/dev/null clouve-ops@<host> true) passes, and
-#    PostgreSQL restarts and stops cleanly, with the same checks after the
-#    restart.
+#    settings read. The SSH check passes:
+#      sshpass -e ssh -o StrictHostKeyChecking=accept-new
+#        -o UserKnownHostsFile=/dev/null clouve-ops@<host> true
+#    and PostgreSQL restarts and stops cleanly, with the same checks after
+#    the restart.
 #
 # --image odoo=REF and --image odoo-postgres=REF use images that are already
 # built instead, and the test leaves them in place: for example an older
@@ -108,6 +145,7 @@ VOL_PG2="${PREFIX}pgdata2"
 VOL_PG="${PREFIX}pgdata"
 VOL_DATA="${PREFIX}data"
 VOL_ADDONS="${PREFIX}addons"
+SKILL_BACKUP="$REPO_DIR/../magneto-skills/plugins/odoo/skills/odoo/scripts/backup.sh"   # the odoo skill's, when there
 CLIENT_BASE="mirror.gcr.io/library/alpine:3.22"
 READY_SECONDS=600          # the first start installs Odoo's base module
 RESTART_SECONDS=180
@@ -182,6 +220,7 @@ cleanup() {
   local image
   remove_test_containers
   for image in "${BUILT[@]}"; do docker rmi -f "$image" >/dev/null 2>&1; done
+  [ -n "${LOGGER_DIR:-}" ] && rm -rf "$LOGGER_DIR"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -248,7 +287,24 @@ ADMIN_PW="$(secret admin)"
 OPS_PW="$(secret ops)"
 MASTER_PW=""              # the first start runs without one; the upgraded-disk start gets this one
 GIVEN_MASTER_PW="$(secret master)"
-ADMIN_LOGIN="admin@example.com"
+TOKEN_PW="$(secret token)"   # T_API_TOKEN: a secret of some other app's, by its name only
+PG_WRONG="$(secret pgwrong)" # a wrong PGPASSWORD: Odoo 19 would take it over odoo.conf
+# The admin's sign-in address: a throwaway one, so a log line that names it is found for sure. The platform sets the
+# deploying person's own address here, and no log line may hold it (a log line about a person names their user id or
+# nothing).
+ADMIN_LOGIN="nonroot-admin-$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')@example.test"
+
+# --- the stand-in setpriv ---------------------------------------------------------
+# It runs as root, before the real setpriv drops to odoo, and appends to a root-only log in the container: the call's
+# arguments (they hold no password: the command-line checks prove that), then the names of its environment's variables.
+LOGGER_DIR="$(mktemp -d)"
+SETPRIV_LOGGER="$LOGGER_DIR/setpriv"
+cat > "$SETPRIV_LOGGER" <<'EOF'
+#!/bin/bash
+( umask 077; { printf 'call:'; printf ' %s' "$@"; printf ' | names: '; compgen -e | tr '\n' ' '; printf '\n'; } >> /run/t-setpriv.log ) 2>/dev/null
+exec /usr/bin/setpriv "$@"
+EOF
+chmod 755 "$LOGGER_DIR" "$SETPRIV_LOGGER"
 
 # --- volumes: new cluster disks ------------------------------------------------
 if ! nd_shaper_ready; then
@@ -288,7 +344,7 @@ conf_value() {
 load_secrets() {
   NAMES=(); VALUES=()
   add_secret db "${T_DB:-}"; add_secret admin "${T_ADMIN:-}"; add_secret ops "${T_OPS:-}"
-  add_secret master "${T_MASTER:-}"
+  add_secret master "${T_MASTER:-}"; add_secret token "${T_TOKEN:-}"; add_secret pgwrong "${T_PGWRONG:-}"
   conf_value admin_passwd
   if [ "${#VALUE}" -ge 12 ] && [ "$VALUE" != "${T_MASTER:-}" ]; then add_secret master "$VALUE"; fi
 }
@@ -392,19 +448,19 @@ EOF
 
 # in_app <bash>: runs bash in the Odoo container with SCAN_LIB loaded and the passwords in T_*.
 in_app() {
-  T_DB="$DB_PW" T_ADMIN="$ADMIN_PW" T_OPS="$OPS_PW" T_MASTER="$MASTER_PW" \
-    docker exec -e T_DB -e T_ADMIN -e T_OPS -e T_MASTER "$APP" bash -c "$SCAN_LIB"$'\n'"$1"
+  T_DB="$DB_PW" T_ADMIN="$ADMIN_PW" T_OPS="$OPS_PW" T_MASTER="$MASTER_PW" T_TOKEN="$TOKEN_PW" T_PGWRONG="$PG_WRONG" \
+    docker exec -e T_DB -e T_ADMIN -e T_OPS -e T_MASTER -e T_TOKEN -e T_PGWRONG "$APP" bash -c "$SCAN_LIB"$'\n'"$1"
 }
 
 # in_app_as <user> <bash>: in_app, as <user> (a name or a uid).
 in_app_as() {
-  T_DB="$DB_PW" T_ADMIN="$ADMIN_PW" T_OPS="$OPS_PW" T_MASTER="$MASTER_PW" \
-    docker exec -u "$1" -e T_DB -e T_ADMIN -e T_OPS -e T_MASTER "$APP" bash -c "$SCAN_LIB"$'\n'"$2"
+  T_DB="$DB_PW" T_ADMIN="$ADMIN_PW" T_OPS="$OPS_PW" T_MASTER="$MASTER_PW" T_TOKEN="$TOKEN_PW" T_PGWRONG="$PG_WRONG" \
+    docker exec -u "$1" -e T_DB -e T_ADMIN -e T_OPS -e T_MASTER -e T_TOKEN -e T_PGWRONG "$APP" bash -c "$SCAN_LIB"$'\n'"$2"
 }
 
 start_sampler() {
-  T_DB="$DB_PW" T_ADMIN="$ADMIN_PW" T_OPS="$OPS_PW" T_MASTER="$MASTER_PW" \
-    docker exec -d -e T_DB -e T_ADMIN -e T_OPS -e T_MASTER "$APP" bash -c "$SAMPLER"
+  T_DB="$DB_PW" T_ADMIN="$ADMIN_PW" T_OPS="$OPS_PW" T_MASTER="$MASTER_PW" T_TOKEN="$TOKEN_PW" T_PGWRONG="$PG_WRONG" \
+    docker exec -d -e T_DB -e T_ADMIN -e T_OPS -e T_MASTER -e T_TOKEN -e T_PGWRONG "$APP" bash -c "$SAMPLER"
 }
 
 # stop_sampler: stops it and prints what it found, then "samples <rounds>" as the last line.
@@ -418,7 +474,7 @@ stop_sampler() {
 redacted() {
   local text value
   text="$(cat)"
-  for value in "$DB_PW" "$ADMIN_PW" "$OPS_PW" "$GIVEN_MASTER_PW" "${GENERATED_MASTER:-}"; do
+  for value in "$DB_PW" "$ADMIN_PW" "$OPS_PW" "$GIVEN_MASTER_PW" "${GENERATED_MASTER:-}" "$TOKEN_PW" "$PG_WRONG"; do
     [ -n "$value" ] && text="${text//"$value"/<redacted>}"
   done
   printf '%s\n' "$text"
@@ -450,11 +506,12 @@ start_app() {
   local master=()
   [ -n "${1:-}" ] && master=(-e ODOO_MASTER_PASSWORD)
   ODOO_DB_PASSWORD="$DB_PW" ODOO_ADMIN_PASSWORD="$ADMIN_PW" CLOUVE_OPS_PASSWORD="$OPS_PW" \
+  T_API_TOKEN="$TOKEN_PW" PGPASSWORD="$PG_WRONG" \
   ODOO_MASTER_PASSWORD="${1:-}" docker run -d --pull=never --name "$APP" --network "container:$DB" \
-    -v "$VOL_DATA:/var/lib/odoo" -v "$VOL_ADDONS:/mnt/extra-addons" \
+    -v "$VOL_DATA:/var/lib/odoo" -v "$VOL_ADDONS:/mnt/extra-addons" -v "$SETPRIV_LOGGER:/usr/local/sbin/setpriv:ro" \
     -e ODOO_DB_HOST=127.0.0.1 -e ODOO_DB_USER=odoo -e ODOO_DB_PASSWORD -e ODOO_DB_NAME=odoo \
     -e "ODOO_ADMIN_EMAIL=$ADMIN_LOGIN" -e ODOO_ADMIN_PASSWORD -e ODOO_URL=http://127.0.0.1:8069 \
-    -e CLOUVE_OPS_PASSWORD ${master[@]+"${master[@]}"} "$ODOO_IMAGE" >/dev/null
+    -e CLOUVE_OPS_PASSWORD -e T_API_TOKEN -e PGPASSWORD ${master[@]+"${master[@]}"} "$ODOO_IMAGE" >/dev/null
 }
 
 # ssh_ops <command>: runs <command> as clouve-ops over SSH from the client, the way the AI Assistant does: sshpass -e
@@ -528,7 +585,6 @@ expect_server_odoo() {
   assert_eq "it can't gain privileges: no_new_privs is set ($1)" 1 "${BASH_REMATCH[7]}"
   # Its environment, read as its own user: root in a container has no CAP_SYS_PTRACE, so it can read the
   # environment of its own processes only. "ok" says the read worked and found NAME=value entries.
-  # shellcheck disable=SC2016  # the script is for the bash inside the container
   assert_eq "its environment holds no password (read as its own user, $1)" "ok -" \
     "$(in_app_as "${BASH_REMATCH[2]%%,*}" "load_secrets; env_of /proc/$SERVER_PID; printf '%s %s' \"\$ENV_STATE\" \"\${FOUND:--}\"")"
   root="$(printf '%s\n' "$lines" | grep -E ' uid=([0-9]+,)*0(,|( ))')"
@@ -552,15 +608,23 @@ expect_nothing_root() {
   fi
 }
 
-# expect_log_clean <label>: the container's log holds none of the passwords, and Odoo never logged that it runs as root.
+# expect_log_clean <label>: the container's log holds none of the passwords and not the admin's email address, and
+# Odoo never logged that it runs as root.
 expect_log_clean() {
-  local logs value names=""
+  local logs value names="" lines
   logs="$(docker logs "$APP" 2>&1)"
-  for value in DB_PW ADMIN_PW OPS_PW GIVEN_MASTER_PW GENERATED_MASTER; do
+  for value in DB_PW ADMIN_PW OPS_PW GIVEN_MASTER_PW GENERATED_MASTER TOKEN_PW PG_WRONG; do
     [ -n "${!value:-}" ] || continue
     if [[ "$logs" == *"${!value}"* ]]; then names="${names:+$names, }$value"; fi
   done
   if [ -z "$names" ]; then pass "$1"; else fail "$1"; detail "found: $names"; fi
+  lines="$(grep -c -F -- "$ADMIN_LOGIN" <<<"$logs")"
+  if [ "$lines" -eq 0 ]; then
+    pass "no line of the container's log names the admin's email address"
+  else
+    fail "no line of the container's log names the admin's email address"
+    detail "$lines line(s) do"
+  fi
   if [[ "$logs" == *"Running as user 'root' is a security risk"* ]]; then
     fail "Odoo never logged that it runs as root"
   else
@@ -682,14 +746,111 @@ expect_backups_folder() {
   assert_eq "$1" "directory odoo 700" "$(docker exec "$APP" stat -c '%F %U %a' /var/lib/odoo/backups 2>&1)"
 }
 
-# restart_planted <what> <sh>: stops Odoo, runs <sh> as root in the shaper image on the data volume (at /v, with T_UID
-# and T_GID set to odoo's: code running as odoo could have left what it makes there), and starts a new Odoo container
-# on the same volumes. Status 0 when Odoo answers on /web/health.
+# expect_setpriv_clean <label suffix>: from the stand-in setpriv's log, no drop to odoo had a secret's name, PGPASSWORD
+# or T_API_TOKEN in its environment, except the one the install hands on by design: its admin step
+# (odoo shell ... --stop-after-init) gets ODOO_ADMIN_PASSWORD, and only that. The markers (.odoo_initialized,
+# .odoo_owner_pass) were written with PATH alone. bash, which runs the stand-in, adds PWD and SHLVL itself; those two
+# don't count. The names are matched with a pattern of the test's own, not with the image's lib.sh.
+expect_setpriv_clean() {
+  local log calls line args names bad="" markers extra
+  log="$(docker exec "$APP" cat /run/t-setpriv.log 2>/dev/null)"
+  calls="$(grep -c '^call:' <<<"$log")"
+  while IFS= read -r line; do
+    [[ "$line" == call:* ]] || continue
+    args="${line%% | names: *}"
+    names="$(tr ' ' '\n' <<<"${line#* | names: }" | grep -vxE 'PWD|SHLVL|_|' |
+      grep -iE '(^|_)(PASSWORDS?|PASSWD|PASS|PWD|SECRETS?|KEYS?|TOKENS?|CREDENTIALS?|PRIVATE|AUTH)(_|$)|^PGPASSWORD$' |
+      tr '\n' ' ')"
+    if [[ "$args" == *"/usr/bin/odoo shell "*"--stop-after-init"* ]] && [ "$names" = "ODOO_ADMIN_PASSWORD " ]; then
+      continue
+    fi
+    if [ -n "$names" ]; then
+      # The program and its subcommand only: the arguments hold no password (the command-line checks prove it).
+      bad="$bad$(awk '{for (i = 1; i <= NF; i++) if ($i == "--") { print $(i+1), $(i+2); exit }}' <<<"$args"): $names"$'\n'
+    fi
+  done <<<"$log"
+  if [ "$calls" -ge 3 ] && [ -z "$bad" ]; then
+    pass "no drop to odoo had a secret or PGPASSWORD in its environment, the admin step's own aside ($calls setpriv calls, $1)"
+  else
+    fail "no drop to odoo had a secret or PGPASSWORD in its environment, the admin step's own aside ($calls setpriv calls, $1)"
+    detail "${bad:-only $calls calls logged}"
+  fi
+  markers="$(grep -E '^call:.*/var/lib/odoo/\.odoo_(initialized|owner_pass)( |$)' <<<"$log")"
+  extra="$(sed -n 's/^call:.* | names: //p' <<<"$markers" | tr ' ' '\n' | grep -vxE 'PATH|PWD|SHLVL|_|' | sort -u | tr '\n' ' ')"
+  if [ -n "$markers" ] && [ -z "$extra" ]; then
+    pass "the markers were written as odoo with PATH alone in the environment (env -i, $1)"
+  else
+    fail "the markers were written as odoo with PATH alone in the environment (env -i, $1)"
+    detail "${markers:+other names: $extra}${markers:-no marker call logged}"
+  fi
+}
+
+# conf_of <key>: odoo.conf's value for a key that holds no password.
+conf_of() { in_app "conf_value $1; printf '%s' \"\$VALUE\""; }
+
+# dbm_list: what Odoo's database list (/web/database/list) answers: "result" while the manager is open, "error" while
+# it is locked. Prints the answer's first 300 characters.
+dbm_list() {
+  docker exec "$APP" curl -sS --max-time 60 -H 'Content-Type: application/json' \
+    -d '{"jsonrpc":"2.0","method":"call","params":{}}' http://127.0.0.1:8069/web/database/list 2>&1 | cut -c1-300
+}
+
+# dbm_backup: a POST to /web/database/backup for odoo with the master password odoo.conf holds, sent on curl's stdin
+# (never on a command line). Prints "<status> <content type> <first two bytes in hex>": a ZIP starts with 504b.
+dbm_backup() {
+  # shellcheck disable=SC2016  # the script is for the bash inside the container
+  in_app 'conf_value admin_passwd
+    printf "%s" "$VALUE" | curl -sS --max-time 600 -o /tmp/t-dbm.out -w "%{http_code} %{content_type}" \
+      --data-urlencode master_pwd@- -d name=odoo -d backup_format=zip http://127.0.0.1:8069/web/database/backup
+    printf " %s" "$(head -c 2 /tmp/t-dbm.out 2>/dev/null | od -An -tx1 | tr -d " \n")"; rm -f /tmp/t-dbm.out'
+}
+
+# dbm_change_password: a POST to /web/database/change_password with the master password odoo.conf holds (on curl's
+# stdin) and a throwaway new one (from a file). Prints "same" when odoo.conf's admin_passwd didn't change.
+dbm_change_password() {
+  # shellcheck disable=SC2016  # the script is for the bash inside the container
+  in_app 'conf_value admin_passwd; before="$VALUE"
+    od -An -N12 -tx1 /dev/urandom | tr -d " \n" > /tmp/t-newpw
+    printf "%s" "$before" | curl -sS --max-time 60 -o /dev/null --data-urlencode master_pwd@- \
+      --data-urlencode master_pwd_new@/tmp/t-newpw http://127.0.0.1:8069/web/database/change_password
+    rm -f /tmp/t-newpw; conf_value admin_passwd
+    if [ "$VALUE" = "$before" ]; then echo same; else echo changed; fi'
+}
+
+# login_page [query]: GETs /web/login[query]. Prints "<status> form" when Odoo serves its sign-in form, and
+# "<status> <where it redirects>" when it sends the browser elsewhere (the database selector, when it can't pick one).
+login_page() {
+  local out
+  out="$(docker exec "$APP" sh -c 'curl -sS --max-time 120 -o /tmp/t-login.html -w "%{http_code} %{redirect_url}" \
+    "http://127.0.0.1:8069/web/login$1"; grep -q "name=\"login\"" /tmp/t-login.html && printf " form"; rm -f /tmp/t-login.html' \
+    sh "${1:-}" 2>&1)"
+  printf '%s\n' "$out" | sed 's/ \+/ /g'
+}
+
+# hup_and_wait: the AI Assistant's restart over SSH; status 0 once Odoo has started again and answers.
+hup_and_wait() {
+  local before deadline
+  before="$(started_count)"
+  ssh_ops 'grep -q odoo /proc/1/cmdline && sudo kill -HUP 1' </dev/null >/dev/null 2>&1 || return 1
+  deadline=$((SECONDS + RESTART_SECONDS))
+  while [ "$SECONDS" -lt "$deadline" ] && running; do
+    if [ "$(started_count)" -gt "$before" ] && healthy; then return 0; fi
+    sleep 2
+  done
+  return 1
+}
+
+# expect_conf_odoo_600 <label>: odoo.conf is still odoo's, mode 600 (a root sed -i must keep that, or Odoo can't read it).
+expect_conf_odoo_600() { assert_eq "$1" "odoo 600" "$(docker exec "$APP" stat -c '%U %a' /etc/odoo/odoo.conf 2>&1)"; }
+
+# restart_planted <what> <sh>: stops Odoo, runs <sh> as root in the shaper image on the data volume (at /v) and the
+# addons volume (at /a), with T_UID and T_GID set to odoo's (code running as odoo could have left what it makes there),
+# and starts a new Odoo container on the same volumes. Status 0 when Odoo answers on /web/health.
 restart_planted() {
   docker stop -t 30 "$APP" >/dev/null 2>&1
   docker rm -f "$APP" >/dev/null 2>&1
-  if ! docker run --rm --network none -e "T_UID=$ODOO_UID" -e "T_GID=$ODOO_GID" -v "$VOL_DATA:/v" "$SHAPER" \
-      sh -c "$2" >/dev/null 2>&1; then
+  if ! docker run --rm --network none -e "T_UID=$ODOO_UID" -e "T_GID=$ODOO_GID" -v "$VOL_DATA:/v" -v "$VOL_ADDONS:/a" \
+      "$SHAPER" sh -c "$2" >/dev/null 2>&1; then
     fail "the test leaves $1"
     return 1
   fi
@@ -770,7 +931,36 @@ assert_eq "the new disk's top folders went to odoo (/var/lib/odoo, /mnt/extra-ad
 expect_nothing_root "nothing under /var/lib/odoo is root's (lost+found aside)"
 expect_sign_in "the admin signs in ($ADMIN_LOGIN)"
 expect_pdf_report "the admin downloads a PDF report (the server runs wkhtmltopdf as odoo)"
+expect_setpriv_clean "first start"
 BASELINE_OUTSIDE="$(odoo_files_outside)"
+
+echo
+echo "The database manager is locked from the first start"
+assert_eq "odoo.conf has list_db = False" "False" "$(conf_of list_db)"
+assert_eq "odoo.conf pins the database with dbfilter = ^odoo\\Z" '^odoo\Z' "$(conf_of dbfilter)"
+assert_eq "odoo.conf has no db_name (Odoo 19 would re-create a missing one with admin/admin)" "" "$(conf_of db_name)"
+logs="$(docker logs "$APP" 2>&1)"
+if [[ "$logs" == *"Odoo database initialized successfully"* ]]; then
+  pass "the first install ran in this start, with the lock already in odoo.conf"
+else
+  fail "the first install ran in this start, with the lock already in odoo.conf"
+fi
+answer="$(dbm_backup)"
+if [[ "$answer" == "200 text/html"* ]] && [[ "$answer" != *" 504b" ]]; then
+  pass "a POST to /web/database/backup with the right master password returns no ZIP ($answer)"
+else
+  fail "a POST to /web/database/backup with the right master password returns no ZIP"
+  detail "$answer"
+fi
+answer="$(dbm_list)"
+if [[ "$answer" == *'"error"'* ]] && [[ "$answer" != *'"result"'* ]]; then
+  pass "/web/database/list answers an error"
+else
+  fail "/web/database/list answers an error"
+  detail "$answer"
+fi
+assert_eq "a POST to /web/database/change_password with the right master password changes nothing" same \
+  "$(dbm_change_password)"
 
 # --- 2. SSH, and the restart ------------------------------------------------------
 echo
@@ -813,23 +1003,83 @@ echo "Odoo commands run with sudo, as the AI Assistant runs them"
 expect_shell_run "first run"
 ssh_ops 'sudo odoo -c /etc/odoo/odoo.conf -d odoo --stop-after-init --no-http' </dev/null >/dev/null 2>&1
 check "sudo odoo -c /etc/odoo/odoo.conf -d odoo --stop-after-init exits 0" $?
-ssh_ops "sudo bash -c 'mkdir -p /var/lib/odoo/backups && ODOO_RC=/etc/odoo/odoo.conf odoo db dump odoo /var/lib/odoo/backups/t-backup.zip </dev/null'" </dev/null >/dev/null 2>&1
-check "a backup the way backup.sh takes one (root's mkdir -p, then odoo db dump into the backups folder the entrypoint made) exits 0" $?
+ssh_ops 'sudo odoo -c /etc/odoo/odoo.conf -d odoo -u base --stop-after-init --no-http' </dev/null >/dev/null 2>&1
+check "sudo odoo -c /etc/odoo/odoo.conf -d odoo -u base --stop-after-init exits 0" $?
+ssh_ops "sudo bash -c 'ODOO_RC=/etc/odoo/odoo.conf odoo db dump odoo /var/lib/odoo/backups/t-backup.zip </dev/null'" </dev/null >/dev/null 2>&1
+check "odoo db dump into the backups folder the entrypoint made exits 0" $?
 assert_eq "the backup is odoo's" odoo "$(docker exec "$APP" stat -c %U /var/lib/odoo/backups/t-backup.zip 2>&1)"
 docker exec "$APP" python3 -c 'import sys, zipfile; sys.exit(0 if zipfile.is_zipfile(sys.argv[1]) else 1)' \
   /var/lib/odoo/backups/t-backup.zip 2>/dev/null
 check "the backup is a ZIP" $?
+# The backups folder goes while the container runs (the entrypoint makes it only at a start). The odoo skill's
+# backup.sh (0.1.5 on) makes it again as odoo's, mode 700: run that script itself when magneto-skills is next to this
+# repo, or its steps.
+docker exec "$APP" sh -c 'mv /var/lib/odoo/backups/t-backup.zip /var/lib/odoo/t-backup.zip && rm -rf /var/lib/odoo/backups'
+if [ -r "$SKILL_BACKUP" ]; then
+  ssh_ops "sudo bash -s -- odoo" < "$SKILL_BACKUP" >/dev/null 2>&1
+  check "the odoo skill's backup.sh, piped in, makes the missing backups folder and backs up (exits 0)" $?
+else
+  ssh_ops "sudo bash -c 'mkdir -m 700 /var/lib/odoo/backups && chown -h odoo:odoo /var/lib/odoo/backups && ODOO_RC=/etc/odoo/odoo.conf odoo db dump odoo /var/lib/odoo/backups/t-backup2.zip </dev/null'" </dev/null >/dev/null 2>&1
+  check "backup.sh's steps (mkdir -m 700, chown -h odoo:odoo, odoo db dump) exit 0 (no magneto-skills checkout)" $?
+fi
+expect_backups_folder "the remade backups folder is odoo's, mode 700"
+assert_eq "the backup in it is odoo's" odoo \
+  "$(docker exec "$APP" sh -c 'stat -c %U /var/lib/odoo/backups/*.zip 2>&1 | sort -u')"
+ssh_ops "sudo ODOO_RC=/etc/odoo/odoo.conf odoo db load t-second /var/lib/odoo/t-backup.zip" </dev/null >/dev/null 2>&1
+check "odoo db load of the backup into a second database (t-second) exits 0, with the manager locked" $?
 ssh_ops 'sudo odoo --t-no-such-option' </dev/null >/dev/null 2>&1
 assert_eq "an odoo command that fails keeps Odoo's exit status (2 for an unknown option)" 2 "$?"
 expect_nothing_root "nothing under /var/lib/odoo is root's after these commands (lost+found aside)"
+assert_eq "with a second database there, /web/login serves the sign-in form" "200 form" "$(login_page)"
+assert_eq "and /web/login?db=t-second serves the deployment's own" "200 form" "$(login_page '?db=t-second')"
+expect_sign_in "the admin signs in with the second database there"
+
+echo
+echo "The AI Assistant opens the database manager for one task, and closes it"
+ssh_ops "sudo sed -i 's/^list_db = False\$/list_db = True/' /etc/odoo/odoo.conf" </dev/null >/dev/null 2>&1
+check "the open step's sed exits 0" $?
+hup_and_wait
+check "Odoo restarts in place with the manager open" $?
+expect_conf_odoo_600 "odoo.conf is still odoo's, mode 600, after the sed"
+answer="$(dbm_list)"
+if [[ "$answer" == *'"result"'*'"odoo"'* ]] && [[ "$answer" != *'t-second'* ]]; then
+  pass "open: /web/database/list answers, naming odoo only (dbfilter still applies)"
+else
+  fail "open: /web/database/list answers, naming odoo only (dbfilter still applies)"
+  detail "$answer"
+fi
+answer="$(dbm_backup)"
+if [[ "$answer" == "200 application/octet-stream"*" 504b" ]]; then
+  pass "open: the backup POST with the master password returns a ZIP"
+else
+  fail "open: the backup POST with the master password returns a ZIP"
+  detail "$answer"
+fi
+ssh_ops "sudo sed -i 's/^list_db = True\$/list_db = False/' /etc/odoo/odoo.conf" </dev/null >/dev/null 2>&1
+check "the close step's sed exits 0" $?
+hup_and_wait
+check "Odoo restarts in place with the manager closed" $?
+expect_conf_odoo_600 "odoo.conf is still odoo's, mode 600, after both seds"
+answer="$(dbm_list)"
+if [[ "$answer" == *'"error"'* ]]; then pass "closed: /web/database/list answers an error again"; else
+  fail "closed: /web/database/list answers an error again"; detail "$answer"; fi
+# Left open for part 4: a new container must lock it again.
+ssh_ops "sudo sed -i 's/^list_db = False\$/list_db = True/' /etc/odoo/odoo.conf" </dev/null >/dev/null 2>&1
 
 # --- 4. an upgraded disk -----------------------------------------------------------
 echo
 echo "An upgraded disk: files of root's, as an older image that ran Odoo as root left them"
 docker stop -t 30 "$APP" >/dev/null 2>&1
 docker rm -f "$APP" >/dev/null 2>&1
-if ! docker run --rm --network none -v "$VOL_DATA:/v" "$SHAPER" sh -c '
+if ! docker run --rm --network none -v "$VOL_DATA:/v" -v "$VOL_ADDONS:/a" "$SHAPER" sh -c '
     set -e
+    rm -f /v/.odoo_owner_pass
+    mkdir -p /a/t_rootmod
+    printf "{\"name\": \"T root module\", \"depends\": [\"base\"]}\n" > /a/t_rootmod/__manifest__.py
+    : > /a/t_rootmod/__init__.py
+    chown -R 0:0 /a/t_rootmod
+    chmod 600 /a/t_rootmod/__manifest__.py /a/t_rootmod/__init__.py
+    chmod 700 /a/t_rootmod
     mkdir -p /v/sessions/zz /v/filestore/odoo/zz /v/backups /v/addons/19.0
     echo old > /v/sessions/zz/t-old-session
     echo old > /v/filestore/odoo/zz/t-old-file
@@ -877,6 +1127,47 @@ expect_log_clean "the container's log holds no password"
 expect_sign_in "the admin signs in on the upgraded disk"
 expect_shell_run "upgraded disk"
 expect_backups_folder "the old backups folder is odoo's, and only odoo can read it"
+assert_eq "a module of root's in /mnt/extra-addons is odoo's now" "odoo odoo" \
+  "$(docker exec "$APP" stat -c %U /mnt/extra-addons/t_rootmod /mnt/extra-addons/t_rootmod/__manifest__.py 2>&1 | tr '\n' ' ' | sed 's/ $//')"
+docker exec -u odoo "$APP" cat /mnt/extra-addons/t_rootmod/__manifest__.py >/dev/null 2>&1
+check "and the odoo user can read it" $?
+assert_eq "the manager part 3 left open is locked again by the new container (list_db = False)" "False" \
+  "$(conf_of list_db)"
+answer="$(dbm_list)"
+if [[ "$answer" == *'"error"'* ]]; then pass "/web/database/list answers an error after a second start"; else
+  fail "/web/database/list answers an error after a second start"; detail "$answer"; fi
+answer="$(dbm_backup)"
+if [[ "$answer" == "200 text/html"* ]] && [[ "$answer" != *" 504b" ]]; then
+  pass "a backup POST with the right master password returns no ZIP after a second start"
+else
+  fail "a backup POST with the right master password returns no ZIP after a second start"
+  detail "$answer"
+fi
+assert_eq "after a second start, with the second database there, /web/login serves the sign-in form" "200 form" \
+  "$(login_page)"
+expect_setpriv_clean "upgraded disk"
+
+# --- 4b. the ownership pass runs once per volume ---------------------------------------------
+echo
+echo "The ownership pass over /var/lib/odoo runs once, and /mnt/extra-addons at every start"
+# shellcheck disable=SC2016  # the script is for the sh in the shaper container
+if restart_planted "a file of root's in sessions, and a module of root's, with the marker in place" \
+    'mkdir -p /v/sessions/zy /a/t_rootmod2 && echo old > /v/sessions/zy/t-skip && : > /a/t_rootmod2/__init__.py &&
+     printf "{\"name\": \"T root module 2\", \"depends\": [\"base\"]}\n" > /a/t_rootmod2/__manifest__.py && chown -R 0:0 /v/sessions/zy /a/t_rootmod2 && test -f /v/.odoo_owner_pass'; then
+  assert_eq "the pass over /var/lib/odoo was skipped: the file stays root's" root \
+    "$(docker exec "$APP" stat -c %U /var/lib/odoo/sessions/zy/t-skip 2>&1)"
+  logs="$(docker logs "$APP" 2>&1)"
+  if [[ "$logs" == *"ran at an earlier start"* ]]; then pass "the log says the pass was skipped"; else
+    fail "the log says the pass was skipped"; fi
+  assert_eq "the new module of root's in /mnt/extra-addons went to odoo anyway" odoo \
+    "$(docker exec "$APP" stat -c %U /mnt/extra-addons/t_rootmod2 2>&1)"
+fi
+if restart_planted "the marker removed" 'rm -f /v/.odoo_owner_pass'; then
+  assert_eq "with the marker gone, the pass ran: the file is odoo's" odoo \
+    "$(docker exec "$APP" stat -c %U /var/lib/odoo/sessions/zy/t-skip 2>&1)"
+  assert_eq "and the marker is back, a file of odoo's" "regular file odoo" \
+    "$(docker exec "$APP" stat -c '%F %U' /var/lib/odoo/.odoo_owner_pass 2>&1)"
+fi
 
 # --- 5. what code running as odoo could leave for root ---------------------------------------
 echo
@@ -918,7 +1209,6 @@ echo "The database container: CLOUVE_OPS_PASSWORD stays out of PostgreSQL's envi
 # can't read another user's environment. The server processes other than the first write their titles over that
 # memory, so the first one (the postmaster) is the one this can read.
 pg_env_hits() {
-  # shellcheck disable=SC2016  # the script is for the bash inside the container
   docker exec -u postgres "$DB2" bash -c '
     n=0; m=0
     for d in /proc/[0-9]*; do

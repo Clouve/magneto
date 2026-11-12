@@ -43,45 +43,48 @@ Authenticate with the per-pod password named `CLOUVE_OPS_PASSWORD`. On
 current agents it isn't in your environment, so a command fetches it with
 `${CLOUVE_OPS_PASSWORD:-$(clv-secret CLOUVE_OPS_PASSWORD)}`. That form
 also works on older agents, which still have it in the environment. Never
-run `clv-secret CLOUVE_OPS_PASSWORD` on its own or print it. Use
-`sshpass -e`, which reads the password from `SSHPASS` rather than the
-command line, so it never lands in shell history or `ps`:
+run `clv-secret CLOUVE_OPS_PASSWORD` on its own or print it. Set
+`SSHPASS` on each `sshpass -e` command, as below: `sshpass -e` reads the
+password from `SSHPASS` rather than the command line, so it never lands in
+shell history or `ps`, and your next Bash call wouldn't have an exported
+one.
 
 ```bash
-# Make the per-pod password available to sshpass (do this once per shell):
-export SSHPASS="${CLOUVE_OPS_PASSWORD:-$(clv-secret CLOUVE_OPS_PASSWORD)}"
-
 # Open an interactive shell in the wordpress container
-sshpass -e ssh clouve-ops@${WORDPRESS_HOST}
+SSHPASS="${CLOUVE_OPS_PASSWORD:-$(clv-secret CLOUVE_OPS_PASSWORD)}" sshpass -e ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null clouve-ops@${WORDPRESS_HOST}
 
 # Open an interactive shell in the wordpress-mariadb container
-sshpass -e ssh clouve-ops@${WORDPRESS_DB_HOST}
+SSHPASS="${CLOUVE_OPS_PASSWORD:-$(clv-secret CLOUVE_OPS_PASSWORD)}" sshpass -e ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null clouve-ops@${WORDPRESS_DB_HOST}
 
 # Run a one-shot command (preferred for scripted operations)
-sshpass -e ssh clouve-ops@${WORDPRESS_HOST} \
-    "sudo -u www-data wp --path=/var/www/html core version"
+SSHPASS="${CLOUVE_OPS_PASSWORD:-$(clv-secret CLOUVE_OPS_PASSWORD)}" sshpass -e ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null clouve-ops@${WORDPRESS_HOST} \
+    "df -h /var/www/html"
 ```
 
-The first connection prints a host-key fingerprint warning — accept it
-once (StrictHostKeyChecking interactively, or pass
-`-o StrictHostKeyChecking=accept-new` on the first run; the host key is
-captured to `~/.ssh/known_hosts` for subsequent connections).
+Pass `-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null`
+on every connection, as every command here and in the skill does. The two
+options take the key the container shows and save nothing. The containers
+make new SSH host keys at every start, so a key saved earlier is wrong and ssh
+refuses it. An older agent has no SSH settings of its own for the app's
+containers, so there a command without the options stops at the first
+connection: `sshpass` can't answer the yes/no prompt for a key it doesn't
+know, and exits 6 without printing anything.
 
-**wp-cli lives inside the wordpress container** (at
-`/usr/local/bin/wp`), so every `wp` command goes over this SSH channel.
-Invoke it as the web user to avoid leaving root-owned files:
+**Run every `wp` command through the skill's `wp.sh`**:
 
 ```bash
-sshpass -e ssh clouve-ops@${WORDPRESS_HOST} \
-    "sudo -u www-data wp --path=/var/www/html option get siteurl"
+/clouve/skills/wordpress/plugin/skills/wordpress/scripts/wp.sh core version
+/clouve/skills/wordpress/plugin/skills/wordpress/scripts/wp.sh option get siteurl
 ```
 
-The container itself runs Apache as root with `www-data` workers; if a
-command genuinely cannot run as `www-data`, fall back to
-`sudo wp --path=/var/www/html ... --allow-root` and `chown -R
-www-data:www-data` whatever it touched afterwards — root-owned
-droppings under `wp-content/` break later updates (only
-`wp-content/uploads` is re-chowned automatically at boot).
+wp-cli lives inside the wordpress container, and a plain `wp` over SSH
+can't reach the database: the image's `wp-config.php` reads its database
+settings from the container's environment, which an SSH session doesn't
+have. `wp.sh` runs `wp` there as `www-data` with WordPress's own settings,
+never putting them on a command line, and refuses the commands that would
+print a password, a key or a salt. Avoid `--allow-root`: root-owned files
+under `wp-content/` break later updates (only `wp-content/uploads` is
+re-chowned at boot).
 
 Use the SSH channel for the things that actually need to run inside
 the target container: wp-cli, tailing logs, `.maintenance` removal,

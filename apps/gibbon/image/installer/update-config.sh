@@ -16,6 +16,31 @@ set -e
 
 CONFIG_FILE="$GIBBON_INSTALL_PATH/config.php"
 
+# clv_write_password_line REGEX PREFIX FILE: replaces the line of FILE that matches REGEX (an awk regex) with PREFIX
+# followed by CLV_DB_PASSWORD as a PHP single-quoted string (each \ and ' after a \) and ";". awk reads the value from
+# its environment, so it is never on a command line, and any character in it reads back the same. FILE keeps its owner
+# and mode (tests/installer-db-password.test.sh).
+clv_write_password_line() {
+    local tmp rc
+    tmp="$(mktemp)" || return 1
+    awk -v re="$1" -v prefix="$2" '
+        function phpq(s,   i, c, out) {
+            out = ""
+            for (i = 1; i <= length(s); i++) {
+                c = substr(s, i, 1)
+                if (c == "\\" || c == "\047") out = out "\\"
+                out = out c
+            }
+            return "\047" out "\047"
+        }
+        $0 ~ re { print prefix phpq(ENVIRON["CLV_DB_PASSWORD"]) ";"; next }
+        { print }
+    ' "$3" > "$tmp" && cat "$tmp" > "$3"
+    rc=$?
+    rm -f "$tmp"
+    return "$rc"
+}
+
 echo "============================================================================"
 echo "Updating Gibbon configuration from environment variables..."
 echo "============================================================================"
@@ -33,7 +58,8 @@ if [ -f "$CONFIG_FILE" ]; then
         echo "  DB_HOST: ${DB_HOST:-(not set)}"
         echo "  DB_NAME: ${DB_NAME:-(not set)}"
         echo "  DB_USER: ${DB_USER:-(not set)}"
-        echo "  DB_PASSWORD: ${DB_PASSWORD:-(not set)}"
+        # Only whether the password is set: its value never goes to the log.
+        if [ -n "$DB_PASSWORD" ]; then echo "  DB_PASSWORD: (set)"; else echo "  DB_PASSWORD: (not set)"; fi
     else
         echo "Updating database credentials in config.php..."
         
@@ -52,10 +78,9 @@ if [ -f "$CONFIG_FILE" ]; then
         sed -i "s/^\$databaseUsername = .*$/\$databaseUsername = '${DB_USER}';/" "$CONFIG_FILE"
         echo "  ✓ Updated \$databaseUsername to: $DB_USER"
         
-        # Update database password (escape special characters for sed)
-        # We need to escape special characters that might be in the password
-        ESCAPED_PASSWORD=$(printf '%s\n' "$DB_PASSWORD" | sed -e 's/[\/&]/\\&/g')
-        sed -i "s/^\$databasePassword = .*$/\$databasePassword = '${ESCAPED_PASSWORD}';/" "$CONFIG_FILE"
+        # Update database password, off every command line (clv_write_password_line).
+        CLV_DB_PASSWORD="$DB_PASSWORD" clv_write_password_line '^\\$databasePassword = ' '$databasePassword = ' \
+            "$CONFIG_FILE"
         echo "  ✓ Updated \$databasePassword"
         
         echo "Database credentials in config.php updated successfully!"

@@ -17,8 +17,9 @@ LABEL description="Nextcloud with an in-container Valkey cache, settings kept in
 # Debian 13); its valkey-cli is what the entrypoint and the health check ping it with. mariadb-client for
 # mariadb-dump, which the AI Assistant's backups use. openssh-server's install makes SSH host keys, and they go
 # again here: kept, they would ship in the pushed image and every tenant would share one host key. Each container
-# makes its own at start instead (ssh-keygen -A in start-clouve-ops-sshd.sh).
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# makes its own at start instead (ssh-keygen -A in start-clouve-ops-sshd.sh). The upgrade takes the base image's own
+# packages to their newest versions in the same Debian release (Debian's security updates; no major bumps).
+RUN apt-get update && apt-get -y upgrade && apt-get install -y --no-install-recommends \
     openssh-server \
     sudo \
     valkey-server \

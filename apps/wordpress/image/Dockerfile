@@ -8,13 +8,20 @@ LABEL maintainer="Clouve Team"
 LABEL description="Custom WordPress image with wp-cli and automatic initialization"
 
 # Install dependencies for wp-cli and database connectivity, plus the
-# clouve-ops SSH channel (openssh-server + sudo)
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# clouve-ops SSH channel (openssh-server + sudo). The upgrade takes the base
+# image's own packages to their newest versions in the same Debian release
+# (no major bumps): WordPress stays on wordpress:6.9.0. Installing
+# openssh-server makes SSH host keys, and they go again at the end: kept, they
+# would ship in the pushed image and every tenant would share one host key.
+# Each container makes its own at start (ssh-keygen -A in
+# start-clouve-ops-sshd.sh).
+RUN apt-get update && apt-get -y upgrade && apt-get install -y --no-install-recommends \
     curl \
     default-mysql-client \
     openssh-server \
     sudo \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -f /etc/ssh/ssh_host_*
 
 # Operator account used by the magneto-agent container's Claude Code agent for
 # shell access into this container. The account password is set at runtime by

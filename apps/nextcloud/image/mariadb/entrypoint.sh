@@ -1,14 +1,14 @@
 #!/bin/bash
-# nextcloud-mariadb entrypoint wrapper.
+# nextcloud-mariadb entrypoint wrapper. tini, PID 1, runs it.
 #
 # Sizes the InnoDB buffer pool from the container's memory limit, then
-# backgrounds the clouve-ops sshd bring-up (applies the per-pod password
-# from CLOUVE_OPS_PASSWORD to the clouve-ops user via chpasswd, then
-# exec's sshd -D), drops CLOUVE_OPS_PASSWORD from its own environment, and
-# chains to the upstream MariaDB docker-entrypoint.sh as PID 1's main work.
-#
-# The background sshd inherits the container PID tree so it dies when
-# mariadbd exits, which leaves no orphaned processes.
+# starts the clouve-ops sshd in the background (it applies the per-pod
+# password from CLOUVE_OPS_PASSWORD to the clouve-ops user via chpasswd, then
+# execs sshd -D), drops CLOUVE_OPS_PASSWORD from its own environment, and
+# execs the upstream MariaDB docker-entrypoint.sh, so this shell becomes
+# mariadbd, tini's child. mariadbd doesn't reap processes it didn't start,
+# such as what an SSH session leaves behind; tini does, and passes docker
+# stop's signal on to mariadbd.
 
 set -e
 
@@ -64,13 +64,16 @@ else
     echo "[nextcloud-mariadb] WARNING: could not write $memory_cnf, so MariaDB keeps its default buffer pool" >&2
 fi
 
-/usr/local/bin/start-clouve-ops-sshd.sh &
+# The subshell exits at once, so sshd's parent becomes tini (PID 1) rather
+# than the shell that turns into mariadbd below.
+( /usr/local/bin/start-clouve-ops-sshd.sh & )
 
 # The kit was forked with CLOUVE_OPS_PASSWORD and has its own copy, which it
 # gives to chpasswd. mariadbd must not carry it: any process that runs as mysql
 # can read mariadbd's environment, and the password logs in as clouve-ops, who
-# has passwordless sudo. The official entrypoint already drops its own
-# passwords before it starts mariadbd.
+# has passwordless sudo. PID 1 (tini) keeps it, in an environment only root can
+# read. The official entrypoint already drops its own passwords before it
+# starts mariadbd.
 unset CLOUVE_OPS_PASSWORD
 
 exec /usr/local/bin/docker-entrypoint.sh "$@"

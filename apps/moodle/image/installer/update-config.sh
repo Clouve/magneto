@@ -14,6 +14,31 @@ set -e
 
 CONFIG_FILE="${MOODLE_INSTALL_PATH}/config.php"
 
+# clv_write_password_line REGEX PREFIX FILE: replaces the line of FILE that matches REGEX (an awk regex) with PREFIX
+# followed by CLV_DB_PASSWORD as a PHP single-quoted string (each \ and ' after a \) and ";". awk reads the value from
+# its environment, so it is never on a command line, and any character in it reads back the same. FILE keeps its owner
+# and mode (tests/installer-db-password.test.sh).
+clv_write_password_line() {
+    local tmp rc
+    tmp="$(mktemp)" || return 1
+    awk -v re="$1" -v prefix="$2" '
+        function phpq(s,   i, c, out) {
+            out = ""
+            for (i = 1; i <= length(s); i++) {
+                c = substr(s, i, 1)
+                if (c == "\\" || c == "\047") out = out "\\"
+                out = out c
+            }
+            return "\047" out "\047"
+        }
+        $0 ~ re { print prefix phpq(ENVIRON["CLV_DB_PASSWORD"]) ";"; next }
+        { print }
+    ' "$3" > "$tmp" && cat "$tmp" > "$3"
+    rc=$?
+    rm -f "$tmp"
+    return "$rc"
+}
+
 echo "============================================================================"
 echo "UPDATING MOODLE CONFIGURATION"
 echo "============================================================================"
@@ -38,13 +63,13 @@ if [ -z "$DB_HOST" ] || [ -z "$DB_NAME" ] || [ -z "$DB_USER" ] || [ -z "$DB_PASS
     echo "  DB_HOST: ${DB_HOST:-(not set)}"
     echo "  DB_NAME: ${DB_NAME:-(not set)}"
     echo "  DB_USER: ${DB_USER:-(not set)}"
-    echo "  DB_PASSWORD: ${DB_PASSWORD:-(not set)}"
+    # Only whether the password is set: its value never goes to the log.
+    if [ -n "$DB_PASSWORD" ]; then echo "  DB_PASSWORD: (set)"; else echo "  DB_PASSWORD: (not set)"; fi
 else
     echo "Updating database credentials in config.php..."
     
     # Escape special characters in password for sed
     # This handles passwords with special characters like $, &, /, \, etc.
-    DB_PASSWORD_ESCAPED=$(printf '%s\n' "$DB_PASSWORD" | sed -e 's/[\/&]/\\&/g')
     DB_HOST_ESCAPED=$(printf '%s\n' "$DB_HOST" | sed -e 's/[\/&]/\\&/g')
     DB_NAME_ESCAPED=$(printf '%s\n' "$DB_NAME" | sed -e 's/[\/&]/\\&/g')
     DB_USER_ESCAPED=$(printf '%s\n' "$DB_USER" | sed -e 's/[\/&]/\\&/g')
@@ -64,8 +89,8 @@ else
     sed -i "s/^\$CFG->dbuser[[:space:]]*=.*$/\$CFG->dbuser    = '${DB_USER_ESCAPED}';/" "$CONFIG_FILE"
     echo "  ✓ Updated \$CFG->dbuser to: $DB_USER"
     
-    # Update database password
-    sed -i "s/^\$CFG->dbpass[[:space:]]*=.*$/\$CFG->dbpass    = '${DB_PASSWORD_ESCAPED}';/" "$CONFIG_FILE"
+    # Update database password, off every command line (clv_write_password_line).
+    CLV_DB_PASSWORD="$DB_PASSWORD" clv_write_password_line '^\\$CFG->dbpass[ \t]*=' '$CFG->dbpass    = ' "$CONFIG_FILE"
     echo "  ✓ Updated \$CFG->dbpass to: [REDACTED]"
     
     echo "✓ Database credentials updated successfully in config.php"
@@ -74,6 +99,12 @@ fi
 # ============================================================================
 # PART 2: UPDATE WWWROOT IN CONFIG.PHP AND DATABASE
 # ============================================================================
+
+# moodle_db ARGS...: the mysql client on Moodle's database. The password goes in MYSQL_PWD, in this one command's
+# environment: a command line can be read by every process in the container.
+moodle_db() {
+    MYSQL_PWD="$DB_PASSWORD" mysql --skip-ssl -h "$DB_HOST" -u "$DB_USER" "$DB_NAME" "$@"
+}
 
 if [ -z "$MOODLE_URL" ]; then
     echo "⚠ WARNING: MOODLE_URL environment variable not set. Skipping wwwroot update."
@@ -90,11 +121,11 @@ else
     URL_HAS_CHANGED=false
 
     # Check if we can connect to the database to get the previous URL
-    if mysql --skip-ssl -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" \
+    if moodle_db \
        -e "SELECT 1;" >/dev/null 2>&1; then
 
         # Get the current wwwroot value from the database
-        PREVIOUS_WWWROOT=$(mysql --skip-ssl -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" \
+        PREVIOUS_WWWROOT=$(moodle_db \
           -sN -e "SELECT value FROM mdl_config WHERE name = 'wwwroot';" 2>/dev/null || echo "")
 
         if [ -n "$PREVIOUS_WWWROOT" ]; then
@@ -140,17 +171,17 @@ else
     echo "Updating wwwroot in database (mdl_config table)..."
 
     # Check if we can connect to the database
-    if mysql --skip-ssl -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" \
+    if moodle_db \
        -e "SELECT 1;" >/dev/null 2>&1; then
 
         # Update the wwwroot value in mdl_config table
         # The wwwroot is stored with name='wwwroot' in the mdl_config table
         # Use INSERT ... ON DUPLICATE KEY UPDATE to handle both new and existing entries
-        mysql --skip-ssl -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" \
+        moodle_db \
           -e "INSERT INTO mdl_config (name, value) VALUES ('wwwroot', '$MOODLE_URL') ON DUPLICATE KEY UPDATE value = '$MOODLE_URL';" 2>&1
 
         # Verify the update
-        CURRENT_WWWROOT=$(mysql --skip-ssl -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" \
+        CURRENT_WWWROOT=$(moodle_db \
           -sN -e "SELECT value FROM mdl_config WHERE name = 'wwwroot';" 2>/dev/null || echo "")
 
         if [ "$CURRENT_WWWROOT" = "$MOODLE_URL" ]; then
@@ -165,7 +196,7 @@ else
         if [ "$URL_HAS_CHANGED" = true ]; then
             echo "URL change detected - invalidating Moodle cache..."
             # We do this by updating the allversionshash which forces cache invalidation
-            mysql --skip-ssl -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" \
+            moodle_db \
               -e "UPDATE mdl_config SET value = CONCAT(value, '1') WHERE name = 'allversionshash';" 2>&1 || true
             echo "  ✓ Cache invalidation triggered"
         fi

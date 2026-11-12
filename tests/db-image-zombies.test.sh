@@ -30,14 +30,24 @@
 #   2. runs one SSH session that leaves a background job running, kills that
 #      job with SIGKILL, and checks that the job doesn't stay a zombie and
 #      that the server doesn't restart (for PostgreSQL, its log).
-# A finding is a zombie that wasn't there before, a server restart, or, under
-# tini, an sshd whose parent isn't PID 1. A new database image with the
-# clouve-ops sshd goes into ALL, CONTEXT and PORT below.
+# It also checks (release 4.5.5) that:
+#   3. the database server's own environment (mysqld, mariadbd or the postgres
+#      postmaster, read as the user it runs as) holds no CLOUVE_OPS_PASSWORD:
+#      that password signs in as clouve-ops, who has sudo, and anything that
+#      runs as the database's user can read the server's environment. PID 1
+#      (tini) keeps it, but its environment is root's alone;
+#   4. docker stop -t 30 ends the container within the 30 s, and the stop
+#      adds the server's clean shutdown line to its log (the first start's
+#      temporary server logged one already; tini passes the stop signal on);
+#   5. after docker start, a clouve-ops SSH session still signs in.
+# A finding is a zombie that wasn't there before, a server restart, under
+# tini an sshd whose parent isn't PID 1, the password in the server's
+# environment, a stop that isn't clean, or no sign-in after the restart. A new
+# database image with the clouve-ops sshd goes into ALL, CONTEXT and PORT below.
 #
-# An image with a finding FAILs, except the four in KNOWN, whose findings are
-# printed as KNOWN: they get tini when they are next rebuilt (item #52), and
-# leave KNOWN then. An image whose PID 1 is tini always FAILs on a finding.
-# The table at the end has what each check found.
+# An image with a finding FAILs, except one in KNOWN whose PID 1 isn't tini:
+# its findings are printed as KNOWN. KNOWN is empty since all five images run
+# tini (4.5.5). The table at the end has what each check found.
 #
 # --image NAME=REF uses an image that is already built instead of building it
 # (it stays in place). Naming images limits the run to them.
@@ -63,8 +73,8 @@ SSH_SESSIONS=40
 CLIENT=odoo-postgres
 
 ALL=(gibbon-mysql moodle-mysql wordpress-mariadb nextcloud-mariadb odoo-postgres)
-# Findings these images are known to have: printed, not failed, until they get tini (#52).
-KNOWN=(gibbon-mysql moodle-mysql wordpress-mariadb nextcloud-mariadb)
+# Findings these images are known to have: printed, not failed, until they get tini. None since 4.5.5.
+KNOWN=()
 declare -A CONTEXT=(
   [gibbon-mysql]="$REPO_DIR/apps/gibbon/image/mysql"
   [moodle-mysql]="$REPO_DIR/apps/moodle/image/mysql"
@@ -74,6 +84,11 @@ declare -A CONTEXT=(
 )
 declare -A PORT=(
   [gibbon-mysql]=3306 [moodle-mysql]=3306 [wordpress-mariadb]=3306 [nextcloud-mariadb]=3306 [odoo-postgres]=5432
+)
+# The line each server logs when it has shut down cleanly.
+declare -A SHUTDOWN_LINE=(
+  [gibbon-mysql]="Shutdown complete" [moodle-mysql]="Shutdown complete" [wordpress-mariadb]="Shutdown complete"
+  [nextcloud-mariadb]="Shutdown complete" [odoo-postgres]="database system is shut down"
 )
 declare -A IMAGE=()
 
@@ -206,6 +221,30 @@ sshd_parents() {
     done'
 }
 
+# server_pid <container>: the pid of the database server itself: a mysqld, mariadbd or postgres process whose parent
+# isn't one of those (PostgreSQL's own processes are the postmaster's children).
+server_pid() {
+  # shellcheck disable=SC2016  # the script is for the bash inside the container
+  in_db "$1" '
+    declare -A comm=() parent=()
+    for f in /proc/[0-9]*/stat; do
+      line="$(cat "$f" 2>/dev/null)" || continue
+      c="${line#*(}"; c="${c%)*}"
+      case "$c" in mysqld|mariadbd|postgres) ;; *) continue ;; esac
+      set -- ${line##*) }
+      p="${f#/proc/}"; p="${p%/stat}"; comm[$p]="$c"; parent[$p]="$2"
+    done
+    for p in "${!comm[@]}"; do [ -n "${comm[${parent[$p]}]+set}" ] || echo "$p"; done'
+}
+
+# env_names <container> <pid>: the names in that process's environment, read as the user it runs as.
+env_names() {
+  local owner
+  owner="$(in_db "$1" 'stat -c %U "/proc/$0"' "$2" 2>/dev/null)" || return 1
+  # shellcheck disable=SC2016  # the script is for the sh inside the container
+  docker exec -u "$owner" "$1" sh -c 'tr "\0" "\n" < "/proc/$0/environ" | cut -d= -f1' "$2"
+}
+
 # name_of <container> <pid>: the command name of a process in the container.
 # shellcheck disable=SC2016  # the script is for the bash inside the container
 name_of() { in_db "$1" 'cat "/proc/$0/comm" 2>/dev/null' "$2"; }
@@ -261,7 +300,7 @@ for name in "${SELECTED[@]}"; do
   echo "$name"
   if ! image_for "$name"; then
     fail "image builds or is on this machine"
-    ROW[$name]="-|-|-|could not run"
+    ROW[$name]="-|-|-|-|-|could not run"
     continue
   fi
   image="${IMAGE[$name]}"
@@ -272,7 +311,7 @@ for name in "${SELECTED[@]}"; do
   if ! docker run -d --pull=never --name "$c" --network none -e "CLOUVE_OPS_PASSWORD=$OPS_PW" \
       $(db_env "$db_pw" "$name") "$image" >/dev/null; then
     fail "the container starts"
-    ROW[$name]="-|-|-|could not run"
+    ROW[$name]="-|-|-|-|-|could not run"
     continue
   fi
 
@@ -288,7 +327,7 @@ for name in "${SELECTED[@]}"; do
   if ! $ready; then
     fail "the database answers on 127.0.0.1:${PORT[$name]} and sshd on port 22 within ${READY_SECONDS} s"
     docker logs --tail 15 "$c" 2>&1 | sed 's/^/       | /'
-    ROW[$name]="-|-|-|could not run"
+    ROW[$name]="-|-|-|-|-|could not run"
     docker rm -f -v "$c" >/dev/null 2>&1
     continue
   fi
@@ -345,13 +384,60 @@ for name in "${SELECTED[@]}"; do
     echo "       PostgreSQL logged $untracked 'untracked child process' line(s): processes it didn't start ended as its children"
   fi
 
+  # 3. The server's own environment.
+  spid="$(server_pid "$c" | head -n 1)"
+  if [ -z "$spid" ]; then
+    findings+=("no database server process found, so its environment can't be read")
+    env_result="not read"
+  elif ! names="$(env_names "$c" "$spid")"; then
+    findings+=("the database server's environment couldn't be read")
+    env_result="not read"
+  elif grep -qx CLOUVE_OPS_PASSWORD <<< "$names"; then
+    findings+=("the database server's environment holds CLOUVE_OPS_PASSWORD")
+    env_result="holds it"
+  else
+    pass "the database server's environment (pid $spid) holds no CLOUVE_OPS_PASSWORD"
+    env_result="clean"
+  fi
+
+  # 4. A clean stop. 5. A sign-in after a restart.
+  # The first start's temporary server already logged the line once, so only a line the stop added counts.
+  lines_before="$(docker logs "$c" 2>&1 | grep -c "${SHUTDOWN_LINE[$name]}")"
+  started=$SECONDS
+  docker stop -t 30 "$c" >/dev/null 2>&1
+  took=$((SECONDS - started))
+  lines_after="$(docker logs "$c" 2>&1 | grep -c "${SHUTDOWN_LINE[$name]}")"
+  if [ "$took" -lt 30 ] && [ "$lines_after" -gt "$lines_before" ]; then
+    pass "docker stop ends it cleanly in ${took} s"
+    stop_result="clean, ${took} s"
+  else
+    findings+=("docker stop took ${took} s or left no clean shutdown line ('${SHUTDOWN_LINE[$name]}')")
+    stop_result="not clean, ${took} s"
+  fi
+  restart_result="no sign-in"
+  if docker start "$c" >/dev/null 2>&1; then
+    deadline=$((SECONDS + READY_SECONDS))
+    while [ "$SECONDS" -lt "$deadline" ]; do
+      if in_db "$c" "</dev/tcp/127.0.0.1/${PORT[$name]} && </dev/tcp/127.0.0.1/22" >/dev/null 2>&1; then
+        if [ "$(ssh_from_client "$c" 1 'echo ok')" = ok ]; then restart_result="signs in"; fi
+        break
+      fi
+      sleep 2
+    done
+  fi
+  if [ "$restart_result" = "signs in" ]; then
+    pass "after a restart, clouve-ops still signs in"
+  else
+    findings+=("after a restart, clouve-ops doesn't sign in")
+  fi
+
   if [ "${#findings[@]}" -eq 0 ]; then
     pass "no zombie after $SSH_SESSIONS SSH sessions; a killed background job is reaped and nothing restarts"
     verdict=PASS
   else
     for finding in "${findings[@]}"; do
       if [ "$pid1" != tini ] && is_known "$name"; then
-        known "$finding (fixed when the image gets tini, #52)"
+        known "$finding (fixed when the image gets tini)"
         verdict=KNOWN
       else
         fail "$finding"
@@ -359,15 +445,16 @@ for name in "${SELECTED[@]}"; do
       fi
     done
   fi
-  ROW[$name]="$pid1|$before / $after|$job_result|$verdict"
+  ROW[$name]="$pid1|$before / $after|$job_result|$env_result|$stop_result|$verdict"
   docker rm -f -v "$c" >/dev/null 2>&1
 done
 
 echo
-printf '%-18s %-9s %-26s %-36s %s\n' image "PID 1" "zombies before / after" "killed background job" verdict
+printf '%-18s %-9s %-24s %-34s %-12s %-16s %s\n' image "PID 1" "zombies before / after" "killed background job" \
+  "server env" "docker stop" verdict
 for name in "${SELECTED[@]}"; do
-  IFS='|' read -r p z j v <<< "${ROW[$name]:--|-|-|-}"
-  printf '%-18s %-9s %-26s %-36s %s\n' "$name" "$p" "$z" "$j" "$v"
+  IFS='|' read -r p z j e st v <<< "${ROW[$name]:--|-|-|-|-|-}"
+  printf '%-18s %-9s %-24s %-34s %-12s %-16s %s\n' "$name" "$p" "$z" "$j" "$e" "$st" "$v"
 done
 
 echo
