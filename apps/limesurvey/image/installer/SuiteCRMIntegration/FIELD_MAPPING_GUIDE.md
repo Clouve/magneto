@@ -1,16 +1,16 @@
-# Field Mapping Quick Reference Guide (v2.0)
+# Field Mapping Quick Reference Guide (v2.1)
 
 ## Overview
 
 This guide explains how to configure per-question field mappings in LimeSurvey to automatically create records in SuiteCRM when surveys are completed.
 
-**Version 2.0** uses a **per-question mapping approach** where each survey question can be individually configured to map to a specific SuiteCRM field. This replaces the previous JSON-based field mapping configuration.
+**Version 2.1** uses a **per-question mapping approach**: each survey question can fill one or more SuiteCRM fields, each with an optional transformation rule. This replaces the previous JSON-based field mapping configuration.
 
 ## How Per-Question Mapping Works
 
-In LimeSurvey v2.0 integration, each question has a custom attribute that allows you to select which SuiteCRM field it maps to:
+In version 2.1 of the plugin, each question has a custom attribute that holds the SuiteCRM fields it fills:
 
-1. **Edit any question** in your survey
+1. **Edit any question** in your survey, in the classic question editor. LimeSurvey 7 opens its new editor by default, and the new editor does not show the section. To switch, open the menu under your name at the top right, choose the entry for the new editor and pick "Classic"
 2. **Scroll to the "SuiteCRM Integration" section** in question settings
 3. **Select the CRM field** from the dropdown (e.g., `Leads: first_name`, `Leads: email1`)
 4. **Save the question**
@@ -20,6 +20,8 @@ The plugin automatically:
 - Caches field definitions for performance
 - Shows field labels and types in the dropdown
 - Stores mappings in the `lime_survey_crm_mappings` database table
+
+The plugin writes to Leads and Cases only, and only to fields that SuiteCRM lists for them. It refuses a mapping to anything else, when the mapping is saved and again when a response is sent.
 
 ## Example: Setting Up a Contact Form
 
@@ -64,8 +66,8 @@ For each question, set the SuiteCRM field mapping:
 | `title` | Job Title | String | No |
 | `account_name` | Company Name | String | No |
 | `description` | Description/Notes | Text | No |
-| `lead_source` | Lead Source | Enum | Auto-set to "Survey" |
-| `status` | Status | Enum | Auto-set to "New" |
+| `lead_source` | Lead Source | Enum | No |
+| `status` | Status | Enum | No |
 | `refered_by` | Referred By | String | No |
 | `website` | Website | URL | No |
 | `do_not_call` | Do Not Call | Boolean | No |
@@ -87,8 +89,8 @@ To create Cases instead of (or in addition to) Leads, map questions to Case fiel
 | `name` | Case Subject | String | **Yes** |
 | `description` | Full Description | Text | No |
 | `priority` | Priority | Enum | No |
-| `status` | Status | Enum | Auto-set to "New" |
-| `state` | State | Enum | Auto-set to "Open" |
+| `status` | Status | Enum | No |
+| `state` | State | Enum | No |
 | `type` | Case Type | Enum | No |
 | `resolution` | Resolution | Text | No |
 | `work_log` | Work Log | Text | No |
@@ -182,7 +184,7 @@ Enable email validation on email questions to ensure valid addresses are sent to
 1. **Test Your Mapping**: Always test with a sample survey response before going live
 2. **Required Fields**: Ensure `last_name` (for Leads) or `name` (for Cases) are mapped
 3. **Data Types**: Ensure survey question types match expected CRM field types
-4. **Enable Debug Mode**: Check logs at `/tmp/suitecrm_integration.log` for detailed information
+4. **Enable Debug Mode**: The plugin then writes what it does to `tmp/runtime/suitecrm_integration.log` in LimeSurvey's folder. The log holds counts and ids, never answers. For a sync that failed, the survey's sync log shows what was sent
 
 ## Troubleshooting
 
@@ -192,14 +194,14 @@ Enable email validation on email questions to ensure valid addresses are sent to
 - Is the survey enabled for SuiteCRM integration?
 - Are required fields mapped (last_name for Leads, name for Cases)?
 - Is the plugin enabled globally?
-- Check debug logs: `docker exec <container> cat /tmp/suitecrm_integration.log`
+- With debug mode on, read the debug log: `docker exec <container> cat /var/www/html/tmp/runtime/suitecrm_integration.log`
 
 ### Issue: Wrong data in CRM fields
 
 **Check:**
 - Are the correct questions mapped to CRM fields?
 - Do multiple choice values match SuiteCRM's expected enum values?
-- Check the `lime_survey_crm_sync_log` table for request/response details
+- For a sync that failed, the `lime_survey_crm_sync_log` table has what was sent and the error message
 
 ### Issue: Some fields empty in CRM
 
@@ -208,7 +210,7 @@ Enable email validation on email questions to ensure valid addresses are sent to
 - Are respondents actually filling them out?
 - Check the sync log table: `SELECT * FROM lime_survey_crm_sync_log ORDER BY id DESC LIMIT 5;`
 
-## Database Tables (v2.0)
+## Database Tables (v2.1)
 
 The plugin uses two database tables:
 
@@ -219,7 +221,7 @@ SELECT * FROM lime_survey_crm_mappings WHERE survey_id = YOUR_SURVEY_ID;
 ```
 
 ### `lime_survey_crm_sync_log`
-Logs all sync attempts with request/response data:
+Logs every sync attempt. A failed one keeps what was sent and the error message. One that worked keeps the record's id only. The plugin removes rows older than 90 days:
 ```sql
 SELECT id, response_id, crm_module, crm_record_id, sync_status, synced_at
 FROM lime_survey_crm_sync_log ORDER BY id DESC LIMIT 10;
@@ -259,5 +261,3 @@ When a survey is completed, a new Lead is created with:
 - Work Phone: [phone response]
 - Company: [company response]
 - Description: [message response]
-- Lead Source: "Survey" (automatic)
-- Status: "New" (automatic)

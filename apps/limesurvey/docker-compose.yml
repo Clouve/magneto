@@ -8,6 +8,10 @@ volumes:
   db_data:
   limesurvey_data:
   limesurvey_upload:
+  magneto_agent_home:
+  magneto_agent_usr:
+  magneto_agent_opt:
+  magneto_agent_var:
 
 services:
   limesurvey-mariadb:
@@ -19,6 +23,9 @@ services:
       MYSQL_USER: limesurvey
       MYSQL_PASSWORD: limesurvey_password
       MYSQL_ROOT_PASSWORD: root_password
+      # The clouve-ops sshd in this container starts only when this is set. On a deployment the platform sets one
+      # value on every service. Local runs use this made-up one.
+      CLOUVE_OPS_PASSWORD: clouve_ops_dev_password
     volumes:
       - db_data:/var/lib/mysql
     networks:
@@ -59,8 +66,71 @@ services:
       # Demo Data Installation
       # Set to 'true' to import demo survey data on first startup
       INSTALL_DEMO_DATA: "true"
+
+      # The clouve-ops sshd for the AI Assistant: the same made-up value as on limesurvey-mariadb
+      CLOUVE_OPS_PASSWORD: clouve_ops_dev_password
     volumes:
       - limesurvey_data:/var/www/html
       - limesurvey_upload:/var/www/html/upload
+    networks:
+      - limesurvey_network
+
+  magneto-agent:
+    image: r.clv.zone/clouveinc/magneto-agent
+    container_name: limesurvey_magneto_agent
+    restart: unless-stopped
+    ports:
+      - "${MAGNETO_AGENT_PORT:-8081}:80"
+    environment:
+      MAGNETO_AGENT_USERNAME: admin
+      MAGNETO_AGENT_PASSWORD: Admin@123
+      MAGNETO_AGENT_ROOT_PASSWORD: Root@123
+
+      # AI Assistant model access, for local runs only. A Clouve
+      # deployment gets a managed key from the platform and never reads
+      # these. Export one option in your shell before ./start.sh:
+      #   - MAGNETO_AGENT_LLM_BASE_URL + MAGNETO_AGENT_LLM_KEY: a LiteLLM
+      #     gateway URL and a key it issued, or
+      #   - ANTHROPIC_API_KEY: your own Anthropic API key.
+      # With neither set, the agent shows "The AI Assistant isn't
+      # available yet". There is no key screen.
+      MAGNETO_AGENT_LLM_BASE_URL: ${MAGNETO_AGENT_LLM_BASE_URL:-}
+      MAGNETO_AGENT_LLM_KEY: ${MAGNETO_AGENT_LLM_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+
+      # Activates the limesurvey plugin from the magneto-skills Claude Code
+      # marketplace. At container start the Magneto Agent loader clones the
+      # marketplace, stages the plugin's payload at
+      # /clouve/skills/limesurvey/plugin/, appends a "Skill: limesurvey"
+      # section to ~/.claude/CLAUDE.md from context/limesurvey/CONTEXT.md.tpl
+      # (baked into the limesurvey image and pulled over clouve-ops SSH by
+      # sidecar-fetcher), and runs the plugin's install.sh hook.
+      MAGNETO_AGENT_SKILLS: https://github.com/Clouve/magneto-skills.git?plugins=limesurvey
+      # MAGNETO_AGENT_SKILLS_GIT_TOKEN: ${MAGNETO_AGENT_SKILLS_GIT_TOKEN:-}
+      # MAGNETO_AGENT_SKILLS_GIT_USERNAME: ${MAGNETO_AGENT_SKILLS_GIT_USERNAME:-}
+
+      # Same value as the limesurvey and limesurvey-mariadb services. The
+      # assistant signs in to both with `sshpass -e ssh clouve-ops@...`
+      # using this password.
+      CLOUVE_OPS_PASSWORD: clouve_ops_dev_password
+
+      # Hosts the Magneto Agent SSHs to at init, for two pulls:
+      #   - sidecar-fetcher: the persona (CONTEXT.md.tpl) baked into each
+      #     container's /clouve/context/ tree;
+      #   - sidecar-env-fetcher: each sibling's settings, re-exported with
+      #     the sibling's name as a prefix, so the skill can use
+      #     LIMESURVEY_HOST, LIMESURVEY_PUBLIC_URL, LIMESURVEY_DB_HOST and
+      #     the rest. Passwords go to the agent's secrets file, which
+      #     clv-secret reads, and never into the environment.
+      CLV_SIDECAR_HOSTS: limesurvey,limesurvey-mariadb
+      # The short names that go with CLV_SIDECAR_HOSTS, one for one. They
+      # give the prefix (LIMESURVEY_, LIMESURVEY_MARIADB_). On Kubernetes
+      # the hosts become tkt-<id>-* and these stay as they are.
+      CLV_SIDECAR_NAMESPACES: limesurvey,limesurvey-mariadb
+    volumes:
+      - magneto_agent_home:/home
+      - magneto_agent_usr:/usr
+      - magneto_agent_opt:/opt
+      - magneto_agent_var:/var
     networks:
       - limesurvey_network

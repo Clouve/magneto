@@ -35,7 +35,7 @@ The marketplace packaging system enables you to:
 | Concept | Description |
 |---------|-------------|
 | **Application** | A single deployable unit (e.g., WordPress, Moodle) with its dependencies |
-| **Bundle** | Multiple applications packaged together with integrations (e.g., Education Kit) |
+| **Bundle** | Multiple applications packaged together with integrations (e.g., Education Kit, Customer Kit) |
 | **Development Compose** | `docker-compose.yml` for local testing and development |
 | **Marketplace Manifest** | `clv-docker-compose.yml` with metadata for marketplace deployment |
 | **Image Directory** | Contains Dockerfiles and build configuration for custom images |
@@ -240,7 +240,7 @@ Three rules come with it:
   restart still reach the server. In a database image, also start the sshd
   detached, `( start-clouve-ops-sshd.sh & )`: the subshell exits at once, so
   sshd's parent is tini, not the database server that the entrypoint's `exec`
-  turns the shell into. Both Odoo images and the four MySQL and MariaDB images
+  turns the shell into. Both Odoo images and the six MySQL and MariaDB images
   do this (`tests/odoo-init.test.sh`, `tests/db-image-zombies.test.sh`). Oracle
   Linux, the MySQL images' base, has no tini package, so they copy Debian's
   static build from a build stage. Add a new database image to
@@ -251,10 +251,10 @@ Three rules come with it:
   the database server (anything that runs as the database's user can read the
   server's environment), and the app images before Apache or the app (PHP's
   getenv() reads Apache's environment). The password signs in as clouve-ops,
-  who has sudo. The WordPress, Gibbon, Moodle, Odoo and Nextcloud images do
-  this (`tests/app-ops-password.test.sh` for the three PHP apps,
-  `tests/db-image-zombies.test.sh` for the database images); a new image does
-  it too. Where tini is PID 1 it keeps the password, in an environment only
+  who has sudo. The WordPress, Gibbon, Moodle, Odoo, Nextcloud, LimeSurvey and
+  SuiteCRM images do this (`tests/app-ops-password.test.sh` for WordPress,
+  Gibbon, Moodle, LimeSurvey and SuiteCRM, `tests/db-image-zombies.test.sh` for
+  the database images); a new image does it too. Where tini is PID 1 it keeps the password, in an environment only
   root can read, and the AI Assistant never copies it.
 
 ---
@@ -355,6 +355,11 @@ or not the customer added the AI Assistant. The images also run without it,
 because the `clouve-ops` sshd in them starts only when the platform injects
 `CLOUVE_OPS_PASSWORD`.
 
+The agent-capable apps here are WordPress, Moodle, Gibbon, Odoo, Nextcloud,
+LimeSurvey, SuiteCRM and AI Studio, and both bundles: the Education Kit
+(Gibbon and Moodle) and the Customer Kit (LimeSurvey and SuiteCRM). ownCloud
+has no AI Assistant.
+
 ### AI Assistant (`x-clouve-agent`)
 
 An agent-capable manifest adds a top-level `x-clouve-agent` block. The
@@ -378,7 +383,7 @@ x-clouve-agent:
 | `enabled` | `true` offers the AI Assistant on this listing. A manifest without the block has no AI Assistant. |
 | `skills.url` | Optional. The skills marketplace repo, with a non-empty `?plugins=` filter and an optional `#branch`. Left out, the agent starts with its base context and no skills plugins. |
 | `skills.git.token` / `skills.git.username` | Optional credentials for a private skills repo. |
-| `advanced.sidecarPullTimeout` | Optional, in seconds (at most 1800). How long the agent waits at init to pull each sibling's persona and env over `clouve-ops` SSH. Raise it for siblings with a slow first install, as Moodle, Gibbon, Odoo and Nextcloud do here. |
+| `advanced.sidecarPullTimeout` | Optional, in seconds (at most 1800). How long the agent waits at init to pull each sibling's persona and env over `clouve-ops` SSH. Raise it for siblings with a slow first install, as Moodle, Gibbon, Odoo, Nextcloud, LimeSurvey and SuiteCRM do here. |
 | `advanced.passthroughEnv` | Optional map of extra env vars for the agent container. It is an escape hatch; `apps/ai-studio` uses it. |
 
 On a paid plan, the AI Assistant's monthly price is Clouve's platform fee for
@@ -682,6 +687,27 @@ x-clouve-healthcheck:
 ```
 
 > **Note:** Set `enabled: false` for supporting containers (databases) that don't need external health checking.
+
+### A stand-in for a long install or upgrade
+
+The platform makes a liveness probe and a readiness probe from `x-clouve-healthcheck`, and restarts a container that
+fails the probe for long enough: about 105 seconds for LimeSurvey and SuiteCRM. A first install on a network disk,
+or an upgrade of an existing site, can take longer. So these two images answer the probe through a stand-in until
+the app is ready:
+
+- The stand-in is PHP's built-in server on the app's port, with one router file from the image
+  (`image/installer/standin-router.php`). It serves no code of the app. It is not a second Apache: stopping one
+  signals every process in the container, the sshd included.
+- `GET /` and `HEAD /` get 200 and a short page. Everything else gets 503 with `Retry-After`, so a program that
+  calls the app, such as an API client, never takes the page for the app's answer.
+- Every answer has the header `X-Clouve-Standin` with the app's name. A tool that waits for the app itself looks
+  for it, as `./test.sh` and `tests/new-disk-start.test.sh` do.
+- Right before Apache starts, the entrypoint stops the stand-in by its PID and waits until the port is free.
+
+A stand-in keeps the probe passing whatever happens behind it. So an image that has one says in its log when a
+start can't finish: both images log one line that starts with `[clouve-upgrade] FAILED`, and that line is what an
+alert looks for. `apps/limesurvey/README.md` and `apps/suitecrm/README.md` say when each image waits and when it
+ends the container.
 
 ---
 
@@ -995,6 +1021,11 @@ no swap beyond that. A container passes when its `x-clouve-healthcheck` probe pa
 probe asks the container's IP, follows redirects to the same host and judges the last answer, as the kubelet does.
 Then, for a 90-second settle period, nothing may exit or restart, and no probe may fail for longer than the platform
 allows. The Magneto Agent's service is left out unless `--with-agent` is given.
+
+LimeSurvey and SuiteCRM answer their probe through a stand-in while they install or upgrade (`GET /` gets 200 and the
+header `X-Clouve-Standin`). The runner doesn't take that for the app: such a container passes when the app itself
+answers, and it has the 600 seconds for that, because the stand-in keeps the probe passing in the meantime
+(`tests/new-disk-standin.test.sh` checks this part of the runner with made-up answers).
 
 `build-uat.sh` and `build-prod.sh` push an app only when this test passed on its current source, on the machine that
 pushes: a record of each pass is kept in `~/.cache/magneto/new-disk-passes/` there, and any change to the app's files

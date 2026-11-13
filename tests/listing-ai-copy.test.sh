@@ -92,10 +92,13 @@ MAX_APP_DESCRIPTION = 1000
 TITLES = {
     "apps/ai-studio/clv-docker-compose.yml": {"ai-studio": "AI Studio"},
     "apps/gibbon/clv-docker-compose.yml": {"gibbon": "Gibbon"},
+    "apps/limesurvey/clv-docker-compose.yml": {"limesurvey": "LimeSurvey"},
     "apps/moodle/clv-docker-compose.yml": {"moodle": "Moodle"},
     "apps/nextcloud/clv-docker-compose.yml": {"nextcloud": "Nextcloud"},
     "apps/odoo/clv-docker-compose.yml": {"odoo": "Odoo"},
+    "apps/suitecrm/clv-docker-compose.yml": {"suitecrm": "SuiteCRM"},
     "apps/wordpress/clv-docker-compose.yml": {"wordpress": "WordPress"},
+    "bundles/crm-kit/clv-docker-compose.yml": {"limesurvey": "LimeSurvey", "suitecrm": "SuiteCRM"},
     "bundles/education-kit/clv-docker-compose.yml": {"gibbon": "Gibbon", "moodle": "Moodle"},
 }
 
@@ -103,9 +106,11 @@ TITLES = {
 # and for a free trial or free services.
 PRICE_COPY = {
     "apps/gibbon/clv-docker-compose.yml": "gibbon",
+    "apps/limesurvey/clv-docker-compose.yml": "limesurvey",
     "apps/moodle/clv-docker-compose.yml": "moodle",
     "apps/nextcloud/clv-docker-compose.yml": "nextcloud",
     "apps/odoo/clv-docker-compose.yml": "odoo",
+    "apps/suitecrm/clv-docker-compose.yml": "suitecrm",
     "apps/wordpress/clv-docker-compose.yml": "wordpress",
 }
 

@@ -67,6 +67,21 @@ class FieldCacheManager
     }
 
     /**
+     * The cached field list of a module, however old it is, or an empty list when there is none. It never calls
+     * SuiteCRM, so it needs no API client: the plugin uses it for callers who may not make it talk to SuiteCRM, and
+     * when a question is saved.
+     *
+     * @param PluginBase $plugin Plugin instance for settings storage
+     * @param string $moduleName Module name
+     * @return array Field metadata
+     */
+    public static function getCachedFields($plugin, string $moduleName): array
+    {
+        $cached = $plugin->getSetting(self::CACHE_PREFIX . strtolower($moduleName));
+        return is_array($cached) ? $cached : [];
+    }
+
+    /**
      * Get fields for multiple modules
      * 
      * @param array $moduleNames Array of module names

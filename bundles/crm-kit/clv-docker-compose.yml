@@ -59,9 +59,9 @@ services:
       memoryBase: 1
       cpuBase: 1
     x-clouve-bundle-metadata:
-      appVersion: 6.16.1
+      appVersion: 7.10.0
       appTitle: LimeSurvey
-      appDescription: LimeSurvey is a powerful open-source survey platform that enables organizations to create, distribute, and analyze professional surveys with ease. Designed for flexibility and scalability, LimeSurvey offers a comprehensive suite of features including customizable question types, advanced logic and branching, multilingual support, and robust data analysis tools. Whether for market research, customer feedback, academic studies, or employee engagement, LimeSurvey empowers users to gather actionable insights through intuitive survey design and detailed reporting capabilities. Its user-friendly interface and extensive customization options make it an ideal solution for businesses and institutions seeking to make data-driven decisions.
+      appDescription: LimeSurvey 7 for surveys, questionnaires and feedback forms. In this kit it is linked to SuiteCRM. When someone completes a survey whose link is on, the answers you mapped to CRM fields become a lead or a case in SuiteCRM. You tell the AI Assistant what you need in plain English, in a chat in your browser. It drafts a survey and leaves it inactive for you to review, maps a survey's questions to SuiteCRM fields, sets up participant lists, and sends invitations and reminders through your own mail server, only after you say yes. It exports and summarizes your responses when you ask, adds admin accounts, helps you set up that server, takes and restores backups, and finds out why answers stopped reaching the CRM. On a paid plan, the price of the AI Assistant includes an AI usage allowance, and you can buy more. On a free trial, or with free services, you use it with your own Claude subscription. You can turn it on or off. You own your survey data; Clouve hosts the containers.
       adminPath: /admin
     x-clouve-healthcheck:
       enabled: true
@@ -170,9 +170,9 @@ services:
       memoryBase: 1
       cpuBase: 1
     x-clouve-bundle-metadata:
-      appVersion: 8.9.1
+      appVersion: 8.10.2
       appTitle: SuiteCRM
-      appDescription: SuiteCRM is a comprehensive open-source Customer Relationship Management (CRM) solution designed to help businesses manage customer interactions, sales processes, and marketing campaigns effectively. Built for flexibility and scalability, SuiteCRM offers powerful features including contact management, sales automation, marketing tools, customer support ticketing, and detailed analytics. Its intuitive interface and extensive customization options enable organizations to tailor the platform to their specific business needs. Whether for small businesses or large enterprises, SuiteCRM empowers teams to build stronger customer relationships, streamline workflows, and drive revenue growth through data-driven insights and efficient process management.
+      appDescription: SuiteCRM for small sales and support teams, with accounts, contacts, leads, opportunities and cases. In this kit it is linked to LimeSurvey. A completed survey arrives as a lead or case, with the answers in the fields you chose. You tell the AI Assistant what you need in plain English, in a chat in your browser. It adds and updates accounts, contacts, leads and opportunities, and imports a CSV after showing you what it will do. It answers questions about your pipeline, adds users and sets roles, helps set up outgoing email, takes and restores backups, and checks SuiteCRM's side of the link when survey leads stop arriving. It waits for your yes before it deletes, changes many records, changes who can sign in or sends email. On a paid plan, the price of the AI Assistant includes an AI usage allowance, and you can buy more. On a free trial, or with free services, you use it with your own Claude subscription. You can turn it on or off. You own your CRM data; Clouve hosts the containers.
     x-clouve-healthcheck:
       enabled: true
       type: HTTP
@@ -254,3 +254,12 @@ volumes:
     driver: local
   suitecrm-db-data:
     driver: local
+x-clouve-agent:
+  enabled: true
+  skills:
+    url: https://github.com/Clouve/magneto-skills.git?plugins=limesurvey,suitecrm
+    git:
+      token: ''
+      username: ''
+  advanced:
+    sidecarPullTimeout: 600

@@ -569,6 +569,8 @@ class SuiteCRMDataTransformer
     ): array {
         $result = [];
         $errors = [];
+        // The modules that got a value from a question someone answered.
+        $answered = [];
 
         foreach ($mappings as $questionId => $mappingsList) {
             $questionCode = $this->findQuestionCode($questionId, $questions);
@@ -620,6 +622,18 @@ class SuiteCRMDataTransformer
                     $result[$module] = [];
                 }
                 $result[$module][$fieldName] = $transformed;
+                if ($originalValue !== null && $originalValue !== '') {
+                    $answered[$module] = true;
+                }
+            }
+        }
+
+        // An auto-generated value is made whether or not its question was shown. Alone it must not make a record:
+        // a survey that asks for a lead or a case, depending on an answer, would otherwise get an empty record of
+        // the other kind for every response. A module gets a record only when one of its questions was answered.
+        foreach (array_keys($result) as $module) {
+            if (empty($answered[$module])) {
+                unset($result[$module]);
             }
         }
 

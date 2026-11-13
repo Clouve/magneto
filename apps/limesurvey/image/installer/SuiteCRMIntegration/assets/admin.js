@@ -28,18 +28,39 @@
         },
         
         /**
+         * Escape HTML special characters. What the server answers can hold text from SuiteCRM or from a
+         * database, so it goes into the page escaped.
+         */
+        escapeHtml: function(str) {
+            if (str === null || str === undefined) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        },
+
+        /**
          * Make AJAX request to plugin endpoint
+         *
+         * The endpoints that change something take POST with LimeSurvey's CSRF token. Reading the sync log is a GET.
          */
         ajaxRequest: function(functionName, data, callback) {
             var url = this.baseUrl + '/index.php/plugins/direct';
-            
+            var changes = functionName !== 'actionGetSyncLogs';
+            var token = {};
+            if (changes && window.LS && LS.data && LS.data.csrfTokenName) {
+                token[LS.data.csrfTokenName] = LS.data.csrfToken;
+            }
+
             $.ajax({
                 url: url,
-                type: 'GET',
+                type: changes ? 'POST' : 'GET',
                 data: $.extend({
                     plugin: 'SuiteCRMIntegration',
                     function: functionName
-                }, data || {}),
+                }, token, data || {}),
                 dataType: 'json',
                 success: function(response) {
                     callback(null, response);
@@ -62,6 +83,7 @@
          */
         testConnection: function(e) {
             e.preventDefault();
+            var self = this;
             var $btn = $(e.currentTarget);
             var $result = $btn.siblings('.connection-result');
             
@@ -71,16 +93,16 @@
                 $btn.prop('disabled', false).text('Test Connection');
                 
                 if (err) {
-                    $result.html('<span class="text-danger"><i class="ri-close-circle-line"></i> ' + err + '</span>');
+                    $result.html('<span class="text-danger"><i class="ri-close-circle-line"></i> ' + self.escapeHtml(err) + '</span>');
                     return;
                 }
                 
                 if (response.success) {
                     $result.html('<span class="text-success"><i class="ri-check-line"></i> Connected! Found ' + 
-                        (response.modules_count || 0) + ' modules.</span>');
+                        self.escapeHtml(response.modules_count || 0) + ' modules.</span>');
                 } else {
                     $result.html('<span class="text-danger"><i class="ri-close-circle-line"></i> ' + 
-                        (response.message || 'Connection failed') + '</span>');
+                        self.escapeHtml(response.message || 'Connection failed') + '</span>');
                 }
             });
         },
@@ -90,6 +112,7 @@
          */
         refreshCache: function(e) {
             e.preventDefault();
+            var self = this;
             var $btn = $(e.currentTarget);
             var $result = $btn.siblings('.cache-result');
             
@@ -99,7 +122,7 @@
                 $btn.prop('disabled', false).text('Refresh Field Cache');
                 
                 if (err) {
-                    $result.html('<span class="text-danger"><i class="ri-close-circle-line"></i> ' + err + '</span>');
+                    $result.html('<span class="text-danger"><i class="ri-close-circle-line"></i> ' + self.escapeHtml(err) + '</span>');
                     return;
                 }
                 
@@ -107,16 +130,16 @@
                     var statusHtml = '<span class="text-success"><i class="ri-check-line"></i> Cache refreshed!</span><ul>';
                     $.each(response.status || {}, function(module, status) {
                         if (status.success) {
-                            statusHtml += '<li>' + module + ': ' + status.field_count + ' fields</li>';
+                            statusHtml += '<li>' + self.escapeHtml(module) + ': ' + self.escapeHtml(status.field_count) + ' fields</li>';
                         } else {
-                            statusHtml += '<li class="text-danger">' + module + ': ' + status.error + '</li>';
+                            statusHtml += '<li class="text-danger">' + self.escapeHtml(module) + ': ' + self.escapeHtml(status.error) + '</li>';
                         }
                     });
                     statusHtml += '</ul>';
                     $result.html(statusHtml);
                 } else {
                     $result.html('<span class="text-danger"><i class="ri-close-circle-line"></i> ' + 
-                        (response.error || 'Refresh failed') + '</span>');
+                        self.escapeHtml(response.error || 'Refresh failed') + '</span>');
                 }
             });
         },
@@ -126,6 +149,7 @@
          */
         viewSyncLogs: function(e) {
             e.preventDefault();
+            var self = this;
             var $btn = $(e.currentTarget);
             var surveyId = $btn.data('survey-id');
             var $container = $btn.siblings('.sync-logs-container');
@@ -141,15 +165,15 @@
                 $btn.prop('disabled', false).text('View Sync Logs');
                 
                 if (err) {
-                    $container.html('<div class="alert alert-danger">' + err + '</div>');
+                    $container.html('<div class="alert alert-danger">' + self.escapeHtml(err) + '</div>');
                     return;
                 }
                 
                 var html = '<div class="sync-logs-panel">';
                 html += '<h5>Sync Statistics</h5>';
-                html += '<p>Total: ' + (response.stats.total || 0) + 
-                    ' | Success: ' + (response.stats.success || 0) + 
-                    ' | Failed: ' + (response.stats.failed || 0) + '</p>';
+                html += '<p>Total: ' + self.escapeHtml(response.stats.total || 0) + 
+                    ' | Success: ' + self.escapeHtml(response.stats.success || 0) + 
+                    ' | Failed: ' + self.escapeHtml(response.stats.failed || 0) + '</p>';
                 
                 if (response.logs && response.logs.length > 0) {
                     html += '<table class="table table-sm"><thead><tr>' +
@@ -159,11 +183,11 @@
                     $.each(response.logs, function(i, log) {
                         var statusClass = log.sync_status === 'success' ? 'success' : 'danger';
                         html += '<tr class="table-' + statusClass + '">' +
-                            '<td>' + log.synced_at + '</td>' +
-                            '<td>' + log.crm_module + '</td>' +
-                            '<td>' + log.sync_status + '</td>' +
-                            '<td>' + (log.crm_record_id || '-') + '</td>' +
-                            '<td>' + (log.error_message || '-') + '</td>' +
+                            '<td>' + self.escapeHtml(log.synced_at) + '</td>' +
+                            '<td>' + self.escapeHtml(log.crm_module) + '</td>' +
+                            '<td>' + self.escapeHtml(log.sync_status) + '</td>' +
+                            '<td>' + self.escapeHtml(log.crm_record_id || '-') + '</td>' +
+                            '<td>' + self.escapeHtml(log.error_message || '-') + '</td>' +
                             '</tr>';
                     });
                     html += '</tbody></table>';

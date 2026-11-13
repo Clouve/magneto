@@ -320,8 +320,10 @@ wait_for_app_ready() {
     fi
 
     while [ $wait_count -lt $max_wait ]; do
-        # Try to make an HTTP request to the application
-        if curl -sf "http://localhost:${port}/" >/dev/null 2>&1; then
+        # Try to make an HTTP request to the application. An image's stand-in, which answers while the app is being
+        # set up or upgraded, says so in an X-Clouve-Standin header and doesn't count as the application.
+        if headers="$(curl -sf -D - -o /dev/null "http://localhost:${port}/" 2>/dev/null)" &&
+            ! grep -qi '^x-clouve-standin:' <<< "$headers"; then
             echo ""
             print_success "Application is ready and responding to HTTP requests"
             return 0
@@ -354,7 +356,9 @@ check_logs_for_url_change() {
     # Look for URL change indicators
     local found_change=false
 
-    if echo "$logs" | grep -q "URL has changed\|SITE_URL has changed\|PUBLIC_URL has changed"; then
+    # What each image logs when it finds another URL in its environment than the one it has: WordPress, LimeSurvey and
+    # Nextcloud say "... has changed", SuiteCRM says that the site address in its settings is now the new one.
+    if echo "$logs" | grep -q "URL has changed\|SITE_URL has changed\|PUBLIC_URL has changed\|the site address in SuiteCRM's settings is now"; then
         found_change=true
         print_success "Found URL change detection in logs"
     fi
@@ -372,7 +376,7 @@ check_logs_for_url_change() {
     echo ""
     print_info "Relevant log excerpts:"
     echo "----------------------------------------"
-    echo "$logs" | grep -E "(URL|url|Checking|Updating|changed)" | tail -20
+    echo "$logs" | grep -E "(URL|url|Checking|Updating|changed|site address)" | tail -20
     echo "----------------------------------------"
     echo ""
 

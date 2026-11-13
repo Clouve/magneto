@@ -1,396 +1,199 @@
-# CRM Kit Docker Bundle
+# Customer Kit: LimeSurvey and SuiteCRM
 
-A comprehensive customer relationship management platform combining LimeSurvey (Survey Platform) and SuiteCRM (Customer Relationship Management) in a single integrated bundle.
+The Customer Kit runs LimeSurvey and SuiteCRM on one deployment, each with its own MariaDB database, and links them:
+a completed survey response becomes a lead or a case in SuiteCRM. Clouve's SuiteCRM plugin for LimeSurvey does that.
+The kit also offers the AI Assistant, with a skill for each app.
 
-## Overview
+This folder is the bundle. It has no images of its own. It runs the images of `apps/limesurvey` and `apps/suitecrm`,
+and each app's README says how its image installs, upgrades and is run by hand.
 
-The CRM Kit bundle provides a complete solution for organizations by combining:
+## What is in it
 
-- **LimeSurvey**: A powerful open-source survey platform for creating, distributing, and analyzing professional surveys
-- **SuiteCRM**: A comprehensive open-source CRM solution for managing customer interactions, sales processes, and marketing campaigns
+| Container | What it is | Version | Memory and CPU on the smallest plan | Volumes |
+| --- | --- | --- | --- | --- |
+| `limesurvey` | LimeSurvey with Clouve's SuiteCRM plugin, public, port 8080 | 7.10.0 | 1 GB, 1 CPU | `/var/www/html` and `/var/www/html/upload`, 10 GB each |
+| `limesurvey-mariadb` | LimeSurvey's database | MariaDB 11.8 | 1 GB, 0.5 CPU | `/var/lib/mysql`, 10 GB |
+| `suitecrm` | SuiteCRM, public, port 80 | 8.10.2 | 1 GB, 1 CPU | `/var/www/html`, 10 GB |
+| `suitecrm-mariadb` | SuiteCRM's database | MariaDB 12.3 | 1 GB, 0.5 CPU | `/var/lib/mysql`, 10 GB |
 
-These applications work together to provide a comprehensive platform for customer engagement, from gathering feedback through surveys to managing customer relationships and sales pipelines.
+Customers pay for capacity, so it doesn't change with an app's version. `tests/crm-kit.test.sh` compares the
+manifest with the one from before LimeSurvey 7 and fails when a capacity, volume, variable, health check or name
+differs.
 
-## 🚀 Quick Start
+LimeSurvey is the kit's default app, so it answers on the deployment's own address. SuiteCRM answers on
+`suitecrm-<deployment>`.
 
-### One-Command Deployment (Recommended)
+## How the link works
 
-```bash
-# From magneto directory
-cd magneto
-./start.sh crm-kit
-```
+1. With `ENABLE_SUITECRM_INTEGRATION=true`, LimeSurvey's first start registers the plugin `SuiteCRMIntegration` and
+   switches it on. Every start writes the plugin's connection settings again from the environment: SuiteCRM's address,
+   the admin's name and password, and SuiteCRM's database settings. Both passwords are stored encrypted.
+2. The link is switched on for each survey on its own, on the plugin's tab of the survey's settings. The demo
+   survey has it on.
+3. Each question says which CRM fields it fills, such as `Leads: first_name` or `Cases: description`. The mapping is
+   kept on the question. An admin sets it in LimeSurvey's classic question editor, in the question's
+   "SuiteCRM Integration" section. LimeSurvey 7 opens its new editor by default, which doesn't show that section. The
+   plugin's settings page says how to switch editors. The AI Assistant can set a mapping too.
+4. When someone completes an active survey, the plugin builds one record for each CRM module that has an answered,
+   mapped question. It signs in to SuiteCRM's API as the SuiteCRM admin and creates the record.
+5. The plugin signs in through an OAuth2 client named "LimeSurvey Integration". It makes that client itself, in
+   SuiteCRM's database, the first time it needs it. So LimeSurvey starts whether or not SuiteCRM is up.
+6. Every attempt goes into the plugin's log table, `lime_survey_crm_sync_log`, as sent or failed. A failed attempt
+   is not sent again later. The response itself stays in LimeSurvey either way.
 
-**That's it!** LimeSurvey and SuiteCRM will start and be ready to use.
+The demo survey is imported inactive. Activate it before you try it. A sales inquiry makes a lead. A support request
+makes a case, and a lead with the person's contact details.
 
-### Alternative: Using Docker Compose Directly
+## What the link needs from each side
 
-```bash
-# From within the bundle directory
-cd magneto/bundles/crm-kit
+LimeSurvey's side:
 
-# Start all services (will pull images automatically)
-docker-compose up -d
+| What | Where it comes from |
+| --- | --- |
+| The plugin is switched on and not marked as faulty | The first start. An upgrade switches it back on when it was on, and every start clears a faulty mark |
+| The plugin's own "Enable SuiteCRM Integration" setting is on | The first start |
+| The survey's link is on, and the survey is active | The admin, or the AI Assistant after a yes |
+| The survey's questions are mapped to CRM fields | The admin in the classic question editor, or the AI Assistant |
+| A lead has a last name, and a case has a subject | The survey's questions |
+| SuiteCRM's address, admin name and password, and database settings | The manifest: `SUITECRM_URL`, `SUITECRM_ADMIN_USER`, `SUITECRM_ADMIN_PASSWORD` and `SUITECRM_DB_*` on the `limesurvey` container |
 
-# Check status
-docker-compose ps
+SuiteCRM's side:
 
-# View logs
-docker-compose logs -f
-```
+| What | Where it comes from |
+| --- | --- |
+| SuiteCRM answers `/Api/access_token` and `/Api/V8/` inside the deployment, at `http://suitecrm` | The `suitecrm` container, once it has installed or upgraded |
+| The main admin account is active, is an admin, and has the login and password the deployment set | The install. The manifest gives both apps the same `applicationPassword` |
+| The OAuth2 client "LimeSurvey Integration" with the password grant | The plugin, at its first sign-in |
+| SuiteCRM's key pair for API tokens, `public/legacy/Api/V8/OAuth2/private.key` and `public.key` | The install. An upgrade keeps it |
+| SuiteCRM's database user may write to the table `oauth2clients` from the LimeSurvey container | The manifest gives LimeSurvey the same database secret as SuiteCRM |
 
-## What's Included
+## What breaks it
 
-✅ **LimeSurvey** - Survey Platform (http://localhost:8080)
-✅ **SuiteCRM** - Customer Relationship Management (http://localhost:8081)
-✨ **SuiteCRM Integration Plugin** - Automatically creates leads/cases from survey responses
-✅ **Zero Configuration** - Works out of the box with sensible defaults
-✅ **Marketplace Compatible** - No volume mounts required
+| What happened | What you see | The way back |
+| --- | --- | --- |
+| Someone changed the main admin's password in SuiteCRM, renamed the account, deactivated it or took away its admin rights | New responses are logged as failed | Put the account back as the deployment set it. The `suitecrm` skill has `restore-admin-password.sh` for the password |
+| The OAuth2 client "LimeSurvey Integration" was deleted in SuiteCRM | New responses are logged as failed, and "Check Status" on the plugin's settings page says that SuiteCRM no longer has the client | "Initialize OAuth2" on the plugin's settings page makes a new client |
+| The client was changed in SuiteCRM and is still there | New responses are logged as failed | "Initialize OAuth2" changes nothing while SuiteCRM still has the client. Delete the client in SuiteCRM, then click "Initialize OAuth2" |
+| SuiteCRM's key pair for API tokens is missing, or its two files no longer match | New responses are logged as failed | Put both files back from a backup of the deployment. "Initialize OAuth2" only makes a client, so it doesn't repair this |
+| A SuiteCRM restore brought back a database from before the plugin made its client | The same | The same |
+| The plugin, its "Enable SuiteCRM Integration" setting or the survey's link was switched off, or the survey isn't active | Nothing is sent, and nothing is logged | Switch it on again |
+| SuiteCRM is down, or is still installing or upgrading | The response is saved in LimeSurvey and logged as failed. It is not sent again | Wait for SuiteCRM. While it installs or upgrades, a stand-in answers its health check and answers every API call with 503, so the plugin never takes that for a lead |
+| A mapped question was deleted | The record no longer has that field | Map another question to the field |
+| One of the two database passwords changed on the platform | Nothing, after the next start of both apps: each start writes the passwords from the environment into both apps' settings | Restart the deployment |
 
-## 🔗 Automatic Integration
+## The AI Assistant
 
-The CRM Kit bundle includes **automatic integration** between LimeSurvey and SuiteCRM:
+The manifest's `x-clouve-agent` block offers the AI Assistant with two skills from
+[magneto-skills](https://github.com/Clouve/magneto-skills), `limesurvey` and `suitecrm`. The assistant's container
+signs in to all four containers over the `clouve-ops` SSH channel, and each app's image carries its persona.
 
-- **Automatic Lead Creation**: Survey responses automatically create leads in SuiteCRM
-- **Automatic Case Creation**: Support surveys can create cases in SuiteCRM
-- **OAuth2 Authentication**: Secure, industry-standard authentication
-- **Pre-Configured**: Integration is enabled and configured automatically
-- **Flexible Field Mapping**: Map survey questions to CRM fields via JSON
+- The `limesurvey` skill has the survey side of the link: `crm-link.sh` shows the plugin's state, switches the link
+  on or off for a survey, and maps questions to CRM fields.
+- The `suitecrm` skill has SuiteCRM's side: the admin account, the OAuth2 client, the key pair and the leads once
+  they are in. It never changes the main admin's password to anything but the deployment's.
 
-### How It Works
+A deployment made without the AI Assistant has no `CLOUVE_OPS_PASSWORD`, and then no container starts an sshd.
 
-1. User completes a survey in LimeSurvey
-2. Plugin authenticates with SuiteCRM via OAuth2
-3. Survey data is mapped to CRM fields
-4. Lead or Case is created in SuiteCRM automatically
-5. Sales team can follow up immediately
-
-See [Integration Documentation](#suitecrm-integration) below for details.
-
-## Access Applications
-
-### LimeSurvey (Survey Platform)
-- **URL**: http://localhost:8080
-- **Admin Username**: `admin`
-- **Admin Password**: `Admin@123`
-- **Admin Email**: admin@example.com
-
-### SuiteCRM (Customer Relationship Management)
-- **URL**: http://localhost:8081
-- **Admin Username**: `admin`
-- **Admin Password**: `Admin@123`
-
-## Architecture
-
-### Container Structure
-
-The CRM Kit bundle consists of 4 containers organized into 2 application groups:
-
-#### LimeSurvey (Survey Platform)
-- `limesurvey` - LimeSurvey application (port 8080)
-- `limesurvey-mariadb` - MariaDB database for LimeSurvey
-
-#### SuiteCRM (Customer Relationship Management)
-- `suitecrm` - SuiteCRM application (port 8081)
-- `suitecrm-mariadb` - MariaDB database for SuiteCRM
-
-### Container Naming Convention
-
-Following Clouve's multi-app bundle conventions:
-- Each main application container uses its own name as the base (`limesurvey`, `suitecrm`)
-- Dependency containers are prefixed with the main app they serve:
-  - LimeSurvey: `limesurvey`, `limesurvey-mariadb`
-  - SuiteCRM: `suitecrm`, `suitecrm-mariadb`
-
-This naming convention ensures compatibility with Clouve Strato scripts and proper ingress routing.
-
-### Public Containers (Ingress Exposure)
-
-The following containers have `isPublic: true` and receive ingress exposure:
-- `limesurvey` - Survey creation and management interface
-- `suitecrm` - CRM and customer management interface
-
-Database containers are internal only (`isPublic: false`).
-
-## Use Cases
-
-### For Sales Teams
-- **LimeSurvey**: Customer satisfaction surveys, product feedback, market research
-- **SuiteCRM**: Lead management, sales pipeline tracking, customer relationship management
-
-### For Marketing Teams
-- **LimeSurvey**: Campaign effectiveness surveys, customer insights, brand awareness studies
-- **SuiteCRM**: Marketing automation, campaign management, lead nurturing
-
-### For Customer Success
-- **LimeSurvey**: NPS surveys, customer feedback, support satisfaction
-- **SuiteCRM**: Customer support ticketing, account management, customer lifecycle tracking
-
-### For Research Organizations
-- **LimeSurvey**: Academic research, data collection, participant management
-- **SuiteCRM**: Participant relationship management, research project tracking
-
-## Management
-
-### Stop the Bundle
+Each container's `appDescription` and the listing's own text in `description.txt` say what the assistant does. Both
+have to be true for a paid plan and for a free trial or free services. Each text is at most 1,000 characters, and
+the kit's text for an app never promises more than that app's own listing does: LimeSurvey sends invitations and
+reminders through the customer's own mail server, and the kit says so too. `tests/crm-kit.test.sh` checks that
+sentence and the lengths in `description.txt`, and the first command below checks each `appDescription`:
 
 ```bash
-cd magneto/bundles/crm-kit
-docker-compose down
+bash tests/listing-ai-copy.test.sh
+bash tests/listing-ai-copy.test.sh --text "$(cat bundles/crm-kit/description.txt)"
 ```
 
-### Stop and Remove All Data
+## Run it locally
+
+The bundle runs the two apps' images as they are on your machine, so build those first.
 
 ```bash
-cd magneto/bundles/crm-kit
-docker-compose down -v
+./build.sh limesurvey
+./build.sh suitecrm
+./start.sh crm-kit            # every volume starts as a new disk, as on a cluster
+./status.sh crm-kit
+./logs.sh crm-kit limesurvey
+./stop.sh crm-kit             # keeps the data
+./stop.sh crm-kit --cleanup   # removes the volumes too
 ```
 
-⚠️ **Warning**: This will delete all data including databases, uploaded files, and configurations.
+| App | Address | Sign-in |
+| --- | --- | --- |
+| LimeSurvey | http://localhost:8080 (admin pages under `/admin`) | `admin` / `Admin@123` |
+| SuiteCRM | http://localhost:8081 | `admin` / `Admin@123` |
+| AI Assistant | http://localhost:8082 | `admin` / `Admin@123` |
 
-### View Logs
+These passwords are for local runs only. For the AI Assistant to answer, export `MAGNETO_AGENT_LLM_BASE_URL` and
+`MAGNETO_AGENT_LLM_KEY`, or `ANTHROPIC_API_KEY`, before `./start.sh`.
+
+To see the link work:
+
+1. Sign in to LimeSurvey, open the demo survey and activate it.
+2. Open the survey's public address and send in a sales inquiry.
+3. Sign in to SuiteCRM and open Leads. The lead is there, and the survey's plugin tab in LimeSurvey counts one sync.
+
+## Upgrading a kit that already runs
+
+A kit installed with LimeSurvey 6.16.1 and SuiteCRM 8.9.1 upgrades in place the first time it starts on these
+images. Both apps do their own upgrade, each behind a stand-in that keeps its health check passing, and each keeps a
+backup on its volume. `apps/limesurvey/README.md` and `apps/suitecrm/README.md` have the staff runbooks: how to read
+an upgrade's state, the way back, and how to remove the kept backup.
+
+On the local kind cluster on 2026-11-12 an old kit with two responses and a lead moved to these images with only
+its pods replaced: both apps served their new versions within 42 seconds of their new pods' start, no container
+restarted, and the data was all there. The earlier kit's link had never worked on the rig (its demo survey's
+first `survey_enabled` row said off), and after the upgrade it did.
+
+For the link, the upgrade does this:
+
+- The plugin is switched on again when it was on. LimeSurvey's own update switches every added plugin off, and any
+  other plugin an admin added stays off and is named in the log and in the backup folder.
+- The plugin's settings, its OAuth2 client and the earlier leads, responses and sync log stay as they were, with
+  two changes that happen once: the two passwords, which the earlier image stored in clear text, are stored
+  encrypted from then on, and the plugin's debug mode is switched off.
+- The plugin's table of mappings gets its current shape. The earlier image made it without the column and the key
+  that let one question fill several fields, so saving a mapping failed.
+- A plugin that LimeSurvey had marked as faulty is loaded again. The earlier image could leave that mark at its
+  first start.
+- A survey that has several `survey_enabled` settings, as the earlier image's demo import left them, keeps one.
+  The survey's link stays on when any of them said on, and the log names the survey and what was kept.
+- SuiteCRM's scheduler is held until someone releases it, because scheduled jobs never ran on the earlier image.
+  `apps/suitecrm/README.md` says how to look at what is queued and release it.
+
+One thing stays as the earlier kit had it, because it is the customer's data:
+
+- A demo survey that the earlier image imported keeps its mapping of the company question to `Cases: account_name`.
+  With it, a sales inquiry that names a company also makes a case with no subject. Clear that one mapping in the
+  question's "SuiteCRM Integration" section, or ask the AI Assistant to. A new install's demo survey doesn't have it.
+
+## Tests
 
 ```bash
-# All services
-docker-compose logs -f
+# The bundle's files, then a new kit on new disks: the four probes, the plugin, the demo survey, a response
+# that becomes a lead, a support request that becomes a case, the plugin's endpoints, and the clouve-ops channel
+bash tests/crm-kit.test.sh
 
-# Specific service
-docker-compose logs -f limesurvey
-docker-compose logs -f suitecrm
+# An old kit first (LimeSurvey 6.16.1 and SuiteCRM 8.9.1 on MariaDB 11.8 and 12.1, with a lead made through the
+# plugin), then the new images on copies of its volumes: both apps upgrade in one start, the link still works,
+# nothing the customer had is lost, and a response sent in while SuiteCRM upgrades is logged as failed
+bash tests/crm-kit.test.sh --upgrade-from
+
+# The bundle as a cluster starts it, judged by each container's own probe. Build both apps first
+bash tests/new-disk-start.test.sh crm-kit
+
+./check-manifests.sh
 ```
 
-### Restart a Service
-
-```bash
-docker-compose restart limesurvey
-docker-compose restart suitecrm
-```
-
-## Customization
-
-### Customize Configuration
-
-Edit `docker-compose.yml` to customize environment variables for your organization:
-
-```bash
-cd magneto/bundles/crm-kit
-nano docker-compose.yml  # or use your preferred editor
-```
-
-After making changes, restart the bundle:
-```bash
-docker-compose down
-docker-compose up -d
-```
-
-### Change Ports
-
-If the default ports conflict with other services, edit `docker-compose.yml`:
-
-```yaml
-services:
-  limesurvey:
-    ports:
-      - "9080:8080"  # Change from 8080 to 9080
-
-  suitecrm:
-    ports:
-      - "9081:80"  # Change from 8081 to 9081
-```
-
-## Troubleshooting
-
-### Containers Won't Start
-
-Check if ports are already in use:
-```bash
-lsof -i :8080
-lsof -i :8081
-```
-
-### Database Connection Errors
-
-Ensure database containers are healthy:
-```bash
-docker-compose ps
-```
-
-Wait for health checks to pass (may take 30-60 seconds on first start).
-
-### Reset Everything
-
-```bash
-docker-compose down -v
-docker-compose up -d
-```
-
-### Check Container Health
-
-```bash
-docker-compose ps
-docker inspect crm_kit_limesurvey_app
-docker inspect crm_kit_suitecrm_app
-```
-
-## Data Persistence
-
-All application data is stored in Docker volumes:
-
-- `limesurvey_db_data` - LimeSurvey database
-- `limesurvey_data` - LimeSurvey application files
-- `limesurvey_upload` - LimeSurvey uploaded files and surveys
-- `suitecrm_db_data` - SuiteCRM database
-- `suitecrm_data` - SuiteCRM application files
-
-Data persists across container restarts and updates.
-
-## Health Checks
-
-All application containers include health checks:
-
-- **LimeSurvey**: HTTP check on `/` (30s initial delay)
-- **SuiteCRM**: HTTP check on `/` (120s initial delay)
-- **Databases**: MariaDB health check commands
-
-## Resource Requirements
-
-### Minimum Requirements
-- **CPU**: 2 cores
-- **RAM**: 4 GB
-- **Disk**: 30 GB
-
-### Recommended for Production
-- **CPU**: 4 cores
-- **RAM**: 8 GB
-- **Disk**: 50 GB
+The kit test takes `--image NAME=REF` and `--old-image NAME=REF` for images that are already built, and `--keep` to
+leave its containers up for a look.
 
 ## Files
 
-- `docker-compose.yml` - Local development and production configuration
-- `clv-docker-compose.yml` - Clouve marketplace deployment configuration
-- `README.md` - This comprehensive documentation
-- `description.txt` - Bundle description for marketplace
-- `logo.png` - CRM Kit logo
-- `limesurvey.png` - LimeSurvey logo
-- `suitecrm.png` - SuiteCRM logo
-
-## SuiteCRM Integration
-
-The CRM Kit bundle includes a pre-configured integration plugin that automatically creates leads and cases in SuiteCRM from LimeSurvey survey responses.
-
-### Integration Features
-
-- ✅ **Automatic Installation**: Plugin is installed automatically when `ENABLE_SUITECRM_INTEGRATION=true`
-- ✅ **Auto-Configuration**: All settings configured from environment variables
-- ✅ **OAuth2 Authentication**: Secure API authentication
-- ✅ **Lead Creation**: Create leads from customer feedback surveys
-- ✅ **Case Creation**: Create support cases from issue reports
-- ✅ **Field Mapping**: Map survey questions to CRM fields via JSON
-
-### How to Use the Integration
-
-#### Step 1: Verify Integration is Enabled
-
-The integration is enabled by default in the CRM Kit bundle. Check the logs:
-
-```bash
-docker-compose logs limesurvey | grep SuiteCRM
-```
-
-You should see:
-```
-[INFO] SuiteCRM Integration is enabled
-[SUCCESS] SuiteCRM Integration plugin installed!
-```
-
-#### Step 2: Create a Survey
-
-1. Log in to LimeSurvey (http://localhost:8080)
-2. Create a new survey with questions like:
-   - Q1: First Name
-   - Q2: Last Name
-   - Q3: Email
-   - Q4: Phone
-   - Q5: How can we help?
-
-#### Step 3: Configure Survey Integration
-
-1. In your survey, go to **Survey Settings** → **Plugin Settings**
-2. Find "SuiteCRM Integration" section
-3. Configure:
-   - **Enable**: `Enabled`
-   - **Create Type**: `Create Lead`
-   - **Field Mapping**:
-     ```json
-     {
-       "Q1": "first_name",
-       "Q2": "last_name",
-       "Q3": "email1",
-       "Q4": "phone_work",
-       "Q5": "description"
-     }
-     ```
-4. Save settings
-
-#### Step 4: Test the Integration
-
-1. Complete the survey as a test user
-2. Log in to SuiteCRM (http://localhost:8081)
-3. Go to **Leads**
-4. You should see a new lead with:
-   - Name: [First Name] [Last Name]
-   - Email: [Email]
-   - Phone: [Phone]
-   - Description: [How can we help?]
-   - Lead Source: Survey
-   - Status: New
-
-### Integration Documentation
-
-For detailed documentation, see:
-- **Plugin Documentation**: `magneto/apps/limesurvey/image/installer/SuiteCRMIntegration/README.md`
-- **Field Mapping Guide**: `magneto/apps/limesurvey/image/installer/SuiteCRMIntegration/FIELD_MAPPING_GUIDE.md`
-
-### Disable Integration
-
-To disable the integration, edit `docker-compose.yml`:
-
-```yaml
-environment:
-  ENABLE_SUITECRM_INTEGRATION: "false"
-```
-
-Then restart:
-```bash
-docker-compose up -d
-```
-
-## Next Steps
-
-After deploying the CRM Kit:
-
-1. **Configure LimeSurvey**: Set up your first survey, customize themes, configure email settings
-2. **Set up SuiteCRM**: Configure company details, add users, customize modules
-3. **Enable Integration**: Configure survey-specific integration settings (see above)
-4. **Create Surveys**: Design customer feedback surveys in LimeSurvey
-5. **Import Contacts**: Add customer contacts to SuiteCRM
-6. **Test Integration**: Complete a test survey and verify lead creation
-7. **Backup Strategy**: Implement regular backups of volumes and databases
-
-## Support
-
-For issues or questions:
-- Check the troubleshooting section above
-- Review container logs: `docker-compose logs -f`
-- Consult individual application documentation:
-  - LimeSurvey: https://manual.limesurvey.org/
-  - SuiteCRM: https://docs.suitecrm.com/
-
-## Version Information
-
-- **LimeSurvey**: 6.16.1
-- **SuiteCRM**: 8.9.1
-- **Bundle Version**: 1.0.0
-
-
-
+- `clv-docker-compose.yml` is the marketplace manifest: the four containers, their settings and the
+  `x-clouve-agent` block.
+- `docker-compose.yml` is for local runs. It adds the `magneto-agent` service, which a deployment gets from the
+  manifest's block.
+- `description.txt` holds the listing's short and long description, typed into the publish wizard.
+- `logo.png`, `limesurvey.png` and `suitecrm.png` are the listing's logo and the two apps' icons.

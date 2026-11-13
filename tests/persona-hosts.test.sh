@@ -72,6 +72,8 @@ render() {
     ODOO_DB_PASSWORD="$SENTINEL_PW-odoo-db" ODOO_MASTER_PASSWORD="$SENTINEL_PW-odoo-master" \
     WORDPRESS_DB_PASSWORD="$SENTINEL_PW-wordpress-db" ROOT_PASSWORD="$SENTINEL_PW-root" \
     NEXTCLOUD_DB_PASSWORD="$SENTINEL_PW-nextcloud-db" NEXTCLOUD_ADMIN_PASSWORD="$SENTINEL_PW-nextcloud-admin" \
+    LIMESURVEY_DB_PASSWORD="$SENTINEL_PW-limesurvey-db" LIMESURVEY_ADMIN_PASSWORD="$SENTINEL_PW-limesurvey-admin" \
+    SUITECRM_DB_PASSWORD="$SENTINEL_PW-suitecrm-db" SUITECRM_ADMIN_PASSWORD="$SENTINEL_PW-suitecrm-admin" \
     envsubst < "$1"
 }
 
@@ -105,7 +107,7 @@ for tpl in "$APPS_DIR"/*/image/context/*/CONTEXT.md.tpl; do
   # printenv CLOUVE_OPS_PASSWORD, printenv <APP>_DB_PASSWORD, printenv ODOO_MASTER_PASSWORD: none of them.
   assert_not_matches "$app: never reads a password with printenv" "$out" 'printenv[[:space:]]+[A-Z0-9_]*PASSWORD'
   case "$app" in
-    gibbon|moodle|nextcloud|odoo|wordpress)
+    gibbon|limesurvey|moodle|nextcloud|odoo|suitecrm|wordpress)
       dbvar="$(printf '%s' "$app" | tr '[:lower:]-' '[:upper:]_')_DB_PASSWORD"
       assert_contains "$app: names the variable that holds the database password" "$out" "\`$dbvar\`"
       assert_contains "$app: fetches the database password in the two-part form" "$out" "$(two_part "$dbvar")"

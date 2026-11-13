@@ -30,9 +30,7 @@ RESET=$'\033[0m'
 
 # "<Dockerfile path relative to the repo>: <image>", one per line.
 KNOWN="apps/owncloud/image/Dockerfile: owncloud/server
-apps/owncloud/image/mariadb/Dockerfile: mariadb
-apps/suitecrm/image/Dockerfile: composer
-apps/suitecrm/image/mariadb/Dockerfile: mariadb"
+apps/owncloud/image/mariadb/Dockerfile: mariadb"
 
 if ! command -v python3 >/dev/null 2>&1; then
   echo "This test needs python3." >&2

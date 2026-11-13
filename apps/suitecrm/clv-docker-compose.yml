@@ -34,9 +34,9 @@ services:
       memoryBase: 2
       cpuBase: 1
     x-clouve-bundle-metadata:
-      appVersion: 8.9.1
+      appVersion: 8.10.2
       appTitle: SuiteCRM
-      appDescription: SuiteCRM is a powerful, open-source customer relationship management (CRM) platform designed to help businesses enhance customer engagement and drive growth. With its comprehensive suite of features, including sales automation, marketing, customer support, and reporting, SuiteCRM provides a 360-degree view of customer interactions. The platform's flexibility allows businesses to tailor it to their specific needs, while its robust customization options ensure seamless integration with existing systems. By centralizing customer data and streamlining processes, SuiteCRM improves efficiency, fosters better decision-making, and boosts customer satisfaction, making it an ideal solution for businesses looking to build stronger relationships and achieve long-term success.
+      appDescription: A hosted SuiteCRM for small sales and support teams, with accounts, contacts, leads, opportunities, cases, campaigns and reports. You tell the AI Assistant what you need in plain English, in a chat in your browser. It adds and updates accounts, contacts, leads and opportunities, checks for duplicates first, and imports a CSV after showing you what it will do. It answers questions about your pipeline, adds users, resets passwords and sets roles. It helps set up outgoing email, checks add-on modules before it installs them, takes and restores backups, and finds out why a page is broken. It shows you the command and waits for your yes before it deletes, changes many records, changes who can sign in or sends email. On a paid plan, the price of the AI Assistant includes an AI usage allowance, and you can buy more. On a free trial, or with free services, you use it with your own Claude subscription. You can turn it on or off. The tenant owns the SuiteCRM data; Clouve hosts the containers.
     x-clouve-healthcheck:
       enabled: true
       type: HTTP
@@ -104,3 +104,12 @@ volumes:
     driver: local
   suitecrm-db-data:
     driver: local
+x-clouve-agent:
+  enabled: true
+  skills:
+    url: https://github.com/Clouve/magneto-skills.git?plugins=suitecrm
+    git:
+      token: ''
+      username: ''
+  advanced:
+    sidecarPullTimeout: 600

@@ -19,6 +19,11 @@ With --upgrade-from TAG the target first installs with its images at TAG (those 
 current images then start on the same volumes and must pass too, and no volume's top folder may change its owner or
 mode. That is how a fix shows that it leaves existing installs alone.
 
+An image can answer its probe through a stand-in while it installs or upgrades (LimeSurvey and SuiteCRM do: GET / gets
+200 and the header X-Clouve-Standin: <app>), so that Kubernetes doesn't restart the container in the middle. Such an
+answer passes the probe but is not the app: the container counts as healthy only when the app itself answers, and it
+has the launch job's 600 s for that, since the stand-in is what keeps the probe passing in the meantime.
+
 Exit status: 0 when the target passes, 1 when it fails, 2 when it can't be run (no image, no configuration).
 NEW_DISK_PROBE_EVERY (seconds, default 5) sets how often it probes; ND_SHAPER_IMAGE the small image it probes from.
 """
@@ -93,12 +98,14 @@ def judge_http(output, target):
         line = line.strip()
         status = re.match(r"HTTP/\S+\s+(\d{3})", line)
         if status:
-            answers.append([int(status.group(1)), None])
+            answers.append([int(status.group(1)), None, None])
         elif answers and line.lower().startswith("location:"):
             answers[-1][1] = line.split(":", 1)[1].strip()
+        elif answers and line.lower().startswith("x-clouve-standin:"):
+            answers[-1][2] = re.sub(r"[^A-Za-z0-9_-]", "", line.split(":", 1)[1]) or "image's"
     if not answers:
         return False, "no answer (%s)" % last_line(output)
-    for hop, (code, location) in enumerate(answers):
+    for hop, (code, location, standin) in enumerate(answers):
         if 300 <= code < 400 and location:
             host = urllib.parse.urlsplit(location).netloc
             if host and host != target:
@@ -109,8 +116,16 @@ def judge_http(output, target):
                 return False, "HTTP %d to %s, and no answer from there (%s)" % (code, location, last_line(output))
             continue
         seen = "HTTP %d" % code if hop == 0 else "HTTP %d after %d redirect(s)" % (code, hop)
+        if standin and 200 <= code < 400:
+            seen += " from the %s stand-in" % standin
         return 200 <= code < 400, seen
     return False, "no answer"
+
+
+def standin_of(seen):
+    """The app whose stand-in gave the probe's answer (judge_http's second value), or None when the app itself did."""
+    match = re.search(r" from the (\S+) stand-in$", seen or "")
+    return match.group(1) if match else None
 
 
 def image_repo(ref):
@@ -359,6 +374,7 @@ class Target:
         first_start = {}
         passed = []
         last = {}
+        standins = {}  # service -> how long after its start its stand-in first answered
         while pending:
             cids = self.containers()
             for service in list(pending):
@@ -390,13 +406,27 @@ class Target:
                 ok, seen = self.probe(service, cid, spec)
                 last[service] = seen
                 elapsed = time.time() - first_start[service]
+                if ok and standin_of(seen):
+                    # The image's stand-in answered. The probe passes, which keeps Kubernetes from restarting the
+                    # container, but the app is still installing or upgrading: wait for an answer of its own.
+                    if service not in standins:
+                        standins[service] = elapsed
+                        print("  note: %s answers its probe through its stand-in after %d s; waiting for the app itself "
+                              "(at most %d s)" % (service, elapsed, CAP))
+                    if elapsed > CAP:
+                        self.fail(service, "only its stand-in answered within %d s; the app itself never did" % CAP)
+                        pending.remove(service)
+                    continue
+                if service in standins:
+                    limit = CAP  # the stand-in kept the probe passing, so the probe's own deadline is not what counts
                 if ok and elapsed > limit:
                     self.fail(service, "passed its probe only after %d s, past its %d s deadline (Kubernetes would "
                                        "have restarted it by then)" % (elapsed, limit))
                     pending.remove(service)
                 elif ok:
-                    print("  PASS %s: healthy after %d s (deadline %d s, %s)" % (service, elapsed, limit,
-                                                                               self.describe(spec)))
+                    after = ", its stand-in answered from %d s" % standins[service] if service in standins else ""
+                    print("  PASS %s: healthy after %d s (deadline %d s, %s%s)" % (service, elapsed, limit,
+                                                                                 self.describe(spec), after))
                     passed.append(service)
                     pending.remove(service)
                 elif elapsed > limit:

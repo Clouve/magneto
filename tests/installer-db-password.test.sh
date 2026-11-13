@@ -21,7 +21,8 @@
 # mysql and sleep commands on PATH; the fake mysql records its arguments and
 # whether MYSQL_PWD was the password ("match" or "no", never the value).
 #
-# It also reads every shell script of the Gibbon, Moodle and WordPress images
+# It also reads every shell script of the Gibbon, Moodle, WordPress,
+# LimeSurvey and SuiteCRM images (the last two's database images too)
 # and fails on a line that passes a password as an argument: -p"$...",
 # --password, any --...pass...= option, or a variable whose name holds PASS
 # expanded into a command that runs as its own process (a sed script, php -r
@@ -305,7 +306,7 @@ for line in 1 2 3; do
 done
 assert_eq "and nothing else in the probe" "3" "$(grep -c . <<< "$probe")"
 
-found="$(python3 -I -B "$WORK/scan.py" "$REPO_DIR" gibbon moodle wordpress)"
+found="$(python3 -I -B "$WORK/scan.py" "$REPO_DIR" gibbon moodle wordpress limesurvey suitecrm)"
 if [ -z "$found" ]; then
   pass "none does"
 else

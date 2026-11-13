@@ -21,8 +21,8 @@
 # Needs Docker.
 #
 # Usage: bash tests/db-image-gosu.test.sh [--image NAME=REF]... [NAME...]
-#   NAME  gibbon-mysql, moodle-mysql, wordpress-mariadb or nextcloud-mariadb
-#         (default: all four)
+#   NAME  gibbon-mysql, moodle-mysql, wordpress-mariadb, nextcloud-mariadb,
+#         limesurvey-mariadb or suitecrm-mariadb (default: all)
 # ============================================================================
 
 set -uo pipefail
@@ -32,17 +32,19 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 GOSU_VERSION=1.20
 MIN_GO=1.26.11
 
-ALL=(gibbon-mysql moodle-mysql wordpress-mariadb nextcloud-mariadb)
+ALL=(gibbon-mysql moodle-mysql wordpress-mariadb nextcloud-mariadb limesurvey-mariadb suitecrm-mariadb)
 declare -A CONTEXT=(
   [gibbon-mysql]="$REPO_DIR/apps/gibbon/image/mysql"
   [moodle-mysql]="$REPO_DIR/apps/moodle/image/mysql"
   [wordpress-mariadb]="$REPO_DIR/apps/wordpress/image/mariadb"
   [nextcloud-mariadb]="$REPO_DIR/apps/nextcloud/image/mariadb"
+  [limesurvey-mariadb]="$REPO_DIR/apps/limesurvey/image/mariadb"
+  [suitecrm-mariadb]="$REPO_DIR/apps/suitecrm/image/mariadb"
 )
 declare -A IMAGE=()
 
 usage() {
-  sed -n 's/^# \{0,1\}//; /^Usage:/,/(default: all four)/p' "${BASH_SOURCE[0]}" >&2
+  sed -n 's/^# \{0,1\}//; /^Usage:/,/(default: all)/p' "${BASH_SOURCE[0]}" >&2
   exit 2
 }
 

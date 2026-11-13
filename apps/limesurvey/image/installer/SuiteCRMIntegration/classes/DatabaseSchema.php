@@ -39,15 +39,41 @@ class SuiteCRMDatabaseSchema
 
     /**
      * Check if schema is installed
-     * 
+     *
+     * Installed means that both tables are there and that the table of mappings has the current shape. A table
+     * that an earlier version made (one CRM field per question, no transform_rule column) counts as not
+     * installed, so that install() is run and brings it up to date.
+     *
      * @return bool
      */
     public function isInstalled(): bool
     {
         try {
-            $mappingsTable = $this->getTableName('survey_crm_mappings');
-            $exists = $this->db->createCommand("SHOW TABLES LIKE '{$mappingsTable}'")->queryScalar();
-            return !empty($exists);
+            $syncLogTable = $this->getTableName('survey_crm_sync_log');
+            $exists = $this->db->createCommand("SHOW TABLES LIKE '{$syncLogTable}'")->queryScalar();
+            return !empty($exists) && $this->mappingsTableIsCurrent();
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Whether the table of mappings is there with the current shape: the transform_rule column, the unique key
+     * that lets one question fill several CRM fields, and no key left that allows only one field per question.
+     *
+     * @return bool
+     */
+    public function mappingsTableIsCurrent(): bool
+    {
+        try {
+            $tableName = $this->getTableName('survey_crm_mappings');
+            if (empty($this->db->createCommand("SHOW TABLES LIKE '{$tableName}'")->queryScalar())) {
+                return false;
+            }
+            $column = $this->db->createCommand("SHOW COLUMNS FROM {$tableName} LIKE 'transform_rule'")->queryScalar();
+            $newKey = $this->db->createCommand("SHOW INDEX FROM {$tableName} WHERE Key_name = 'unique_question_field_mapping'")->queryAll();
+            $oldKey = $this->db->createCommand("SHOW INDEX FROM {$tableName} WHERE Key_name = 'unique_question_mapping'")->queryAll();
+            return !empty($column) && !empty($newKey) && empty($oldKey);
         } catch (Exception $e) {
             return false;
         }
@@ -71,6 +97,16 @@ class SuiteCRMDatabaseSchema
 
             // Migrate existing schema if needed (v2.0 to v2.1)
             $results['migration'] = $this->migrateSchemaIfNeeded();
+
+            // The migration reports a failure as text. Saving a mapping fails on a table that is not current,
+            // so that is a failed install, not a success.
+            if (!$this->mappingsTableIsCurrent()) {
+                return [
+                    'success' => false,
+                    'error' => 'The table of mappings is not in its current shape. ' . $results['migration'],
+                    'details' => $results
+                ];
+            }
 
             return [
                 'success' => true,
@@ -109,18 +145,18 @@ class SuiteCRMDatabaseSchema
                 $changes[] = 'Added transform_rule column';
             }
 
-            // Check current unique key structure
-            $indexes = $this->db->createCommand("SHOW INDEX FROM {$tableName} WHERE Key_name = 'unique_question_mapping'")->queryAll();
-
-            if (!empty($indexes)) {
-                // Old unique key exists (only on question_id), need to change it
-                // First drop the old key
-                $this->db->createCommand("ALTER TABLE {$tableName} DROP INDEX unique_question_mapping")->execute();
-                $changes[] = 'Dropped old unique_question_mapping index';
-
-                // Add new composite unique key
+            // The new composite unique key first, then the old key (only on question_id) goes. Each step is
+            // checked on its own, so a migration that was cut off is finished by the next run.
+            $newKey = $this->db->createCommand("SHOW INDEX FROM {$tableName} WHERE Key_name = 'unique_question_field_mapping'")->queryAll();
+            if (empty($newKey)) {
                 $this->db->createCommand("ALTER TABLE {$tableName} ADD UNIQUE KEY unique_question_field_mapping (question_id, crm_module, crm_field_name)")->execute();
                 $changes[] = 'Added new unique_question_field_mapping index';
+            }
+
+            $indexes = $this->db->createCommand("SHOW INDEX FROM {$tableName} WHERE Key_name = 'unique_question_mapping'")->queryAll();
+            if (!empty($indexes)) {
+                $this->db->createCommand("ALTER TABLE {$tableName} DROP INDEX unique_question_mapping")->execute();
+                $changes[] = 'Dropped old unique_question_mapping index';
             }
 
             // Check if question_id index exists
@@ -472,10 +508,15 @@ class SuiteCRMDatabaseSchema
      * source of truth for field mappings. This is useful when mappings haven't
      * been synced to the survey_crm_mappings table (e.g., after CLI import).
      *
+     * A stored mapping is not trusted: it is written by whoever may edit the survey, and it also arrives with a
+     * survey import. One that names a module the plugin does not write to, or a field that is not a field name, is
+     * left out, and its question id is added to $refused.
+     *
      * @param int $surveyId Survey ID
+     * @param array $refused Filled with the question id of each mapping that was left out
      * @return array Mappings grouped by CRM module, then by question_id
      */
-    public function getMappingsFromQuestionAttributes(int $surveyId): array
+    public function getMappingsFromQuestionAttributes(int $surveyId, array &$refused = []): array
     {
         $tablePrefix = \Yii::app()->db->tablePrefix;
 
@@ -510,6 +551,11 @@ class SuiteCRMDatabaseSchema
                 }
 
                 $module = $mapping['module'];
+
+                if (!SuiteCRMApiClient::isAllowedModule($module) || !SuiteCRMApiClient::isFieldName($mapping['field'])) {
+                    $refused[] = $questionId;
+                    continue;
+                }
 
                 if (!isset($grouped[$module])) {
                     $grouped[$module] = [];
@@ -560,19 +606,46 @@ class SuiteCRMDatabaseSchema
     ): int {
         $tableName = $this->getTableName('survey_crm_sync_log');
 
+        // What was sent, what SuiteCRM answered and the mappings used are a copy of the response's answers. They are
+        // kept only for a failed sync, where an admin needs them to see why. A sync that worked keeps the record id.
+        $keepContent = ($status === 'failed');
+
         $this->db->createCommand()->insert($tableName, [
             'response_id' => $responseId,
             'survey_id' => $surveyId,
             'crm_module' => $crmModule,
             'sync_status' => $status,
             'crm_record_id' => $crmRecordId,
-            'request_payload' => $requestPayload ? json_encode($requestPayload) : null,
-            'response_data' => $responseData ? json_encode($responseData) : null,
+            'request_payload' => ($keepContent && $requestPayload) ? json_encode($requestPayload) : null,
+            'response_data' => ($keepContent && $responseData) ? json_encode($responseData) : null,
             'error_message' => $errorMessage,
-            'field_mappings_used' => $fieldMappings ? json_encode($fieldMappings) : null
+            'field_mappings_used' => ($keepContent && $fieldMappings) ? json_encode($fieldMappings) : null
         ]);
 
-        return $this->db->getLastInsertID();
+        $logId = (int) $this->db->getLastInsertID();
+        $this->removeOldSyncLogs();
+
+        return $logId;
+    }
+
+    /** @var int How many days a row of the sync log is kept */
+    private const SYNC_LOG_DAYS = 90;
+
+    /**
+     * Remove the rows of the sync log that are older than 90 days. logSync() runs it after each row it writes, so
+     * the log needs no scheduled job. A failure here never stops a sync from being logged.
+     */
+    private function removeOldSyncLogs(): void
+    {
+        $tableName = $this->getTableName('survey_crm_sync_log');
+
+        try {
+            $this->db->createCommand(
+                "DELETE FROM {$tableName} WHERE synced_at < (NOW() - INTERVAL " . self::SYNC_LOG_DAYS . " DAY)"
+            )->execute();
+        } catch (Exception $e) {
+            // The next write tries again.
+        }
     }
 
     /**

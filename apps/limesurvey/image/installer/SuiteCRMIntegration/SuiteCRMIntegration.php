@@ -6,9 +6,6 @@ require_once __DIR__ . '/classes/FieldCacheManager.php';
 require_once __DIR__ . '/classes/DatabaseSchema.php';
 require_once __DIR__ . '/classes/DataTransformer.php';
 
-// Debug: Log when this file is loaded
-file_put_contents('/tmp/suitecrm_integration.log', "[" . date('Y-m-d H:i:s') . "] SuiteCRMIntegration.php file loaded (v2.0)\n", FILE_APPEND);
-
 /**
  * SuiteCRM Integration Plugin for LimeSurvey
  *
@@ -16,7 +13,7 @@ file_put_contents('/tmp/suitecrm_integration.log', "[" . date('Y-m-d H:i:s') . "
  * based on survey responses with dynamic field mapping.
  *
  * @author Clouve
- * @version 2.0.0
+ * @version 2.1.0
  */
 class SuiteCRMIntegration extends PluginBase
 {
@@ -51,13 +48,32 @@ class SuiteCRMIntegration extends PluginBase
     /** @var SuiteCRMDataTransformer */
     private $dataTransformer = null;
 
-    /** @var array Supported CRM modules */
-    private const SUPPORTED_MODULES = ['Leads', 'Cases'];
+    /**
+     * The SuiteCRM modules the plugin writes to: Leads and Cases. The list is in SuiteCRMApiClient, which checks it
+     * again before every call. A mapping that names any other module is refused when it is saved and when a response
+     * is sent.
+     */
+    private const SUPPORTED_MODULES = SuiteCRMApiClient::ALLOWED_MODULES;
 
     /**
-     * Encrypted settings for secure storage
+     * Settings that are write-only on the settings page. The page never gets a stored value of these, and a form
+     * saved with one of them empty keeps what is stored.
      */
-    protected $encryptedSettings = array('suitecrm_admin_password', 'oauth_client_secret');
+    private const WRITE_ONLY_SETTINGS = ['suitecrm_admin_password', 'suitecrm_db_password', 'oauth_client_secret'];
+
+    /** Endpoints that change something. They take POST only, and LimeSurvey checks a POST for its CSRF token. */
+    private const POST_ONLY_METHODS = ['actionSaveMappings', 'actionInitializeOAuth2', 'actionRefreshCache', 'actionTestConnection'];
+
+    /** @var bool Whether the plugin is handling a completed response */
+    private $inSurveyCompletion = false;
+
+    /**
+     * Settings that LimeSurvey stores encrypted (with the keys in application/config/security.php)
+     */
+    protected $encryptedSettings = array('suitecrm_admin_password', 'suitecrm_db_password', 'oauth_client_secret');
+
+    /** @var bool|null Whether debug mode is on (read once per request) */
+    private $debugEnabled = null;
 
     /**
      * Plugin settings
@@ -66,6 +82,11 @@ class SuiteCRMIntegration extends PluginBase
         'connection_status' => array(
             'type' => 'info',
             'label' => 'SuiteCRM Connection Status',
+            'content' => '' // Will be populated dynamically in getPluginSettings()
+        ),
+        'field_mapping_help' => array(
+            'type' => 'info',
+            'label' => 'Field mapping',
             'content' => '' // Will be populated dynamically in getPluginSettings()
         ),
         'enabled' => array(
@@ -94,7 +115,7 @@ class SuiteCRMIntegration extends PluginBase
             'type' => 'password',
             'default' => '',
             'label' => 'SuiteCRM Admin Password',
-            'help' => 'Admin password for SuiteCRM authentication'
+            'help' => 'Admin password for SuiteCRM authentication. The stored password is never shown here. Leave the field empty to keep it.'
         ),
         'suitecrm_db_host' => array(
             'type' => 'string',
@@ -124,7 +145,7 @@ class SuiteCRMIntegration extends PluginBase
             'type' => 'password',
             'default' => '',
             'label' => 'SuiteCRM Database Password',
-            'help' => 'Database password for SuiteCRM'
+            'help' => 'Database password for SuiteCRM. The stored password is never shown here. Leave the field empty to keep it.'
         ),
         'oauth_client_id' => array(
             'type' => 'string',
@@ -134,10 +155,10 @@ class SuiteCRMIntegration extends PluginBase
             'readonly' => true
         ),
         'oauth_client_secret' => array(
-            'type' => 'string',
+            'type' => 'password',
             'default' => '',
             'label' => 'OAuth2 Client Secret',
-            'help' => 'OAuth2 client secret (auto-generated when SuiteCRM is first accessed)',
+            'help' => 'OAuth2 client secret (auto-generated when SuiteCRM is first accessed). The stored secret is never shown here. Leave the field empty to keep it.',
             'readonly' => true
         ),
         'oauth_initialized' => array(
@@ -166,7 +187,7 @@ class SuiteCRMIntegration extends PluginBase
             ),
             'default' => '0',
             'label' => 'Debug Mode',
-            'help' => 'Enable debug logging for troubleshooting'
+            'help' => 'Writes what the plugin does to tmp/runtime/suitecrm_integration.log. The log holds counts and ids, never answers. Leave it off unless you are looking into a problem.'
         ),
         'cache_ttl_hours' => array(
             'type' => 'int',
@@ -181,10 +202,6 @@ class SuiteCRMIntegration extends PluginBase
      */
     public function init()
     {
-        // Log to verify plugin is being initialized
-        $logFile = '/tmp/suitecrm_integration.log';
-        file_put_contents($logFile, "[" . date('Y-m-d H:i:s') . "] init() called - Plugin is being loaded (v2.1)\n", FILE_APPEND);
-
         // Subscribe to survey completion event
         $this->subscribe('afterSurveyComplete', 'handleSurveyComplete');
 
@@ -201,10 +218,11 @@ class SuiteCRMIntegration extends PluginBase
         // Subscribe to question save to sync JSON mappings to database
         $this->subscribe('afterQuestionSave', 'syncMappingsFromQuestionAttribute');
 
+        // Check a question's mappings before LimeSurvey stores them
+        $this->subscribe('beforeQuestionAttributeSave', 'checkMappingsBeforeSave');
+
         // Subscribe to direct requests for AJAX endpoints
         $this->subscribe('newDirectRequest');
-
-        file_put_contents($logFile, "[" . date('Y-m-d H:i:s') . "] init() completed - Event subscriptions registered (v2.1)\n", FILE_APPEND);
     }
 
     /**
@@ -215,8 +233,36 @@ class SuiteCRMIntegration extends PluginBase
      */
     public function getPluginSettings($getValues = true)
     {
+        // The page holds the sign-in to SuiteCRM and its status panel talks to SuiteCRM, so it is for accounts that
+        // may change the global settings. LimeSurvey opens it to accounts that may only read them: those get a note.
+        if (!$this->isConsoleMode() && !$this->mayUseConnection()) {
+            return array(
+                'no_access' => array(
+                    'type' => 'info',
+                    'label' => 'SuiteCRM Integration',
+                    'content' => '<div class="alert alert-warning" id="suitecrm-settings-no-access">'
+                        . 'These settings hold the sign-in to SuiteCRM. '
+                        . 'Your account needs the global permission to update settings to see or change them.'
+                        . '</div>'
+                )
+            );
+        }
+
         // Get the base settings
         $settings = parent::getPluginSettings($getValues);
+
+        // A stored password or secret never goes to the browser. What is typed into the field is saved, and an
+        // empty field keeps what is stored (saveSettings()).
+        foreach (self::WRITE_ONLY_SETTINGS as $name) {
+            if (isset($settings[$name]) && array_key_exists('current', $settings[$name])) {
+                $settings[$name]['htmlOptions']['placeholder'] = empty($settings[$name]['current'])
+                    ? 'Not set'
+                    : 'Stored. Leave empty to keep it.';
+                // A browser must not fill in a password it has saved for LimeSurvey: it would be stored on Save.
+                $settings[$name]['htmlOptions']['autocomplete'] = 'new-password';
+                $settings[$name]['current'] = '';
+            }
+        }
 
         // Generate the dynamic status panel HTML
         $statusPanelHtml = $this->generateStatusPanelHtml();
@@ -225,8 +271,60 @@ class SuiteCRMIntegration extends PluginBase
         if (isset($settings['connection_status'])) {
             $settings['connection_status']['content'] = $statusPanelHtml;
         }
+        if (isset($settings['field_mapping_help'])) {
+            $settings['field_mapping_help']['content'] = $this->generateFieldMappingHelpHtml();
+        }
 
         return $settings;
+    }
+
+    /**
+     * Save the settings form. A password or secret field that comes back empty is left out, so the stored value
+     * stays: the page never shows a stored one, so an empty field can't mean "delete it".
+     *
+     * @param array $settings Setting name => submitted value
+     */
+    public function saveSettings($settings)
+    {
+        foreach (self::WRITE_ONLY_SETTINGS as $name) {
+            if (array_key_exists($name, $settings) && ($settings[$name] === null || $settings[$name] === '')) {
+                unset($settings[$name]);
+            }
+        }
+        parent::saveSettings($settings);
+    }
+
+    /**
+     * Whether this LimeSurvey has the new survey editor (LimeSurvey 7 and later).
+     *
+     * @return bool
+     */
+    protected function hasNewEditor(): bool
+    {
+        return version_compare((string) Yii::app()->getConfig('versionnumber'), '7.0', '>=');
+    }
+
+    /**
+     * The note on the settings page that says where field mapping is done.
+     *
+     * LimeSurvey 7 opens its new survey editor by default, and that editor has no place for a plugin's question
+     * fields. The mapping screen is in the classic question editor, so the note says how to switch to it.
+     *
+     * @return string HTML
+     */
+    protected function generateFieldMappingHelpHtml(): string
+    {
+        $html = '<div class="alert alert-info" id="suitecrm-field-mapping-help">'
+            . '<p><strong>Field mapping is done in the classic question editor.</strong> '
+            . 'Open a question there and use its "SuiteCRM Integration" section to choose the SuiteCRM fields it fills.</p>';
+        if ($this->hasNewEditor()) {
+            $html .= '<p>LimeSurvey 7 opens its new survey editor by default, and the new editor does not show this section. '
+                . 'To switch to the classic editor, open the menu under your name at the top right, choose the entry for the '
+                . 'new editor, pick "Classic" and save. '
+                . '<a href="#" data-bs-toggle="modal" data-bs-target="#activate_editor">Open the editor switch</a>. '
+                . 'You can switch back the same way at any time. The choice is your own and does not change other accounts.</p>';
+        }
+        return $html . '</div>';
     }
 
     /**
@@ -262,6 +360,17 @@ class SuiteCRMIntegration extends PluginBase
             $statusMessage = 'SuiteCRM URL not configured. Please configure the settings below.';
             $statusClass = 'alert-secondary';
         }
+
+        // The client id is read from SuiteCRM's database and the error text comes from a database or from curl.
+        $statusMessage = CHtml::encode($statusMessage);
+
+        // LimeSurvey's CSRF token, for the buttons that change something: those endpoints take POST only.
+        $csrf = array();
+        $request = Yii::app()->getRequest();
+        if ($request && !$this->isConsoleMode()) {
+            $csrf[$request->csrfTokenName] = $request->csrfToken;
+        }
+        $csrfJson = json_encode((object) $csrf, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
 
         $html = <<<HTML
 <div id="suitecrm-status-panel" class="card mb-3">
@@ -324,6 +433,9 @@ var SuiteCRMStatus = {
         return baseUrl + '/index.php/plugins/direct?plugin=SuiteCRMIntegration&function=';
     })(),
 
+    // LimeSurvey's CSRF token, posted with every request that changes something
+    csrf: {$csrfJson},
+
     showLoading: function(text) {
         $('#suitecrm-status-loading').show();
         $('#loading-text').text(text || 'Processing...');
@@ -351,7 +463,9 @@ var SuiteCRMStatus = {
         else if (status === 'error') badgeClass = 'badge bg-danger';
         else if (status === 'warning' || status === 'pending') badgeClass = 'badge bg-warning text-dark';
 
-        $('#' + id).html('<span class="' + badgeClass + '">' + status.toUpperCase() + '</span> ' + message);
+        // The message can hold text from SuiteCRM or from a database, so it is added as text.
+        var badge = $('<span></span>').addClass(badgeClass).text(String(status).toUpperCase());
+        $('#' + id).empty().append(badge).append(document.createTextNode(' ' + message));
     },
 
     checkStatus: function() {
@@ -392,7 +506,8 @@ var SuiteCRMStatus = {
 
         $.ajax({
             url: this.ajaxUrl + 'actionInitializeOAuth2',
-            method: 'GET',
+            method: 'POST',
+            data: this.csrf,
             dataType: 'json',
             success: function(data) {
                 self.hideLoading();
@@ -422,7 +537,8 @@ var SuiteCRMStatus = {
 
         $.ajax({
             url: this.ajaxUrl + 'actionTestConnection',
-            method: 'GET',
+            method: 'POST',
+            data: this.csrf,
             dataType: 'json',
             success: function(data) {
                 self.hideLoading();
@@ -476,13 +592,40 @@ HTML;
     }
 
     /**
-     * Debug log helper that writes to a file
+     * Whether debug mode is on. It is off unless an admin switched it on in the plugin's settings.
+     *
+     * @return bool
+     */
+    protected function isDebugEnabled(): bool
+    {
+        if ($this->debugEnabled === null) {
+            $value = $this->get('debug_mode', null, null, '0');
+            $this->debugEnabled = ($value === '1' || $value === 1);
+        }
+        return $this->debugEnabled;
+    }
+
+    /**
+     * The debug log file. It is in LimeSurvey's runtime folder, which the web server never serves.
+     *
+     * @return string
+     */
+    protected function debugLogFile(): string
+    {
+        return Yii::app()->getRuntimePath() . '/suitecrm_integration.log';
+    }
+
+    /**
+     * Debug log: one line in the debug log file, and only while debug mode is on.
+     * Callers pass counts, ids and setting names. They never pass answers or what SuiteCRM sent back.
      */
     protected function debugLog($message)
     {
-        $logFile = '/tmp/suitecrm_integration.log';
+        if (!$this->isDebugEnabled()) {
+            return;
+        }
         $timestamp = date('Y-m-d H:i:s');
-        file_put_contents($logFile, "[{$timestamp}] {$message}\n", FILE_APPEND);
+        @file_put_contents($this->debugLogFile(), "[{$timestamp}] {$message}\n", FILE_APPEND | LOCK_EX);
     }
 
     /**
@@ -522,8 +665,10 @@ HTML;
     protected function getApiClient(): SuiteCRMApiClient
     {
         if ($this->apiClient === null) {
-            // Skip lazy initialization in console mode to avoid interfering with imports
-            if (!$this->isConsoleMode()) {
+            // Skip lazy initialization in console mode to avoid interfering with imports. On the web it runs only
+            // for a completed response or for an account that may change the global settings: the setup writes to
+            // SuiteCRM's database, and an account with rights on one survey must not be able to start it.
+            if (!$this->isConsoleMode() && $this->mayInitializeOAuth2()) {
                 // Ensure OAuth2 is initialized before creating the API client
                 $oauthStatus = $this->ensureOAuth2Initialized();
                 if (!$oauthStatus['ready']) {
@@ -538,10 +683,47 @@ HTML;
                 'clientSecret' => $this->get('oauth_client_secret'),
                 'username' => $this->get('suitecrm_admin_user'),
                 'password' => $this->get('suitecrm_admin_password'),
-                'debugMode' => $this->get('debug_mode', null, null, '0') === '1'
+                'debugMode' => $this->isDebugEnabled(),
+                'logFile' => $this->debugLogFile()
             ]);
         }
         return $this->apiClient;
+    }
+
+    /**
+     * Whether the caller may make the plugin talk to SuiteCRM: the global right to update settings.
+     *
+     * @return bool
+     */
+    protected function mayUseConnection(): bool
+    {
+        return Permission::model()->hasGlobalPermission('settings', 'update');
+    }
+
+    /**
+     * Whether this request may start the OAuth2 setup: a completed response, or a caller who may use the connection.
+     *
+     * @return bool
+     */
+    protected function mayInitializeOAuth2(): bool
+    {
+        return $this->inSurveyCompletion || $this->mayUseConnection();
+    }
+
+    /**
+     * A module's field list for the caller of an AJAX endpoint. An account that may change the global settings gets
+     * it from SuiteCRM when the cache is empty or old. Any other account gets what the cache holds, however old:
+     * its call never makes the plugin talk to SuiteCRM.
+     *
+     * @param string $module Module name
+     * @return array Field metadata
+     */
+    protected function getFieldsForCaller(string $module): array
+    {
+        if ($this->mayUseConnection()) {
+            return $this->getCacheManager()->getFields($module, false);
+        }
+        return FieldCacheManager::getCachedFields($this, $module);
     }
 
     /**
@@ -623,20 +805,25 @@ HTML;
 
         $this->debugLog("Integration IS enabled for survey {$surveyId}");
 
+        // A participant has no rights in LimeSurvey. The plugin talks to SuiteCRM on the survey's behalf.
+        $this->inSurveyCompletion = true;
+
         try {
             // Get survey response data
             $this->debugLog("Getting response data...");
             $response = $this->pluginManager->getAPI()->getResponse($surveyId, $responseId);
-            $this->debugLog("Response data: " . json_encode($response));
+            // The answers themselves never go to a log.
+            $this->debugLog("Response loaded: " . (is_array($response) ? count($response) : 0) . " values");
 
             // Process with dynamic field mapping (v2.0)
             $this->debugLog("Using dynamic field mapping (v2.0)");
             $this->processWithDynamicMapping($surveyId, $responseId, $response);
 
         } catch (\Exception $e) {
-            $this->debugLog("ERROR: " . $e->getMessage());
-            $this->debugLog("ERROR trace: " . $e->getTraceAsString());
-            $this->log("Error handling survey completion: " . $e->getMessage(), 'error');
+            // An error message can quote an answer, so the logs get its class only. The sync log, which only an
+            // admin with rights on the survey can read, gets the message.
+            $this->debugLog("ERROR: " . get_class($e));
+            $this->log("Error handling the response {$responseId} of survey {$surveyId} (" . get_class($e) . "). The survey's sync log has the message.", 'error');
 
             // Log the error to sync log
             try {
@@ -651,11 +838,11 @@ HTML;
                     $e->getMessage()
                 );
             } catch (\Exception $logError) {
-                $this->debugLog("Failed to log sync error: " . $logError->getMessage());
+                $this->debugLog("Failed to log sync error: " . get_class($logError));
             }
         } catch (\Throwable $t) {
-            $this->debugLog("THROWABLE: " . $t->getMessage());
-            $this->debugLog("THROWABLE trace: " . $t->getTraceAsString());
+            $this->debugLog("THROWABLE: " . get_class($t));
+            $this->log("Error handling the response {$responseId} of survey {$surveyId} (" . get_class($t) . ")", 'error');
         }
     }
 
@@ -676,7 +863,28 @@ HTML;
 
         // Get mappings directly from question attributes (source of truth)
         // This ensures mappings work even after CLI import when afterQuestionSave wasn't triggered
-        $mappingsByModule = $schema->getMappingsFromQuestionAttributes($surveyId);
+        // A mapping to a module the plugin does not write to is left out there, and noted in $refused.
+        $refused = [];
+        $mappingsByModule = $schema->getMappingsFromQuestionAttributes($surveyId, $refused);
+
+        // Get CRM field definitions
+        $crmFields = [];
+        foreach (array_keys($mappingsByModule) as $module) {
+            $crmFields[$module] = $cacheManager->getFields($module);
+
+            // A mapping may only name a field that SuiteCRM lists for the module. A field that is missing from the
+            // cached list may be new in SuiteCRM, so the list is read again before the mapping is refused.
+            if ($this->unlistedFields($mappingsByModule[$module], $crmFields[$module])) {
+                $crmFields[$module] = $cacheManager->getFields($module, true);
+                foreach ($this->unlistedFields($mappingsByModule[$module], $crmFields[$module]) as [$questionId, $index]) {
+                    $refused[] = $questionId;
+                    unset($mappingsByModule[$module][$questionId][$index]);
+                }
+                $mappingsByModule[$module] = array_filter($mappingsByModule[$module]);
+            }
+        }
+        $mappingsByModule = array_filter($mappingsByModule);
+        $this->logRefusedMappings($refused, $surveyId, $responseId);
 
         if (empty($mappingsByModule)) {
             $this->debugLog("No field mappings found in question attributes for survey {$surveyId}");
@@ -685,12 +893,6 @@ HTML;
 
         // Get question info for the survey
         $questions = $this->getQuestionInfo($surveyId);
-
-        // Get CRM field definitions
-        $crmFields = [];
-        foreach (array_keys($mappingsByModule) as $module) {
-            $crmFields[$module] = $cacheManager->getFields($module);
-        }
 
         // Count total mappings for logging
         $totalMappings = 0;
@@ -723,7 +925,7 @@ HTML;
                 );
 
                 if (!empty($transformResult['errors'])) {
-                    $this->debugLog("Transformation errors: " . json_encode($transformResult['errors']));
+                    $this->debugLog("Transformation errors: " . count($transformResult['errors']));
                 }
 
                 $moduleData = $transformResult['data'][$module] ?? [];
@@ -733,7 +935,7 @@ HTML;
                     continue;
                 }
 
-                $this->debugLog("Creating {$module} record with " . count($moduleData) . " fields: " . json_encode($moduleData));
+                $this->debugLog("Creating {$module} record with " . count($moduleData) . " fields");
 
                 // Create record in SuiteCRM
                 $result = $apiClient->createRecord($module, $moduleData);
@@ -762,7 +964,7 @@ HTML;
                 $this->debugLog("{$module} record created with ID: " . ($result['id'] ?? 'unknown'));
 
             } catch (\Exception $e) {
-                $this->debugLog("Error creating {$module} record: " . $e->getMessage());
+                $this->debugLog("Error creating {$module} record: " . get_class($e) . ". The survey's sync log has the message.");
 
                 // Flatten mappings for logging
                 $flatMappings = [];
@@ -785,6 +987,98 @@ HTML;
                     $flatMappings
                 );
             }
+        }
+    }
+
+    /**
+     * The mappings of one module whose field is not on the module's field list.
+     *
+     * @param array $questionMappings question id => list of mappings
+     * @param array $fields The module's field list, by field name
+     * @return array A list of [question id, index in that question's list]
+     */
+    protected function unlistedFields(array $questionMappings, array $fields): array
+    {
+        $unlisted = [];
+        foreach ($questionMappings as $questionId => $mappingsList) {
+            foreach ($mappingsList as $index => $mapping) {
+                if (!isset($fields[$mapping['crm_field_name']])) {
+                    $unlisted[] = [$questionId, $index];
+                }
+            }
+        }
+        return $unlisted;
+    }
+
+    /**
+     * Sort a question's mappings, as the question editor stores them, into those the plugin accepts and a count of
+     * those it refuses. A mapping is accepted when its module is one the plugin writes to, its field has the form
+     * of a field name and, when the plugin holds that module's field list, the field is on it. Only the cached list
+     * is used: saving a question never waits for SuiteCRM. The list is checked again when a response is sent.
+     *
+     * @param array $mappings Decoded mappings
+     * @return array [accepted mappings, number refused]
+     */
+    protected function checkMappings(array $mappings): array
+    {
+        $accepted = [];
+        $refused = 0;
+        $fieldLists = [];
+
+        foreach ($mappings as $mapping) {
+            $module = is_array($mapping) ? ($mapping['module'] ?? $mapping['crm_module'] ?? null) : null;
+            $field = is_array($mapping) ? ($mapping['field'] ?? $mapping['crm_field_name'] ?? null) : null;
+
+            if (!SuiteCRMApiClient::isAllowedModule($module) || !SuiteCRMApiClient::isFieldName($field)) {
+                $refused++;
+                continue;
+            }
+            if (!isset($fieldLists[$module])) {
+                $fieldLists[$module] = FieldCacheManager::getCachedFields($this, $module);
+            }
+            if (!empty($fieldLists[$module]) && !isset($fieldLists[$module][$field])) {
+                $refused++;
+                continue;
+            }
+            $accepted[] = $mapping;
+        }
+
+        return [$accepted, $refused];
+    }
+
+    /**
+     * Record that mappings were refused. The logs get question ids and a count. They never get a mapping's own
+     * text or an answer.
+     *
+     * @param int[] $questionIds The question id of each refused mapping
+     * @param int $surveyId Survey ID
+     * @param int|null $responseId The response that was being sent, or null when a mapping was being saved
+     */
+    protected function logRefusedMappings(array $questionIds, $surveyId, $responseId = null): void
+    {
+        if (empty($questionIds)) {
+            return;
+        }
+
+        $count = count($questionIds);
+        $ids = array_unique(array_map('intval', $questionIds));
+        $message = 'Refused ' . ($count === 1 ? '1 field mapping' : "{$count} field mappings")
+            . ' of question' . (count($ids) === 1 ? ' ' : 's ') . implode(', ', $ids)
+            . '. The plugin writes only to ' . implode(' and ', self::SUPPORTED_MODULES)
+            . ', and only to fields that SuiteCRM lists for them.';
+
+        $surveyId = (int) $surveyId;
+        if ($responseId === null) {
+            $this->log("{$message} Survey {$surveyId}, when the mapping was saved.", 'error');
+            return;
+        }
+
+        $responseId = (int) $responseId;
+        $this->log("{$message} Survey {$surveyId}, response {$responseId}.", 'error');
+        try {
+            $this->getDbSchema()->logSync($responseId, $surveyId, 'Refused', 'failed', null, null, null, $message);
+        } catch (\Exception $e) {
+            $this->debugLog("Failed to log refused mappings: " . get_class($e));
         }
     }
 
@@ -894,7 +1188,8 @@ HTML;
                         ($syncInfo ?: 'No sync attempts yet.') .
                         '</div>' .
                         '<div class="alert alert-secondary mt-2">' .
-                        '<strong>How to map fields:</strong> Edit each question and expand the "SuiteCRM Integration" section to select the corresponding CRM field.' .
+                        '<strong>How to map fields:</strong> Edit each question in the classic question editor and expand its "SuiteCRM Integration" section to select the SuiteCRM fields it fills.' .
+                        ($this->hasNewEditor() ? ' LimeSurvey 7 opens its new editor by default, and the new editor does not show that section. To switch, open the menu under your name at the top right, choose the entry for the new editor and pick "Classic".' : '') .
                         '</div>',
                     'label' => ''
                 )
@@ -962,12 +1257,19 @@ HTML;
             // First, check if OAuth2 is already initialized
             $existingClientId = $this->get('oauth_client_id');
             if (!empty($existingClientId) && $this->get('oauth_initialized') === '1') {
-                $this->debugLog("OAuth2 already initialized with client ID: {$existingClientId}");
-                return [
-                    'success' => true,
-                    'message' => 'OAuth2 client already initialized',
-                    'client_id' => $existingClientId
-                ];
+                // The settings say a client was made. SuiteCRM may no longer have it: an admin deleted it there, or
+                // a restore brought back a database from before it was made. Then every sign-in fails, and this
+                // method is the way back ("Initialize OAuth2" on the settings page), so it makes a new client.
+                // When SuiteCRM's database can't be asked, the settings are believed.
+                if (!$this->oauth2ClientIsGone($existingClientId)) {
+                    $this->debugLog("OAuth2 already initialized with client ID: {$existingClientId}");
+                    return [
+                        'success' => true,
+                        'message' => 'OAuth2 client already initialized',
+                        'client_id' => $existingClientId
+                    ];
+                }
+                $this->debugLog("OAuth2 client {$existingClientId} is no longer in SuiteCRM: making a new one");
             }
 
             // Generate new credentials
@@ -1004,10 +1306,11 @@ HTML;
                 ];
             }
 
-            // Check if client already exists in SuiteCRM
-            $stmt = $pdo->prepare("SELECT id, secret FROM oauth2clients WHERE name = ?");
-            $stmt->execute(['LimeSurvey Integration']);
-            $existing = $stmt->fetch();
+            // Check if client already exists in SuiteCRM. Only the client whose secret this plugin holds is of
+            // use: a deleted one, or one with this name that the plugin has no secret for, can't sign in.
+            $stmt = $pdo->prepare("SELECT id, secret FROM oauth2clients WHERE name = ? AND deleted = 0 AND id = ?");
+            $stmt->execute(['LimeSurvey Integration', (string) $existingClientId]);
+            $existing = !empty($this->get('oauth_client_secret')) ? $stmt->fetch() : false;
 
             if ($existing) {
                 // Client exists - retrieve and use existing credentials
@@ -1075,6 +1378,26 @@ HTML;
                 'error' => $error,
                 'retry_suggested' => true
             ];
+        }
+    }
+
+    /**
+     * Whether SuiteCRM no longer has the OAuth2 client with this id (deleted there, or never restored). False when
+     * the client is there, and false when SuiteCRM's database can't be asked: then nothing is known.
+     *
+     * @param string $clientId The client id kept in the plugin's settings
+     * @return bool
+     */
+    protected function oauth2ClientIsGone(string $clientId): bool
+    {
+        try {
+            $pdo = $this->getSuiteCRMDatabaseConnection();
+            $stmt = $pdo->prepare("SELECT COUNT(*) AS n FROM oauth2clients WHERE id = ? AND deleted = 0");
+            $stmt->execute([$clientId]);
+            $row = $stmt->fetch();
+            return (int) ($row['n'] ?? 1) === 0;
+        } catch (\Throwable $e) {
+            return false;
         }
     }
 
@@ -1170,14 +1493,14 @@ HTML;
         curl_close($ch);
 
         if ($httpCode !== 200) {
-            $this->log("OAuth2 authentication failed: HTTP {$httpCode} - {$response}", 'error');
+            $this->log("OAuth2 authentication failed: HTTP {$httpCode}", 'error');
             throw new Exception("OAuth2 authentication failed");
         }
 
         $result = json_decode($response, true);
 
         if (!isset($result['access_token'])) {
-            $this->log("No access token in response: {$response}", 'error');
+            $this->log("No access token in SuiteCRM's response", 'error');
             throw new Exception("No access token received");
         }
 
@@ -1193,8 +1516,7 @@ HTML;
     public function log($message, $level = 'info')
     {
         // Only log if debug mode is enabled or level is error
-        $debugMode = $this->get('debug_mode', null, null, '0');
-        if (($debugMode !== '1' && $debugMode !== 1) && $level !== 'error') {
+        if (!$this->isDebugEnabled() && $level !== 'error') {
             return;
         }
 
@@ -1206,7 +1528,7 @@ HTML;
             return;
         }
 
-        if (function_exists('Yii') && isset(Yii::app()->log)) {
+        if ($level !== 'error' && class_exists('Yii', false)) {
             switch ($level) {
                 case 'error':
                     Yii::log($prefix . $message, 'error', 'application.plugins.SuiteCRMIntegration');
@@ -1221,7 +1543,7 @@ HTML;
                     Yii::log($prefix . $message, 'info', 'application.plugins.SuiteCRMIntegration');
             }
         } else {
-            // Fallback to error_log (goes to Apache error log, not stdout)
+            // Errors go to the web server's error log. Callers pass ids and SuiteCRM connection errors, never answers.
             error_log($prefix . "[$level] " . $message);
         }
     }
@@ -1232,33 +1554,15 @@ HTML;
      * This adds a multi-mapping interface where each question can be mapped to
      * multiple SuiteCRM fields (one-to-many mapping support).
      *
-     * The "SuiteCRM Integration" section is only shown in the question editor
-     * when the survey-level setting "Enable SuiteCRM Integration" is enabled.
+     * The attribute is registered whatever the survey's own setting says. LimeSurvey deletes a question's
+     * attributes that are not registered when the question is saved, so leaving it out for a survey whose link is
+     * off would delete the question's mapping. The editor's script hides the "SuiteCRM Integration" section while
+     * the link is off (actionGetAllFields tells it), and the field stays in the form.
      */
     public function newQuestionAttributes()
     {
         $this->debugLog("newQuestionAttributes() called");
         $event = $this->getEvent();
-
-        // Get the current survey ID from request parameters
-        // This is available when editing a question in the admin interface
-        $surveyId = null;
-        $request = Yii::app()->getRequest();
-        if ($request) {
-            $surveyId = (int)$request->getParam('surveyid', 0);
-            if ($surveyId <= 0) {
-                // Also check 'sid' parameter (used in some contexts)
-                $surveyId = (int)$request->getParam('sid', 0);
-            }
-        }
-
-        $this->debugLog("newQuestionAttributes() surveyId from request: " . var_export($surveyId, true));
-
-        // Only show the SuiteCRM Integration section if the integration is enabled for this survey
-        if ($surveyId > 0 && !$this->isEnabledForSurvey($surveyId)) {
-            $this->debugLog("SuiteCRM integration not enabled for survey {$surveyId}, hiding question attributes");
-            return;
-        }
 
         // Build module options
         $moduleOptions = ['' => '-- Select Module --'];
@@ -1266,24 +1570,9 @@ HTML;
             $moduleOptions[$module] = $module;
         }
 
-        // Build field options (will be populated via AJAX based on module selection)
-        $fieldOptions = ['' => '-- Select Field --'];
-
-        // Try to get cached fields for all modules
-        try {
-            $cacheManager = $this->getCacheManager();
-            foreach (self::SUPPORTED_MODULES as $module) {
-                $fields = $cacheManager->getFields($module, false);
-                foreach ($fields as $fieldName => $fieldDef) {
-                    $label = $fieldDef['label'] ?? ucwords(str_replace('_', ' ', $fieldName));
-                    $required = ($fieldDef['required'] ?? false) ? ' *' : '';
-                    $key = json_encode(['module' => $module, 'field' => $fieldName]);
-                    $fieldOptions[$key] = "{$module}: {$label}{$required}";
-                }
-            }
-        } catch (Exception $e) {
-            $this->debugLog("Error loading fields for question attributes: " . $e->getMessage());
-        }
+        // The field lists are loaded by the question editor itself, over AJAX (actionGetAllFields). This method runs
+        // on every survey page and for every console command, so it must not call SuiteCRM: with SuiteCRM down, each
+        // page would wait for the connection to time out.
 
         // Build transform rule options
         $transformer = $this->getDataTransformer();
@@ -1323,8 +1612,11 @@ HTML;
      */
     protected function registerQuestionEditorAssets()
     {
-        // Only register if we're in the admin context
-        if (!Yii::app()->hasComponent('clientScript')) {
+        // Only for a signed-in person. newQuestionAttributes also runs on public survey pages and in console commands,
+        // and the script calls this plugin's endpoints, which answer 401 to anyone not signed in: a respondent's page
+        // would send those calls for nothing.
+        $app = Yii::app();
+        if (!$app->hasComponent('clientScript') || !$app->hasComponent('user') || $app->user->getIsGuest()) {
             return;
         }
 
@@ -1335,7 +1627,14 @@ HTML;
                 return;
             }
 
-            $assetsUrl = Yii::app()->assetManager->publish($assetsPath);
+            // LimeSurvey names the published copy after the folder's date and LimeSurvey's version, and keeps a copy
+            // that is there. A new image can bring a changed script in a folder of the same date, and browsers would
+            // go on getting the old one. So a published script that differs from the plugin's own is copied again.
+            $assetManager = Yii::app()->assetManager;
+            $published = $assetManager->getPublishedPath($assetsPath);
+            $stale = $published !== false && is_file($published . '/question-editor.js')
+                && md5_file($published . '/question-editor.js') !== md5_file($assetsPath . '/question-editor.js');
+            $assetsUrl = $assetManager->publish($assetsPath, false, -1, $stale ? true : null);
 
             // Register CSS first
             if (file_exists($assetsPath . '/question-editor.css')) {
@@ -1354,6 +1653,39 @@ HTML;
         } catch (Exception $e) {
             $this->debugLog("Failed to register question editor assets: " . $e->getMessage());
         }
+    }
+
+    /**
+     * Check a question's mappings before LimeSurvey stores them (beforeQuestionAttributeSave).
+     *
+     * The question editor, the RemoteControl API and a question copy all store the attribute through this event. A
+     * mapping that the plugin refuses (checkMappings()) is taken out of the value, and a value that is not a list
+     * of mappings is stored as an empty list. LimeSurvey has checked the right to change the survey's content by
+     * then. A survey import writes the attribute without this event, so a mapping is checked again when a response
+     * is sent.
+     */
+    public function checkMappingsBeforeSave()
+    {
+        $model = $this->getEvent()->get('model');
+        if (!is_object($model) || $model->attribute !== 'suitecrm_mappings_json') {
+            return;
+        }
+
+        $value = (string) $model->value;
+        if ($value === '' || $value === '[]') {
+            return;
+        }
+
+        $mappings = json_decode($value, true);
+        [$accepted, $refused] = is_array($mappings) ? $this->checkMappings($mappings) : [[], 1];
+        if ($refused === 0) {
+            return;
+        }
+
+        $model->value = json_encode($accepted);
+        $questionId = (int) $model->qid;
+        $question = Question::model()->findByPk($questionId);
+        $this->logRefusedMappings(array_fill(0, $refused, $questionId), $question ? $question->sid : 0);
     }
 
     /**
@@ -1433,6 +1765,9 @@ HTML;
                 ];
             }
 
+            // The same check as when the attribute is stored. A survey import stores it without that check.
+            [$mappingsToSave] = $this->checkMappings($mappingsToSave);
+
             // Save to database
             $schema = $this->getDbSchema();
             $result = $schema->saveMappings($surveyId, $questionId, $mappingsToSave);
@@ -1456,11 +1791,27 @@ HTML;
         }
 
         $request = Yii::app()->request;
-        $function = $request->getParam('function', '');
+        $function = (string) $request->getParam('function', '');
 
         // Verify the function is allowed
-        if (!in_array($function, $this->allowedPublicMethods)) {
+        if (!in_array($function, $this->allowedPublicMethods, true)) {
             $this->sendJsonResponse(['error' => 'Invalid function'], 400);
+            return;
+        }
+
+        // Verify who is asking. Without this, anyone on the internet could read a survey's sync log (which holds
+        // answers), see SuiteCRM's host names or start the OAuth2 setup.
+        $denied = $this->denyDirectRequest($function);
+        if ($denied !== null) {
+            $this->sendJsonResponse(['error' => $denied[1]], $denied[0]);
+            return;
+        }
+
+        // An endpoint that changes something takes POST only. LimeSurvey refuses a POST without its CSRF token, so
+        // a link or a page of another site can't make a signed-in admin's browser call it.
+        if (in_array($function, self::POST_ONLY_METHODS, true) && !$request->isPostRequest) {
+            header('Allow: POST');
+            $this->sendJsonResponse(['error' => 'Use POST, with the CSRF token'], 405);
             return;
         }
 
@@ -1470,6 +1821,74 @@ HTML;
             $this->$methodName();
         } else {
             $this->sendJsonResponse(['error' => 'Method not found'], 404);
+        }
+    }
+
+    /**
+     * Who may call an AJAX endpoint.
+     *
+     * Every endpoint needs a signed-in LimeSurvey admin user. On top of that:
+     * - the sync log of a survey needs the right to read that survey's settings and its responses (the log holds
+     *   what was sent to SuiteCRM, which is answers);
+     * - reading a question's mappings needs the right to read its survey's settings, and saving them the right to
+     *   change that survey's content, which is the right LimeSurvey asks for when a question is saved. The question
+     *   has to belong to the survey that was named;
+     * - the lists the question editor loads (modules, fields, transformation rules) need either the global settings
+     *   right or the right to read the settings or the content of the survey named in surveyId;
+     * - everything about the connection (status, test, cache, OAuth2 setup) needs the global right to update
+     *   settings, as the settings page does. A superadmin has every right.
+     *
+     * @param string $function The endpoint's method name
+     * @return array|null null when the caller may go on, or [HTTP status, message]
+     */
+    protected function denyDirectRequest(string $function): ?array
+    {
+        $user = Yii::app()->user;
+        if ($user === null || $user->isGuest) {
+            return [401, 'Sign in to LimeSurvey as an admin to use this'];
+        }
+        $forbidden = [403, 'Your account may not do this'];
+        $request = Yii::app()->request;
+        $permission = Permission::model();
+        $surveyId = (int) $request->getParam('surveyId', 0);
+        $mayReadSurvey = static function (int $sid) use ($permission): bool {
+            return $sid > 0 && $permission->hasSurveyPermission($sid, 'surveysettings', 'read');
+        };
+
+        switch ($function) {
+            case 'actionGetSyncLogs':
+                return ($mayReadSurvey($surveyId) && $permission->hasSurveyPermission($surveyId, 'responses', 'read'))
+                    ? null : $forbidden;
+
+            case 'actionGetMappings':
+            case 'actionSaveMappings':
+                $question = Question::model()->findByPk((int) $request->getParam('questionId', 0));
+                if ($question === null) {
+                    return $forbidden;
+                }
+                $questionSurveyId = (int) $question->sid;
+                if ($function === 'actionGetMappings') {
+                    return $mayReadSurvey($questionSurveyId) ? null : $forbidden;
+                }
+                return ($surveyId === $questionSurveyId
+                    && $permission->hasSurveyPermission($questionSurveyId, 'surveycontent', 'update'))
+                    ? null : $forbidden;
+
+            case 'actionGetModules':
+            case 'actionGetFields':
+            case 'actionGetAllFields':
+            case 'actionGetTransformRules':
+                if ($permission->hasGlobalPermission('settings', 'read')) {
+                    return null;
+                }
+                return ($mayReadSurvey($surveyId)
+                    || ($surveyId > 0 && $permission->hasSurveyPermission($surveyId, 'surveycontent', 'read')))
+                    ? null : $forbidden;
+
+            default:
+                // actionCheckStatus, actionTestConnection, actionRefreshCache, actionInitializeOAuth2 and anything
+                // added later
+                return $permission->hasGlobalPermission('settings', 'update') ? null : $forbidden;
         }
     }
 
@@ -1503,8 +1922,7 @@ HTML;
         }
 
         try {
-            $cacheManager = $this->getCacheManager();
-            $fields = $cacheManager->getFields($module);
+            $fields = $this->getFieldsForCaller($module);
 
             $this->sendJsonResponse([
                 'module' => $module,
@@ -1522,12 +1940,11 @@ HTML;
     public function actionGetAllFields()
     {
         try {
-            $cacheManager = $this->getCacheManager();
             $allFields = [];
 
             foreach (self::SUPPORTED_MODULES as $module) {
                 try {
-                    $fields = $cacheManager->getFields($module, false);
+                    $fields = $this->getFieldsForCaller($module);
                     if (!empty($fields)) {
                         $allFields[$module] = $fields;
                     }
@@ -1536,9 +1953,13 @@ HTML;
                 }
             }
 
+            // The editor's script hides its section while the survey's link is off.
+            $surveyId = (int) Yii::app()->request->getParam('surveyId', 0);
+
             $this->sendJsonResponse([
                 'fields' => $allFields,
-                'modules' => array_keys($allFields)
+                'modules' => array_keys($allFields),
+                'surveyEnabled' => $surveyId > 0 ? $this->isEnabledForSurvey($surveyId) : null
             ]);
         } catch (Exception $e) {
             $this->sendJsonResponse(['error' => $e->getMessage()], 500);
@@ -1634,9 +2055,20 @@ HTML;
         }
 
         try {
-            $mappings = json_decode($mappingsJson, true);
-            if (json_last_error() !== JSON_ERROR_NONE) {
+            $mappings = is_string($mappingsJson) ? json_decode($mappingsJson, true) : null;
+            if (!is_array($mappings)) {
                 $this->sendJsonResponse(['error' => 'Invalid JSON in mappings'], 400);
+                return;
+            }
+
+            // Nothing is saved when one mapping of the list is refused.
+            [, $refused] = $this->checkMappings($mappings);
+            if ($refused > 0) {
+                $this->logRefusedMappings(array_fill(0, $refused, $questionId), $surveyId);
+                $this->sendJsonResponse([
+                    'error' => 'A mapping names a SuiteCRM module or field that the plugin does not write to. It writes only to '
+                        . implode(' and ', self::SUPPORTED_MODULES) . ', and only to fields that SuiteCRM lists for them.'
+                ], 400);
                 return;
             }
 
@@ -1722,11 +2154,13 @@ HTML;
         // Check 1: SuiteCRM HTTP endpoint
         if (!empty($suitecrmUrl)) {
             try {
+                // A redirect is not followed: the check is whether this address answers, and the plugin never
+                // follows one with the password either. A 301 or 302 still counts as reachable.
                 $ch = curl_init(rtrim($suitecrmUrl, '/') . '/');
                 curl_setopt_array($ch, [
                     CURLOPT_RETURNTRANSFER => true,
                     CURLOPT_TIMEOUT => 10,
-                    CURLOPT_FOLLOWLOCATION => true,
+                    CURLOPT_FOLLOWLOCATION => false,
                     CURLOPT_NOBODY => true  // HEAD request
                 ]);
                 curl_exec($ch);
@@ -1807,7 +2241,18 @@ HTML;
         $oauthClientId = $this->get('oauth_client_id');
         $oauthError = $this->get('oauth_init_error');
 
-        if ($oauthInitialized && !empty($oauthClientId)) {
+        if ($oauthInitialized && !empty($oauthClientId) && $this->oauth2ClientIsGone((string) $oauthClientId)) {
+            // The settings say a client was made, and SuiteCRM no longer has it: an admin deleted it there, or a
+            // restore brought back a database from before it was made. Every sign-in fails then, so "ready" would
+            // be wrong. "Initialize OAuth2" on this page is the way back.
+            $status['oauth2_client'] = [
+                'status' => 'error',
+                'message' => "SuiteCRM no longer has the OAuth2 client that LimeSurvey holds ({$oauthClientId}). "
+                    . 'Click "Initialize OAuth2" to make a new one.',
+                'client_id' => $oauthClientId,
+                'needs_initialize' => true
+            ];
+        } elseif ($oauthInitialized && !empty($oauthClientId)) {
             $status['oauth2_client'] = [
                 'status' => 'ok',
                 'message' => "OAuth2 client initialized: {$oauthClientId}",

@@ -46,20 +46,21 @@
 # database image with the clouve-ops sshd goes into ALL, CONTEXT and PORT below.
 #
 # An image with a finding FAILs, except one in KNOWN whose PID 1 isn't tini:
-# its findings are printed as KNOWN. KNOWN is empty since all five images run
+# its findings are printed as KNOWN. KNOWN is empty since every image runs
 # tini (4.5.5). The table at the end has what each check found.
 #
 # --image NAME=REF uses an image that is already built instead of building it
 # (it stays in place). Naming images limits the run to them.
 #
-# Needs Docker. The builds pull mysql:8.0, mysql:8.4, mariadb:12.3 and
-# postgres:18 and install packages. Every container the test starts is named
+# Needs Docker. The builds pull mysql:8.0, mysql:8.4, mariadb:11.8,
+# mariadb:12.3 and postgres:18 and install packages. Every container the test starts is named
 # db-zombies-t-*. The containers, their volumes and the images the test built
 # are removed when it exits.
 #
 # Usage: bash tests/db-image-zombies.test.sh [--image NAME=REF]... [NAME...]
-#   NAME  gibbon-mysql, moodle-mysql, wordpress-mariadb, nextcloud-mariadb or
-#         odoo-postgres (default: all five)
+#   NAME  gibbon-mysql, moodle-mysql, wordpress-mariadb, nextcloud-mariadb,
+#         limesurvey-mariadb, suitecrm-mariadb or
+#         odoo-postgres (default: all)
 # ============================================================================
 
 set -uo pipefail
@@ -72,7 +73,7 @@ SSH_SESSIONS=40
 # The SSH client runs in a container of this image (it has ssh), in the database container's network namespace.
 CLIENT=odoo-postgres
 
-ALL=(gibbon-mysql moodle-mysql wordpress-mariadb nextcloud-mariadb odoo-postgres)
+ALL=(gibbon-mysql moodle-mysql wordpress-mariadb nextcloud-mariadb limesurvey-mariadb suitecrm-mariadb odoo-postgres)
 # Findings these images are known to have: printed, not failed, until they get tini. None since 4.5.5.
 KNOWN=()
 declare -A CONTEXT=(
@@ -80,20 +81,26 @@ declare -A CONTEXT=(
   [moodle-mysql]="$REPO_DIR/apps/moodle/image/mysql"
   [wordpress-mariadb]="$REPO_DIR/apps/wordpress/image/mariadb"
   [nextcloud-mariadb]="$REPO_DIR/apps/nextcloud/image/mariadb"
+  [limesurvey-mariadb]="$REPO_DIR/apps/limesurvey/image/mariadb"
   [odoo-postgres]="$REPO_DIR/apps/odoo/image/postgres"
+  [suitecrm-mariadb]="$REPO_DIR/apps/suitecrm/image/mariadb"
 )
 declare -A PORT=(
   [gibbon-mysql]=3306 [moodle-mysql]=3306 [wordpress-mariadb]=3306 [nextcloud-mariadb]=3306 [odoo-postgres]=5432
+  [limesurvey-mariadb]=3306
+  [suitecrm-mariadb]=3306
 )
 # The line each server logs when it has shut down cleanly.
 declare -A SHUTDOWN_LINE=(
   [gibbon-mysql]="Shutdown complete" [moodle-mysql]="Shutdown complete" [wordpress-mariadb]="Shutdown complete"
   [nextcloud-mariadb]="Shutdown complete" [odoo-postgres]="database system is shut down"
+  [limesurvey-mariadb]="Shutdown complete"
+  [suitecrm-mariadb]="Shutdown complete"
 )
 declare -A IMAGE=()
 
 usage() {
-  sed -n 's/^# \{0,1\}//; /^Usage:/,/^ *odoo-postgres (default/p' "${BASH_SOURCE[0]}" >&2
+  sed -n 's/^# \{0,1\}//; /^Usage:/,/(default: all)/p' "${BASH_SOURCE[0]}" >&2
   exit 2
 }
 

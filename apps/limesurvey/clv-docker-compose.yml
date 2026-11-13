@@ -41,9 +41,9 @@ services:
       memoryBase: 1
       cpuBase: 1
     x-clouve-bundle-metadata:
-      appVersion: 6.16.1
+      appVersion: 7.10.0
       appTitle: LimeSurvey
-      appDescription: LimeSurvey is a powerful, open-source survey platform that enables businesses and organizations to create, distribute, and analyze professional surveys with ease. Renowned for its flexibility and comprehensive feature set, LimeSurvey supports unlimited surveys, questions, and responses, making it ideal for market research, customer feedback, employee engagement, and academic studies. With an intuitive interface, advanced question types, multilingual support, and robust data analysis tools, LimeSurvey empowers users to gather actionable insights and make data-driven decisions. Its self-hosted nature ensures complete data privacy and control, while extensive customization options allow organizations to tailor surveys to their specific needs and brand identity.
+      appDescription: A hosted LimeSurvey 7 for surveys, questionnaires and feedback forms, with unlimited surveys, questions and responses. You tell the AI Assistant what you need in plain English, in a chat in your browser. It drafts a survey from your description and leaves it inactive for you to review, sets up participant lists, and sends invitations and reminders through your own mail server, only after you say yes. It exports your responses to a file and summarizes them when you ask, adds admin accounts and sets what each may do, helps you set up that server, registers themes and plugins you upload, takes and restores backups, and finds out why something is broken. It waits for your yes before it sends, activates or deletes anything. On a paid plan, the price of the AI Assistant includes an AI usage allowance, and you can buy more. On a free trial, or with free services, you use it with your own Claude subscription. You can turn it on or off. You own your survey data; Clouve hosts the containers.
       adminPath: /admin
     x-clouve-healthcheck:
       enabled: true
@@ -117,3 +117,12 @@ volumes:
     driver: local
   limesurvey-db-data:
     driver: local
+x-clouve-agent:
+  enabled: true
+  skills:
+    url: https://github.com/Clouve/magneto-skills.git?plugins=limesurvey
+    git:
+      token: ''
+      username: ''
+  advanced:
+    sidecarPullTimeout: 600

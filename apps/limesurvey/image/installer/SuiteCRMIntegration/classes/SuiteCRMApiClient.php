@@ -35,7 +35,36 @@ class SuiteCRMApiClient
     private $debugMode = false;
     
     /** @var string Log file path */
-    private $logFile = '/tmp/suitecrm_api.log';
+    private $logFile = null;
+
+    /**
+     * The SuiteCRM modules this plugin reads field lists of and creates records in. The list is the code's own:
+     * no setting and no mapping adds to it. A mapping is written by whoever may edit a survey, and every call to
+     * SuiteCRM is made as SuiteCRM's admin, so a module that is not here is never asked for and never written to.
+     */
+    public const ALLOWED_MODULES = ['Leads', 'Cases'];
+
+    /**
+     * Whether a module is one the plugin writes to.
+     *
+     * @param mixed $moduleName
+     * @return bool
+     */
+    public static function isAllowedModule($moduleName): bool
+    {
+        return is_string($moduleName) && in_array($moduleName, self::ALLOWED_MODULES, true);
+    }
+
+    /**
+     * Whether a value has the form of a SuiteCRM field name: letters, digits and underscores.
+     *
+     * @param mixed $fieldName
+     * @return bool
+     */
+    public static function isFieldName($fieldName): bool
+    {
+        return is_string($fieldName) && preg_match('/^[A-Za-z0-9_]+$/D', $fieldName) === 1;
+    }
 
     /**
      * Constructor
@@ -50,6 +79,8 @@ class SuiteCRMApiClient
         $this->username = $config['username'] ?? '';
         $this->password = $config['password'] ?? '';
         $this->debugMode = $config['debugMode'] ?? false;
+        // The plugin names a file in LimeSurvey's runtime folder. Without one, nothing is logged.
+        $this->logFile = $config['logFile'] ?? null;
     }
 
     /**
@@ -71,9 +102,10 @@ class SuiteCRMApiClient
      */
     private function log(string $message): void
     {
-        if ($this->debugMode) {
+        // Callers pass URLs, counts and status codes. They never pass a record's fields or SuiteCRM's answer.
+        if ($this->debugMode && $this->logFile) {
             $timestamp = date('Y-m-d H:i:s');
-            file_put_contents($this->logFile, "[{$timestamp}] [API] {$message}\n", FILE_APPEND);
+            @file_put_contents($this->logFile, "[{$timestamp}] [API] {$message}\n", FILE_APPEND | LOCK_EX);
         }
     }
 
@@ -106,7 +138,7 @@ class SuiteCRMApiClient
         ], false);
 
         if (!isset($response['access_token'])) {
-            $this->log("Authentication failed: " . json_encode($response));
+            $this->log("Authentication failed: " . ($response['error'] ?? 'no access token in the answer'));
             throw new Exception("OAuth2 authentication failed: " . ($response['error_description'] ?? 'Unknown error'));
         }
 
@@ -164,8 +196,13 @@ class SuiteCRMApiClient
      */
     public function getModuleFields(string $moduleName): array
     {
+        // The module becomes part of the address, so it is checked before anything is sent.
+        if (!self::isAllowedModule($moduleName)) {
+            throw new InvalidArgumentException('The plugin does not read or write this SuiteCRM module');
+        }
+
         $this->log("Fetching fields for module: {$moduleName}");
-        $response = $this->apiRequest('GET', "/V8/meta/fields/{$moduleName}");
+        $response = $this->apiRequest('GET', '/V8/meta/fields/' . rawurlencode($moduleName));
 
         $fields = $response['data']['attributes'] ?? [];
         $this->log("Retrieved " . count($fields) . " fields for {$moduleName}");
@@ -255,7 +292,16 @@ class SuiteCRMApiClient
      */
     public function createRecord(string $moduleName, array $attributes): array
     {
-        $this->log("Creating record in {$moduleName}: " . json_encode($attributes));
+        if (!self::isAllowedModule($moduleName)) {
+            throw new InvalidArgumentException('The plugin does not read or write this SuiteCRM module');
+        }
+        foreach (array_keys($attributes) as $fieldName) {
+            if (!self::isFieldName($fieldName)) {
+                throw new InvalidArgumentException('A record names a field that is not a SuiteCRM field name');
+            }
+        }
+
+        $this->log("Creating record in {$moduleName} with " . count($attributes) . " fields");
 
         $payload = [
             'data' => [
@@ -315,11 +361,13 @@ class SuiteCRMApiClient
     {
         $ch = curl_init($url);
 
+        // Every request here carries the admin's password or its token, so a redirect is never followed: the
+        // address that answers must not be able to send them somewhere else. SuiteCRM's API does not redirect.
         curl_setopt_array($ch, [
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_HTTPHEADER => $headers,
             CURLOPT_TIMEOUT => 30,
-            CURLOPT_FOLLOWLOCATION => true
+            CURLOPT_FOLLOWLOCATION => false
         ]);
 
         if ($method === 'POST') {
@@ -347,11 +395,15 @@ class SuiteCRMApiClient
 
         $this->log("HTTP {$method} {$url} - Response code: {$httpCode}");
 
+        if ($httpCode >= 300 && $httpCode < 400) {
+            throw new Exception("SuiteCRM answered with a redirect (HTTP {$httpCode}), which the plugin does not follow. Set SuiteCRM's own address in the plugin's settings");
+        }
+
         $decoded = json_decode($response, true);
 
         if ($httpCode >= 400) {
             $errorMsg = $decoded['errors'][0]['detail'] ?? $decoded['error_description'] ?? "HTTP {$httpCode}";
-            $this->log("API error: {$errorMsg}");
+            $this->log("API error: HTTP {$httpCode}");
             throw new Exception("SuiteCRM API error: {$errorMsg}");
         }
 

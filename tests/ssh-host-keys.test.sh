@@ -34,7 +34,8 @@
 #
 # Usage: bash tests/ssh-host-keys.test.sh [--image NAME=REF]... [NAME...]
 #   NAME  odoo, odoo-postgres, wordpress, wordpress-mariadb, gibbon,
-#         gibbon-mysql, moodle-mysql, nextcloud, nextcloud-mariadb or ai-studio
+#         gibbon-mysql, moodle-mysql, nextcloud, nextcloud-mariadb, limesurvey,
+#         limesurvey-mariadb, suitecrm, suitecrm-mariadb or ai-studio
 #         (default: all)
 # ============================================================================
 
@@ -50,7 +51,7 @@ WAIT_SECONDS=120
 
 # The images, where each is built from, and the script that starts its clouve-ops sshd ("" for the image's own
 # entrypoint).
-ALL=(odoo odoo-postgres wordpress wordpress-mariadb gibbon gibbon-mysql moodle-mysql nextcloud nextcloud-mariadb ai-studio)
+ALL=(odoo odoo-postgres wordpress wordpress-mariadb gibbon gibbon-mysql moodle-mysql nextcloud nextcloud-mariadb limesurvey limesurvey-mariadb suitecrm suitecrm-mariadb ai-studio)
 declare -A CONTEXT=(
   [odoo]="$REPO_DIR/apps/odoo/image"
   [odoo-postgres]="$REPO_DIR/apps/odoo/image/postgres"
@@ -61,7 +62,11 @@ declare -A CONTEXT=(
   [moodle-mysql]="$REPO_DIR/apps/moodle/image/mysql"
   [nextcloud]="$REPO_DIR/apps/nextcloud/image"
   [nextcloud-mariadb]="$REPO_DIR/apps/nextcloud/image/mariadb"
+  [limesurvey]="$REPO_DIR/apps/limesurvey/image"
+  [limesurvey-mariadb]="$REPO_DIR/apps/limesurvey/image/mariadb"
   [ai-studio]="$REPO_DIR/apps/ai-studio/image"
+  [suitecrm]="$REPO_DIR/apps/suitecrm/image"
+  [suitecrm-mariadb]="$REPO_DIR/apps/suitecrm/image/mariadb"
 )
 declare -A SSHD_SCRIPT=(
   [odoo]=/clouve/odoo/installer/start-clouve-ops-sshd.sh
@@ -73,7 +78,11 @@ declare -A SSHD_SCRIPT=(
   [moodle-mysql]=/usr/local/bin/start-clouve-ops-sshd.sh
   [nextcloud]=/clouve/nextcloud/installer/start-clouve-ops-sshd.sh
   [nextcloud-mariadb]=/usr/local/bin/start-clouve-ops-sshd.sh
+  [limesurvey]=/clouve/limesurvey/installer/start-clouve-ops-sshd.sh
+  [limesurvey-mariadb]=/usr/local/bin/start-clouve-ops-sshd.sh
   [ai-studio]=""
+  [suitecrm]=/clouve/suitecrm/installer/start-clouve-ops-sshd.sh
+  [suitecrm-mariadb]=/usr/local/bin/start-clouve-ops-sshd.sh
 )
 declare -A IMAGE=()
 

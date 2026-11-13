@@ -123,7 +123,7 @@ else
   printf '       got: %s\n' "$got"
 fi
 
-for app in gibbon moodle wordpress nextcloud ai-studio; do
+for app in gibbon moodle wordpress nextcloud limesurvey suitecrm ai-studio; do
   tpl="$APPS_DIR/$app/image/context/$app/CONTEXT.md.tpl"
   echo "$app"
   if [ ! -f "$tpl" ]; then fail "$app: persona exists"; continue; fi

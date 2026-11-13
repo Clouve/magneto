@@ -10,6 +10,10 @@ volumes:
   limesurvey_upload:
   suitecrm_db_data:
   suitecrm_data:
+  magneto_agent_home:
+  magneto_agent_usr:
+  magneto_agent_opt:
+  magneto_agent_var:
 
 services:
   # LimeSurvey MariaDB Database
@@ -22,6 +26,13 @@ services:
       MYSQL_USER: limesurvey
       MYSQL_PASSWORD: limesurvey_password
       MYSQL_ROOT_PASSWORD: limesurvey_root_password
+      # One password for the clouve-ops shell account, the same on every
+      # service of the bundle. Each container gives it to its clouve-ops
+      # user at start, and the magneto-agent container signs in with it
+      # (sshpass). Without it a container starts no sshd. On a deployment
+      # with the AI Assistant, Clouve makes the value and sets it on all
+      # five pods. Local runs use this made-up one.
+      CLOUVE_OPS_PASSWORD: clouve_ops_dev_password
     volumes:
       - limesurvey_db_data:/var/lib/mysql
     networks:
@@ -74,6 +85,8 @@ services:
       SUITECRM_DB_NAME: suitecrm
       SUITECRM_DB_USER: suitecrm
       SUITECRM_DB_PASSWORD: suitecrm_password
+      # Same value as on the limesurvey-mariadb service. See its comment.
+      CLOUVE_OPS_PASSWORD: clouve_ops_dev_password
     volumes:
       - limesurvey_data:/var/www/html
       - limesurvey_upload:/var/www/html/upload
@@ -90,6 +103,8 @@ services:
       MYSQL_USER: suitecrm
       MYSQL_PASSWORD: suitecrm_password
       MYSQL_ROOT_PASSWORD: suitecrm_root_password
+      # Same value as on the limesurvey-mariadb service. See its comment.
+      CLOUVE_OPS_PASSWORD: clouve_ops_dev_password
     volumes:
       - suitecrm_db_data:/var/lib/mysql
     networks:
@@ -122,9 +137,79 @@ services:
       SUITECRM_ADMIN_USER: admin
       SUITECRM_ADMIN_PASSWORD: Admin@123
       SUITECRM_INSTALL_DEMO_DATA: "no"
+      # Same value as on the limesurvey-mariadb service. See its comment.
+      CLOUVE_OPS_PASSWORD: clouve_ops_dev_password
     volumes:
       - suitecrm_data:/var/www/html
     networks:
       - crm_network
 
+  # Magneto Agent: the AI Assistant's container. It is a Claude Code
+  # workspace in the browser with the limesurvey and suitecrm skills from
+  # the magneto-skills marketplace. Each plugin's install.sh hook installs
+  # the programs its scripts use at container start, and each app's persona
+  # (CONTEXT.md.tpl) is pulled from the limesurvey and suitecrm containers
+  # over clouve-ops SSH (sidecar-fetcher). A deployment gets this container
+  # from the manifest's x-clouve-agent block. Here it is a service of its
+  # own, so a local run has the assistant too.
+  magneto-agent:
+    image: r.clv.zone/clouveinc/magneto-agent
+    container_name: crm_kit_magneto_agent
+    restart: unless-stopped
+    depends_on:
+      limesurvey-mariadb:
+        condition: service_healthy
+      suitecrm-mariadb:
+        condition: service_healthy
+    ports:
+      - "8082:80"
+    environment:
+      MAGNETO_AGENT_USERNAME: admin
+      MAGNETO_AGENT_PASSWORD: Admin@123
+      MAGNETO_AGENT_ROOT_PASSWORD: Root@123
 
+      # AI Assistant model access, for local runs only. A Clouve
+      # deployment gets a managed key from the platform and never reads
+      # these. Export one option in your shell before ./start.sh:
+      #   - MAGNETO_AGENT_LLM_BASE_URL + MAGNETO_AGENT_LLM_KEY: a LiteLLM
+      #     gateway URL and a key it issued, or
+      #   - ANTHROPIC_API_KEY: your own Anthropic API key.
+      # With neither set, the agent shows "The AI Assistant isn't
+      # available yet". There is no key screen.
+      MAGNETO_AGENT_LLM_BASE_URL: ${MAGNETO_AGENT_LLM_BASE_URL:-}
+      MAGNETO_AGENT_LLM_KEY: ${MAGNETO_AGENT_LLM_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+
+      # Both skills, from the magneto-skills Claude Code marketplace. The
+      # Magneto Agent loader clones the marketplace at container start and
+      # stages each plugin at /clouve/skills/<plugin>/plugin/.
+      MAGNETO_AGENT_SKILLS: https://github.com/Clouve/magneto-skills.git?plugins=limesurvey,suitecrm
+      # MAGNETO_AGENT_SKILLS_GIT_TOKEN: ${MAGNETO_AGENT_SKILLS_GIT_TOKEN:-}
+      # MAGNETO_AGENT_SKILLS_GIT_USERNAME: ${MAGNETO_AGENT_SKILLS_GIT_USERNAME:-}
+
+      # Same value as on the other four services. The assistant signs in
+      # to each with `sshpass -e ssh clouve-ops@...` using this password.
+      CLOUVE_OPS_PASSWORD: clouve_ops_dev_password
+
+      # The four containers the Magneto Agent SSHs to at init, for two
+      # pulls:
+      #   - sidecar-fetcher: each app's persona (CONTEXT.md.tpl), kept in
+      #     its image under /clouve/context/;
+      #   - sidecar-env-fetcher: each container's settings, with its name
+      #     as a prefix, so the skills can use LIMESURVEY_HOST,
+      #     LIMESURVEY_DB_HOST, SUITECRM_HOST, SUITECRM_DB_HOST and the
+      #     rest. Passwords go to the agent's secrets file, which
+      #     clv-secret reads, and never into the environment.
+      CLV_SIDECAR_HOSTS: limesurvey,limesurvey-mariadb,suitecrm,suitecrm-mariadb
+      # The short names that go with CLV_SIDECAR_HOSTS, one for one. They
+      # give the prefix (LIMESURVEY_, LIMESURVEY_MARIADB_, SUITECRM_,
+      # SUITECRM_MARIADB_). On Kubernetes the hosts become tkt-<id>-* and
+      # these stay as they are.
+      CLV_SIDECAR_NAMESPACES: limesurvey,limesurvey-mariadb,suitecrm,suitecrm-mariadb
+    volumes:
+      - magneto_agent_home:/home
+      - magneto_agent_usr:/usr
+      - magneto_agent_opt:/opt
+      - magneto_agent_var:/var
+    networks:
+      - crm_network
