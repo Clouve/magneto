@@ -46,6 +46,11 @@ RUN microdnf install -y openssh-server sudo shadow-utils \
     && echo "clouve-ops ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/clouve-ops \
     && chmod 0440 /etc/sudoers.d/clouve-ops
 
+# MySQL Shell bundles its own Python with a certifi that has a critical advisory, and nothing here runs mysqlsh. No
+# package needs it; mysql and mysqldump come with the server. rpm leaves what the shell wrote when the base was built
+# (its Python caches, its log, empty folders), so those go too (tests/mysql-image-shell.test.sh).
+RUN rpm -e mysql-shell && rm -rf /usr/lib/mysqlsh /usr/libexec/mysqlsh /usr/share/mysqlsh /root/.mysqlsh
+
 COPY --from=tini /usr/bin/tini-static /usr/bin/tini
 COPY --from=gosu --chmod=755 /gosu /usr/local/bin/gosu
 COPY clouve-ops-sshd.conf /etc/ssh/sshd_config.d/clouve-ops.conf

@@ -306,6 +306,13 @@ for line in 1 2 3; do
 done
 assert_eq "and nothing else in the probe" "3" "$(grep -c . <<< "$probe")"
 
+# The Education Kit's Moodle step that brings Gibbon's password in step after a rotation (release 4.5.6) is among the
+# scanned scripts: it hands that password to PHP, so the scan must read it.
+assert_eq "the scan reads the Education Kit's gibbon-integration-password.sh" "yes" "$(python3 -I -c '
+import glob, os, sys
+print("yes" if os.path.join(sys.argv[1], "apps/moodle/image/installer/gibbon-integration-password.sh")
+      in glob.glob(os.path.join(sys.argv[1], "apps/moodle/image/**/*.sh"), recursive=True) else "no")' "$REPO_DIR")"
+
 found="$(python3 -I -B "$WORK/scan.py" "$REPO_DIR" gibbon moodle wordpress limesurvey suitecrm)"
 if [ -z "$found" ]; then
   pass "none does"

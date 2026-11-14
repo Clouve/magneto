@@ -25,17 +25,21 @@
 #                  ":<DATE>" + ":latest" pair (e.g. --tag 2025.11.20)
 #   --skip-new-disk-check  Push to UAT or prod without a new-disk pass (below)
 #
-# Dated tags: a push to UAT's or prod's registry (any project on the hosts their
-# Harbors answer on: demo.cr0.io and demo.reg.clouve.com, cr0.io and
-# registry.clouve.com) needs
-# --tag <YYYY.MM.DD> (an optional suffix such as 2026.11.11-2 is allowed), or
+# Dated tags: a push to dev's, UAT's or prod's registry (any project on the hosts
+# their Harbors answer on: dev.cr0.io and dev.reg.clouve.com, demo.cr0.io and
+# demo.reg.clouve.com, cr0.io and registry.clouve.com) needs
+# --tag <YYYY.MM.DD>, a real date from 2000 to 2099 (an optional suffix of a
+# hyphen and letters or digits, such as 2026.11.11-2, is allowed), or
 # nothing is built or pushed, however REGISTRY is set and whichever script
-# calls this one: without --tag a push moves :latest, and images reach UAT and
-# prod only as dated tags, through a listing's new version. Pushes to dev's
-# registry (dev.cr0.io, dev.reg.clouve.com) and the rig's (r.clv.zone) don't
-# need one.
-# PUSH_NEEDS_DATED_TAG=1 turns the rule on for any registry; build-uat.sh and
-# build-prod.sh set it too.
+# calls this one: without --tag a push moves :latest, and images reach an
+# environment only as dated tags, through a listing's new version. The tag
+# must also be new: when one of the target's images already has it in the
+# registry, or the lookup fails for any reason other than "not found", nothing
+# is built or pushed (with --all, nothing of any target). A dated tag is never
+# pushed over. Pushes to any other registry, a new environment's included,
+# follow both rules too; only the rig's Harbor (r.clv.zone, registry.clouve.dev)
+# needs neither. PUSH_NEEDS_DATED_TAG=1 turns both rules on there as well;
+# build-dev.sh, build-uat.sh and build-prod.sh set it too.
 #
 # New-disk gate: build-uat.sh and build-prod.sh set NEW_DISK_GATE=1. With it and
 # --push, every app about to be pushed must have passed
@@ -316,8 +320,9 @@ prune_builder_cache() {
 # Base image tags
 # ============================================================================
 # untagged_bases DIR BASE: prints "<Dockerfile, from BASE>: <image>" for each
-# FROM or COPY --from=<image> in DIR's Dockerfiles that names no tag. A build stage's
-# name, a stage number, scratch and a digest are not untagged images. A push
+# FROM or COPY --from=<image> in DIR's Dockerfiles that names no tag or names
+# :latest. A build stage's name, a stage number, scratch and a digest are not
+# untagged images. A push
 # refuses such a target: every build passes --pull, so it would push whatever
 # :latest is that day, a new major version included
 # (tests/dockerfile-base-tags.test.sh checks the whole repository).
@@ -340,7 +345,8 @@ untagged_bases() {
                 }
                 for (k = 1; k <= refs; k++) {
                     r = ref[k]; last = r; sub(/.*\//, "", last)
-                    if (tolower(r) in stage || r ~ /^[0-9]+$/ || tolower(r) == "scratch" || r ~ /@/ || last ~ /:/) continue
+                    if (tolower(r) in stage || r ~ /^[0-9]+$/ || tolower(r) == "scratch" || r ~ /@/) continue
+                    if (last ~ /:/ && last !~ /:latest$/) continue
                     print file ": " r
                 }
             }' "$file"
@@ -405,6 +411,7 @@ CLEANUP=false
 PRUNE=false
 CUSTOM_TAG=""
 SKIP_NEW_DISK_CHECK=false
+CHECK_TAGS_ONLY=false
 
 # Check if first argument is --all or --cleanup
 if [ "$1" = "--all" ]; then
@@ -492,6 +499,10 @@ while [ $# -gt 0 ]; do
         --skip-new-disk-check)
             SKIP_NEW_DISK_CHECK=true
             ;;
+        --check-tags-only)
+            # Internal, for --all: run the new-tag rule for one target and stop.
+            CHECK_TAGS_ONLY=true
+            ;;
         --tag)
             # Require a value, and reject the next token if it is another
             # flag (or missing) — tags never start with "--".
@@ -531,13 +542,14 @@ done
 
 # The dated-tag rule, checked before any docker call: without --tag a push also
 # moves :latest, which every deployment that pins it pulls at its next restart.
-# UAT's and prod's Harbor hosts. Each Harbor answers on two: the one
-# build-uat.sh (demo.cr0.io/clouveinc8) and build-prod.sh (cr0.io/clouveinc327)
-# push to, and its externalURL host, which strato copies Harbor's whole Ingress
-# rule to (strato cluster/k8s/manifests/clouve-<env>/harbor/values.yaml,
-# setup-harbor, upgrade-harbor). tests/build-push-tag.test.sh reads the wrappers
-# (and strato's values, when a checkout is there) to keep this list in step.
-DATED_TAG_HOSTS="demo.cr0.io demo.reg.clouve.com cr0.io registry.clouve.com"
+# It holds for every registry except the rig's Harbor, which answers on two
+# hosts: r.clv.zone (build-e2e.sh and this script's default) and its
+# externalURL host, registry.clouve.dev (strato cluster/k8s/manifests/
+# clouve-e2e/harbor/values.yaml). So dev's, UAT's and prod's Harbors, and any
+# Harbor a new environment brings, follow it without a list to keep up.
+# tests/build-push-tag.test.sh reads strato's values, when a checkout is there,
+# to check both lists.
+RIG_HOSTS="r.clv.zone registry.clouve.dev"
 
 # registry_host REF: REF's host, lower case, without a scheme, a port or a
 # trailing dot, so CR0.IO:443 and cr0.io name the same registry.
@@ -549,17 +561,64 @@ registry_host() {
     printf '%s' "$host" | tr '[:upper:]' '[:lower:]'
 }
 
-NEEDS_DATED_TAG=false
-[ "${PUSH_NEEDS_DATED_TAG:-}" = 1 ] && NEEDS_DATED_TAG=true
+# is_dated_tag TAG: true when TAG is YYYY.MM.DD, a date that exists, from 2000
+# to 2099, with an optional -suffix of letters and digits (2026.11.11-2).
+is_dated_tag() {
+    [[ "$1" =~ ^([0-9]{4})\.([0-9]{2})\.([0-9]{2})(-[A-Za-z0-9]+)?$ ]] || return 1
+    local y=$((10#${BASH_REMATCH[1]})) m=$((10#${BASH_REMATCH[2]})) d=$((10#${BASH_REMATCH[3]})) last=31
+    (( y >= 2000 && y <= 2099 && m >= 1 && m <= 12 && d >= 1 )) || return 1
+    case "$m" in
+        4|6|9|11) last=30 ;;
+        2) last=28; (( y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) )) && last=29 ;;
+    esac
+    (( d <= last ))
+}
+
 PUSH_HOST="$(registry_host "${REGISTRY:-r.clv.zone/e2eorg}")"
-for dated_host in $DATED_TAG_HOSTS; do
-    [ "$PUSH_HOST" = "$dated_host" ] && NEEDS_DATED_TAG=true
+NEEDS_DATED_TAG=true
+for rig_host in $RIG_HOSTS; do
+    [ "$PUSH_HOST" = "$rig_host" ] && NEEDS_DATED_TAG=false
 done
+[ "${PUSH_NEEDS_DATED_TAG:-}" = 1 ] && NEEDS_DATED_TAG=true
 if [ "$NEEDS_DATED_TAG" = true ] && [ "$PUSH_IMAGES" = true ] \
-        && ! [[ "$CUSTOM_TAG" =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]{2}([.-][A-Za-z0-9]+)?$ ]]; then
-    echo "✗ --push needs --tag <YYYY.MM.DD> here (no :latest): images reach UAT and prod only as dated tags, through a listing's new version"
+        && ! is_dated_tag "$CUSTOM_TAG"; then
+    echo "✗ --push needs --tag <YYYY.MM.DD>, a real date, here (no :latest): images reach dev, UAT and prod only as dated tags, through a listing's new version"
     exit 1
 fi
+
+# The new-tag rule, for the same pushes: no image of the target may have the
+# dated tag in the registry already. tag_lookup REF answers 0 when the registry
+# has REF, 1 when it says REF isn't there (buildx's exact "ERROR: REF: not
+# found", or the registry's MANIFEST_UNKNOWN or NAME_UNKNOWN), and 2 when the
+# lookup failed any other way (no login, no answer, another error that happens
+# to end in "not found"). Anything but "not there" refuses the push.
+tag_lookup() {
+    local out
+    out="$(docker buildx imagetools inspect "$1" 2>&1)" && return 0
+    if grep -qxF -- "ERROR: $1: not found" <<< "$out" || grep -qE 'MANIFEST_UNKNOWN|NAME_UNKNOWN|manifest unknown' <<< "$out"; then
+        return 1
+    fi
+    return 2
+}
+
+# refuse_existing_tags TARGET IMAGE...: exits 1 with one line that names the
+# image, never the tag typed, unless the registry says "not found" for every
+# IMAGE at CUSTOM_TAG.
+refuse_existing_tags() {
+    local target="$1" image rc
+    shift
+    for image in "$@"; do
+        rc=0
+        tag_lookup "$IMAGE_REGISTRY/$image:$CUSTOM_TAG" || rc=$?
+        if [ "$rc" -eq 0 ]; then
+            echo "✗ $target: $image already has this dated tag in the registry, and a dated tag is never pushed over: pick another (a -2 suffix for a second build that day)"
+            exit 1
+        elif [ "$rc" -ne 1 ]; then
+            echo "✗ $target: couldn't check whether $image already has this dated tag (the registry didn't answer \"not found\"), so nothing is pushed"
+            exit 1
+        fi
+    done
+}
 
 # If --all mode, build all targets
 if [ "$BUILD_ALL" = true ]; then
@@ -574,6 +633,14 @@ if [ "$BUILD_ALL" = true ]; then
         GATE_DIRS+=("$SCRIPT_DIR/$target")
     done
     new_disk_gate ${GATE_DIRS[@]+"${GATE_DIRS[@]}"}
+
+    # The new-tag rule for every target before any is built: a tag one target
+    # already has stops them all.
+    if [ "$NEEDS_DATED_TAG" = true ] && [ "$PUSH_IMAGES" = true ]; then
+        for target in $(discover_targets); do
+            NEW_DISK_GATE='' "$0" "$target" --push --tag "$CUSTOM_TAG" --check-tags-only || exit 1
+        done
+    fi
 
     # Allow IMAGE_REGISTRY to be overridden via REGISTRY environment variable
     IMAGE_REGISTRY="${REGISTRY:-r.clv.zone/e2eorg}"
@@ -827,6 +894,19 @@ for container_dir in "${CONTAINER_DIRS[@]}"; do
         echo "  Skipping build for '$container_dir/' container"
     fi
 done
+
+# The new-tag rule (refuse_existing_tags above), before anything is built or pruned.
+if [ "$NEEDS_DATED_TAG" = true ] && [ "$PUSH_IMAGES" = true ]; then
+    CHECK_IMAGES=("$APP_IMAGE")
+    for config in "${CONTAINER_CONFIGS[@]}"; do
+        IFS=':' read -r _ image_name _ _ <<< "$config"
+        CHECK_IMAGES+=("$image_name")
+    done
+    refuse_existing_tags "$DISPLAY_NAME" "${CHECK_IMAGES[@]}"
+fi
+if [ "$CHECK_TAGS_ONLY" = true ]; then
+    exit 0
+fi
 
 echo "Building and tagging Docker images for $DISPLAY_NAME..."
 echo ""

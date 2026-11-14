@@ -1,7 +1,11 @@
 # Custom ownCloud Docker Image
 # Extends the official ownCloud image with custom initialization
+#
+# PINNED: owncloud/server:10.16.6, the version the listing names. A FROM with no tag would take whatever :latest is
+# at each build (build.sh builds with --pull). A version bump changes this line and appVersion in
+# clv-docker-compose.yml; the image's own start-up runs ownCloud's upgrade on an installed site.
 
-FROM owncloud/server
+FROM owncloud/server:10.16.6
 
 # Set labels for documentation
 LABEL maintainer="Clouve Team"

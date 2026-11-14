@@ -1,15 +1,19 @@
 #!/bin/bash
 
 # ============================================================================
-# build.sh, build-uat.sh, build-prod.sh: a push to UAT or prod needs a dated --tag
+# build.sh and its wrappers: a push to dev, UAT or prod needs a new dated --tag
 # ============================================================================
 # Without --tag, build.sh tags each image :<DATE> and :latest, and a push moves
 # :latest, which every deployment that pins it pulls at its next restart.
 # Rebuilt images reach UAT and prod only as dated tags, through a listing's new
-# version (AJ, 2026-11-11). So a push to UAT's or prod's registry needs --tag
+# version (AJ, 2026-11-11), and never over a dated tag or :latest (4.5.6). So a
+# push to dev's, UAT's or prod's registry needs --tag
 # with a date (YYYY.MM.DD, with an optional suffix such as 2026.11.11-2 for a
 # second build that day), or build.sh refuses it: one line, a non-zero exit,
-# and no docker call at all. --tag latest is refused the same way. That holds
+# and no docker call at all. --tag latest is refused the same way, and so is a
+# date that doesn't exist (2026.02.30), one outside 2000 to 2099, and a suffix
+# after a dot (2026.11.11.2). Each wrapper passes its arguments on unchanged:
+# one that holds a space stays one argument. That holds
 # however the push gets there: build-uat.sh or build-prod.sh, or build.sh
 # itself with REGISTRY set by hand to any project on UAT's or prod's Harbor, in
 # any case, with a port or a scheme, in name, path and app-directory mode, and
@@ -19,12 +23,20 @@
 # values.yaml, cluster/k8s/actions/setup-harbor and upgrade-harbor): UAT
 # demo.cr0.io and demo.reg.clouve.com, prod cr0.io and registry.clouve.com.
 # When a strato checkout is next to this repo (or STRATO_DIR names one), the
-# test also reads both hosts of each environment from those values files. PUSH_NEEDS_DATED_TAG=1 turns the rule on for any registry. A local
-# build (no --push), with or without --tag, works as before, and so do pushes
-# to dev's registry (build-dev.sh) and the rig's (build-e2e.sh, and build.sh's
-# default).
+# test also reads both hosts of each environment from those values files.
+# Dev's Harbor (dev.cr0.io, dev.reg.clouve.com) follows the same rule since
+# 4.5.6: a dev push without --tag would move dev's :latest.
+# A dated tag that one of the target's images already has in the registry is
+# refused too, before anything is built: build.sh looks every image up with
+# docker buildx imagetools inspect, pushes only when each lookup says "not
+# found", and refuses when a lookup finds the tag or fails for another reason.
+# With --all it looks every target up before it builds any. No refusal echoes
+# the tag that was typed. PUSH_NEEDS_DATED_TAG=1 turns both rules on for any
+# registry. A local build (no --push), with or without --tag, works as before,
+# and so do pushes to the rig's registry (build-e2e.sh, and build.sh's
+# default), which also re-push the E2E suite's fixture tag.
 #
-# Runs copies of build.sh and the four wrappers against two fake apps in a
+# Runs copies of build.sh and the four wrappers against three fake apps in a
 # temporary directory, with `docker` stubbed on PATH. Every docker call is
 # recorded; nothing is built or pushed, and no Docker daemon is needed. The
 # pushes that go ahead pass --skip-new-disk-check, so the new-disk gate (its own
@@ -59,7 +71,7 @@ count() { grep -cF -- "$2" <<< "$1"; }
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 M="$WORK/magneto"
-mkdir -p "$M/apps/alpha/image" "$M/apps/beta/image" "$WORK/bin"
+mkdir -p "$M/apps/alpha/image" "$M/apps/beta/image" "$M/apps/gamma/image/db" "$WORK/bin"
 for f in build.sh build-uat.sh build-prod.sh build-dev.sh build-e2e.sh; do
   cp "$SRC/$f" "$M/$f"
   chmod +x "$M/$f"
@@ -68,11 +80,23 @@ printf 'FROM scratch\n' > "$M/apps/alpha/image/Dockerfile"
 printf 'APP_IMAGE="alpha"\n' > "$M/apps/alpha/image/build.config"
 printf 'FROM scratch\n' > "$M/apps/beta/image/Dockerfile"
 printf 'APP_IMAGE="beta"\n' > "$M/apps/beta/image/build.config"
+printf 'FROM scratch\n' > "$M/apps/gamma/image/Dockerfile"
+printf 'FROM scratch\n' > "$M/apps/gamma/image/db/Dockerfile"
+printf 'APP_IMAGE="gamma"\nDB_IMAGE="gamma-db"\nDB_NAME="DB"\n' > "$M/apps/gamma/image/build.config"
 
-# docker stub: records each call; every builder exists, every call succeeds.
+# docker stub: records each call; every builder exists, every call succeeds. buildx imagetools inspect finds the
+# refs listed in the file $EXISTING; any other ref is "not found", or, with INSPECT_FAILS=1, the lookup fails the way
+# a registry that refuses the login answers.
 cat > "$WORK/bin/docker" <<'EOF'
 #!/bin/bash
 echo "docker $*" >> "$CALLS"
+if [ "$1 $2 $3" = "buildx imagetools inspect" ]; then
+  if [ -n "${EXISTING:-}" ] && grep -qxF -- "$4" "$EXISTING"; then echo "Name: $4"; exit 0; fi
+  if [ -n "${INSPECT_FAILS:-}" ]; then echo "ERROR: unexpected status from HEAD request: 401 Unauthorized" >&2; exit 1; fi
+  if [ -n "${INSPECT_SAYS:-}" ]; then echo "$INSPECT_SAYS" >&2; exit 1; fi
+  echo "ERROR: $4: not found" >&2
+  exit 1
+fi
 case "$1 $2" in
   "context show") echo default ;;
   *) exit 0 ;;
@@ -131,6 +155,35 @@ refused "uat alpha --push --skip-new-disk-check" build-uat.sh alpha --push --ski
 refused "prod alpha --push --tag latest" build-prod.sh alpha --push --tag latest
 refused "uat alpha --push --tag=nightly" build-uat.sh alpha --push --tag=nightly
 refused "uat alpha --tag 2026.11.1 --push" build-uat.sh alpha --tag 2026.11.1 --push
+refused "uat apps/alpha --push (path mode through the wrapper)" build-uat.sh apps/alpha --push
+refused "prod --tag 2026.11.11 --tag latest (the last --tag wins)" build-prod.sh alpha --push --tag 2026.11.11 --tag latest
+
+echo "The dated tag is a real date, with only a '-' suffix"
+# 2026.09.31 and 2026.08.32 hold an 08 or a 09, which bash reads as a bad octal number unless told base 10: an
+# arithmetic error there would skip the whole check, and the push would go ahead.
+for bad in 9999.99.99 2026.13.01 2026.00.10 2026.11.00 2026.02.30 2026.04.31 2026.06.31 2026.09.31 2026.11.31 \
+           2026.08.32 2025.02.29 2100.02.29 2100.01.01 1999.12.31 2026.11.11.2 2026.11.11- 2026.11.11-a.b; do
+  refused "uat --tag $bad" build-uat.sh alpha --push --tag "$bad" --skip-new-disk-check
+  assert_lacks "uat --tag $bad: echoes nothing typed" "$OUT_TXT" "$bad"
+done
+refused "prod --tag=2026.02.30" build-prod.sh alpha --push --tag=2026.02.30 --skip-new-disk-check
+for good in 2028.02.29 2000.02.29 2026.08.09 2026.09.08 2026.12.31-rc1; do
+  run build-prod.sh alpha --push --tag "$good" --skip-new-disk-check
+  assert_eq "prod --tag $good: exits 0" 0 "$RC"
+  assert_contains "prod --tag $good: pushes that tag" "$CALLS_TXT" "--tag cr0.io/clouveinc327/alpha:$good"
+done
+
+echo "Every wrapper hands its arguments to build.sh unchanged"
+for w in build-uat.sh build-prod.sh build-dev.sh build-e2e.sh; do
+  assert_eq "$w ends with \"\$SCRIPT_DIR\"/build.sh \"\$@\"" '"$SCRIPT_DIR"/build.sh "$@"' "$(tail -n 1 "$SRC/$w")"
+done
+# One argument that holds a space stays one argument: build.sh finds no app of that name and calls no docker
+# command. Split on the space, it would build and push alpha.
+for w in build-dev.sh build-e2e.sh build-uat.sh; do
+  run "$w" "alpha --push"
+  if [ "$RC" -ne 0 ]; then pass "$w \"alpha --push\": exits non-zero"; else fail "$w \"alpha --push\": exits non-zero"; fi
+  assert_eq "$w \"alpha --push\": no docker call" 0 "$(grep -c . <<< "$CALLS_TXT")"
+done
 
 echo "A push with a dated --tag goes ahead, with that tag only"
 run build-uat.sh alpha --push --tag 2026.11.11 --skip-new-disk-check
@@ -143,13 +196,14 @@ assert_eq "prod --tag=2026.11.11-2 --push: exits 0" 0 "$RC"
 assert_contains "pushes cr0.io/clouveinc327/alpha:2026.11.11-2" "$CALLS_TXT" "--tag cr0.io/clouveinc327/alpha:2026.11.11-2"
 run build-uat.sh --all --push --tag 2026.11.11 --skip-new-disk-check
 assert_eq "uat --all --push --tag 2026.11.11: exits 0" 0 "$RC"
-assert_eq "pushes both apps" 2 "$(count "$CALLS_TXT" ":2026.11.11")"
+assert_eq "pushes all three apps' four images" 4 "$(grep -F -- "buildx build" <<< "$CALLS_TXT" | grep -cF -- ":2026.11.11")"
 
 echo "build.sh refuses a push to UAT's or prod's registry however REGISTRY is set"
 REGISTRY="$PROD_REG" refused "REGISTRY=$PROD_REG build.sh alpha --push" build.sh alpha --push
 REGISTRY="$UAT_REG" refused "REGISTRY=$UAT_REG build.sh alpha --push" build.sh alpha --push
 UAT_HOST="${UAT_REG%%/*}"
 PROD_HOST="${PROD_REG%%/*}"
+E2E_HOST="${E2E_REG%%/*}"
 UPPER_PROD="$(printf '%s' "$PROD_HOST" | tr '[:lower:]' '[:upper:]')"
 REGISTRY="$PROD_HOST/another-project" refused "another project on prod's Harbor" build.sh alpha --push
 REGISTRY="$UPPER_PROD/clouveinc327" refused "prod's host in upper case" build.sh alpha --push
@@ -173,8 +227,7 @@ if harbor_hosts uat >/dev/null && harbor_hosts prod >/dev/null; then
     done
   done
   for host in $(harbor_hosts develop); do
-    REGISTRY="$host/clouveinc8" run build.sh alpha --push
-    assert_eq "dev Harbor host $host (strato's values) still pushes: exits 0" 0 "$RC"
+    REGISTRY="$host/clouveinc8" refused "dev Harbor host $host (strato's values)" build.sh alpha --push
   done
 else
   echo "  - skipped the strato values check: no strato checkout at $STRATO"
@@ -202,19 +255,97 @@ assert_eq "prod alpha --tag 2026.11.11 (local): exits 0" 0 "$RC"
 run build.sh alpha --push
 assert_eq "build.sh alpha --push: exits 0" 0 "$RC"
 assert_contains "pushes :latest as before" "$CALLS_TXT" "--tag r.clv.zone/e2eorg/alpha --provenance"
-run build-dev.sh alpha --push
-assert_eq "build-dev.sh alpha --push: exits 0" 0 "$RC"
-assert_contains "pushes :<DATE> to dev" "$CALLS_TXT" "--tag $DEV_REG/alpha:$DATE_TAG"
-REGISTRY="$DEV_REG" run build.sh alpha --push
-assert_eq "REGISTRY=$DEV_REG build.sh alpha --push: exits 0" 0 "$RC"
-assert_contains "pushes :latest to dev as before" "$CALLS_TXT" "--tag $DEV_REG/alpha --provenance"
+refused "build-dev.sh alpha --push (it would move dev's :latest)" build-dev.sh alpha --push
+REGISTRY="$DEV_REG" refused "REGISTRY=$DEV_REG build.sh alpha --push" build.sh alpha --push
 run build-e2e.sh alpha --push
 assert_eq "build-e2e.sh alpha --push: exits 0" 0 "$RC"
 assert_contains "pushes :latest to the rig's registry as before" "$CALLS_TXT" "--tag $E2E_REG/alpha --provenance"
-REGISTRY="dev.reg.clouve.com/clouveinc8" run build.sh alpha --push
-assert_eq "REGISTRY=dev.reg.clouve.com/clouveinc8 build.sh alpha --push (dev's externalURL host): exits 0" 0 "$RC"
-REGISTRY="evil-$PROD_HOST/x" run build.sh alpha --push
-assert_eq "a host that only ends in prod's host isn't prod's: exits 0" 0 "$RC"
+REGISTRY="dev.reg.clouve.com/clouveinc8" refused "dev's externalURL host, dev.reg.clouve.com" build.sh alpha --push
+echo "Every registry but the rig's follows both rules"
+REGISTRY="evil-$PROD_HOST/x" refused "a host that only ends in prod's host is held to the rules like any other" \
+  build.sh alpha --push
+REGISTRY="harbor.new-env.example/proj" refused "a registry no list names yet (a new environment's Harbor)" \
+  build.sh alpha --push
+REGISTRY="$E2E_HOST.evil.com/x" refused "a host that only starts with the rig's isn't the rig's" build.sh alpha --push
+REGISTRY="registry.clouve.dev/e2eorg" run build.sh alpha --push
+assert_eq "the rig's other name, registry.clouve.dev, needs neither rule: exits 0" 0 "$RC"
+REGISTRY="$(printf '%s' "$E2E_HOST" | tr '[:lower:]' '[:upper:]'):443/e2eorg" run build.sh alpha --push
+assert_eq "the rig's host in upper case with a port: exits 0" 0 "$RC"
+if harbor_hosts e2e >/dev/null; then
+  for host in $(harbor_hosts e2e); do
+    REGISTRY="$host/e2eorg" run build.sh alpha --push
+    assert_eq "the rig's Harbor host $host (strato's values) needs neither rule: exits 0" 0 "$RC"
+  done
+fi
+
+echo "Dev pushes need a dated tag too, and no image of the target may have it already"
+run build-dev.sh alpha --push --tag 2026.11.13
+assert_eq "build-dev.sh alpha --push --tag 2026.11.13: exits 0" 0 "$RC"
+assert_contains "looks the tag up first" "$CALLS_TXT" "docker buildx imagetools inspect $DEV_REG/alpha:2026.11.13"
+assert_contains "pushes $DEV_REG/alpha:2026.11.13" "$CALLS_TXT" "--tag $DEV_REG/alpha:2026.11.13"
+assert_lacks "and no :latest" "$CALLS_TXT" "--tag $DEV_REG/alpha "
+first_lookup="$(grep -n -F -- "imagetools inspect" <<< "$CALLS_TXT" | head -n 1 | cut -d: -f1)"
+first_build="$(grep -n -F -- "buildx build" <<< "$CALLS_TXT" | head -n 1 | cut -d: -f1)"
+if [ -n "$first_lookup" ] && [ -n "$first_build" ] && [ "$first_lookup" -lt "$first_build" ]; then
+  pass "the lookup comes before the build"
+else
+  fail "the lookup comes before the build"
+fi
+
+# refused_existing LABEL SCRIPT ARGS...: exits non-zero, says why in a line that names the rule and not the typed tag,
+# and builds nothing.
+refused_existing() {
+  local label="$1" tag
+  shift
+  run "$@"
+  if [ "$RC" -ne 0 ]; then pass "$label: exits non-zero"; else fail "$label: exits non-zero"; fi
+  assert_contains "$label: says the tag is already there" "$OUT_TXT" "already"
+  assert_eq "$label: builds nothing" 0 "$(grep -cF -- "buildx build" <<< "$CALLS_TXT")"
+  assert_eq "$label: prunes nothing" 0 "$(grep -cF -- "buildx prune" <<< "$CALLS_TXT")"
+  for tag in "$@"; do
+    case "$tag" in 20*) assert_lacks "$label: echoes nothing typed" "$OUT_TXT" "$tag" ;; esac
+  done
+}
+EXISTING="$WORK/existing"
+cat > "$EXISTING" <<EOT
+$PROD_REG/alpha:2026.11.12
+$UAT_REG/gamma-db:2026.11.12
+$DEV_REG/alpha:2026.11.12
+$E2E_REG/alpha:2026.10.12
+EOT
+export EXISTING
+refused_existing "prod alpha --push --tag 2026.11.12 (4.5.5's tag on prod)" \
+  build-prod.sh alpha --push --tag 2026.11.12 --skip-new-disk-check
+refused_existing "uat gamma --push --tag 2026.11.12 (only its db image has the tag)" \
+  build-uat.sh gamma --push --tag 2026.11.12 --skip-new-disk-check
+assert_contains "uat gamma: looks up the app image" "$CALLS_TXT" "imagetools inspect $UAT_REG/gamma:2026.11.12"
+assert_contains "uat gamma: looks up the db image" "$CALLS_TXT" "imagetools inspect $UAT_REG/gamma-db:2026.11.12"
+refused_existing "dev alpha --push --tag 2026.11.12" build-dev.sh alpha --push --tag 2026.11.12
+REGISTRY="$PROD_REG" refused_existing "REGISTRY=$PROD_REG build.sh alpha --push --tag 2026.11.12" \
+  build.sh alpha --push --tag 2026.11.12
+refused_existing "uat --all --push --tag 2026.11.12 (gamma's db image has it): no target is built" \
+  build-uat.sh --all --push --tag 2026.11.12 --skip-new-disk-check
+run build-uat.sh gamma --push --tag 2026.11.13 --skip-new-disk-check
+assert_eq "uat gamma --push --tag 2026.11.13 (neither image has it): exits 0" 0 "$RC"
+assert_eq "both of gamma's images are built" 2 "$(grep -cF -- "buildx build" <<< "$CALLS_TXT")"
+INSPECT_SAYS='ERROR: context "x": not found' run build-prod.sh beta --push --tag 2026.11.13 --skip-new-disk-check
+if [ "$RC" -ne 0 ]; then pass "an error that ends in \"not found\" but isn't about the image: exits non-zero"; else
+  fail "an error that ends in \"not found\" but isn't about the image: exits non-zero"; fi
+assert_eq "... and builds nothing" 0 "$(grep -cF -- "buildx build" <<< "$CALLS_TXT")"
+INSPECT_SAYS="ERROR: $PROD_REG/beta:2026.11.13: manifest unknown: MANIFEST_UNKNOWN" \
+  run build-prod.sh beta --push --tag 2026.11.13 --skip-new-disk-check
+assert_eq "the registry's own MANIFEST_UNKNOWN for that image counts as not found: exits 0" 0 "$RC"
+INSPECT_FAILS=1 run build-prod.sh beta --push --tag 2026.11.13 --skip-new-disk-check
+if [ "$RC" -ne 0 ]; then pass "a lookup that fails (not \"not found\"): exits non-zero"; else fail "a lookup that fails (not \"not found\"): exits non-zero"; fi
+assert_contains "a lookup that fails: says it couldn't check" "$OUT_TXT" "couldn't check"
+assert_eq "a lookup that fails: builds nothing" 0 "$(grep -cF -- "buildx build" <<< "$CALLS_TXT")"
+assert_lacks "a lookup that fails: echoes nothing typed" "$OUT_TXT" "2026.11.13"
+run build-e2e.sh alpha --push --tag 2026.10.12
+assert_eq "the rig: build-e2e.sh re-pushes the E2E fixture tag (exits 0)" 0 "$RC"
+assert_eq "the rig: no lookup" 0 "$(grep -cF -- "imagetools inspect" <<< "$CALLS_TXT")"
+PUSH_NEEDS_DATED_TAG=1 refused_existing "PUSH_NEEDS_DATED_TAG=1 build-e2e.sh alpha --push --tag 2026.10.12" \
+  build-e2e.sh alpha --push --tag 2026.10.12
+unset EXISTING
 
 echo ""
 if [[ "$FAILED" -eq 0 ]]; then

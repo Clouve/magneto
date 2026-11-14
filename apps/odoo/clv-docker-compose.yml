@@ -87,6 +87,8 @@ services:
       isPublic: false
       memoryBase: 1
       cpuBase: 0.5
+    x-clouve-database-password:
+      engine: postgres
     x-clouve-healthcheck:
       enabled: false
       type: HTTP

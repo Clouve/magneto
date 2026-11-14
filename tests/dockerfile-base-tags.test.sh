@@ -7,13 +7,10 @@
 # a Dockerfile names. A FROM or COPY --from with no tag means :latest, and the
 # next build can then take a new major version of it with no one choosing to.
 # This test reads every Dockerfile under apps/ and bundles/ and fails on a FROM
-# or COPY --from=<image> that names no tag (a digest counts as one). A
+# or COPY --from=<image> that names no tag, or names :latest, which with --pull
+# is whatever :latest is that day (a digest counts as a tag). A
 # --from that names a stage of the same Dockerfile, or a stage number, is not
 # an image.
-#
-# The lines in KNOWN belong to apps that 4.5.5 doesn't rebuild. They are
-# printed as KNOWN, not failed, and get a tag at their app's next rebuild.
-# Until then build.sh --push refuses those apps (untagged_bases).
 #
 # Usage: bash tests/dockerfile-base-tags.test.sh [REPO_DIR]
 # ============================================================================
@@ -25,20 +22,17 @@ REPO_DIR="${1:-$SCRIPT_DIR/..}"
 
 GREEN=$'\033[0;32m'
 RED=$'\033[0;31m'
-YELLOW=$'\033[0;33m'
 RESET=$'\033[0m'
-
-# "<Dockerfile path relative to the repo>: <image>", one per line.
-KNOWN="apps/owncloud/image/Dockerfile: owncloud/server
-apps/owncloud/image/mariadb/Dockerfile: mariadb"
 
 if ! command -v python3 >/dev/null 2>&1; then
   echo "This test needs python3." >&2
   exit 2
 fi
 
-# The images with no tag, one "<path>: <image>" line each, from the Dockerfiles as they are.
-untagged="$(cd "$REPO_DIR" && python3 -I - <<'PY'
+# untagged_in DIR: the images with no tag (or :latest) in DIR's apps/ and bundles/ Dockerfiles, one
+# "<path>: <image>" line each.
+untagged_in() {
+  (cd "$1" && python3 -I - <<'PY'
 import glob
 import re
 
@@ -73,26 +67,41 @@ for path in sorted(glob.glob("apps/**/Dockerfile*", recursive=True) + glob.glob(
             if "@" in ref:
                 continue
             last = ref.rsplit("/", 1)[-1]
-            if ":" not in last:
+            if ":" not in last or last.rsplit(":", 1)[1] == "latest":
                 print("%s: %s" % (path, ref))
 PY
-)"
+  )
+}
+
+# The scan itself, on a Dockerfile written to hold each case: no tag, :latest in a FROM and in a COPY --from, a
+# pinned base, a stage and a digest.
+PROBE="$(mktemp -d)"
+trap 'rm -rf "$PROBE"' EXIT
+mkdir -p "$PROBE/apps/probe/image"
+printf 'FROM alpine AS one\nFROM mariadb:latest\nCOPY --from=composer:latest /c /c\nFROM php:8.3-apache\nCOPY --from=one /o /o\nFROM debian@sha256:%064d\n' 0 \
+  > "$PROBE/apps/probe/image/Dockerfile"
+want="apps/probe/image/Dockerfile: alpine
+apps/probe/image/Dockerfile: mariadb:latest
+apps/probe/image/Dockerfile: composer:latest"
+if [ "$(untagged_in "$PROBE")" != "$want" ]; then
+  printf '%sThe scan misses a case on its own probe:%s\n' "$RED" "$RESET"
+  untagged_in "$PROBE" | sed 's/^/    /'
+  exit 1
+fi
+
+untagged="$(untagged_in "$REPO_DIR")"
 
 FAILED=0
 echo "Base image tags in the Dockerfiles"
 while IFS= read -r line; do
   [ -n "$line" ] || continue
-  if grep -qxF -- "$line" <<< "$KNOWN"; then
-    printf '  %sKNOWN%s %s names no tag (tag it at its next rebuild)\n' "$YELLOW" "$RESET" "$line"
-  else
-    printf '  %sFAIL%s %s names no tag, so --pull takes whatever :latest is\n' "$RED" "$RESET" "$line"
-    FAILED=1
-  fi
+  printf '  %sFAIL%s %s names no tag, so --pull takes whatever :latest is\n' "$RED" "$RESET" "$line"
+  FAILED=1
 done <<< "$untagged"
 
 echo
 if [ "$FAILED" -eq 0 ]; then
-  printf '%sEvery base image names a tag (KNOWN lines aside).%s\n' "$GREEN" "$RESET"
+  printf '%sEvery base image names a tag.%s\n' "$GREEN" "$RESET"
   exit 0
 fi
 printf '%sA base image names no tag.%s\n' "$RED" "$RESET"

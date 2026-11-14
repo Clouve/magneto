@@ -142,8 +142,22 @@ RUN tar -xzf ./moodle/installer/moodle-${MOODLE_RELEASE}.tgz -C ./moodle/ && \
 # Install Composer dependencies for Moodle 5.1+
 # This is required as the Moodle download does not include the vendor directory
 # The vendor directory contains third-party PHP libraries managed by Composer
+# mtdowling/jmespath.php: Moodle pins 2.8.0, which has a critical advisory. 2.9.2 is the newest at least 14 days old,
+# in aws/aws-sdk-php's range (^2.8.0), and the build checks its release commit too. Upstream's id and file list are
+# recorded first, so that refresh-vendor.sh can put the new library on sites this Moodle installed
+# (tests/php-vendor.test.sh).
+ARG JMESPATH_VERSION=2.9.2
+ARG JMESPATH_COMMIT=2157c5e50e813ec6a96c1eed3be7f64a20fb32a8
 RUN cd ./moodle/moodle-${MOODLE_RELEASE} && \
     composer install --no-dev --classmap-authoritative && \
+    /clouve/moodle/installer/refresh-vendor.sh --id vendor > /clouve/moodle/vendor-upstream.id && \
+    grep -qE '^[0-9a-f]{64}$' /clouve/moodle/vendor-upstream.id && \
+    /clouve/moodle/installer/refresh-vendor.sh --sums vendor > /clouve/moodle/vendor-upstream.sums && \
+    test -s /clouve/moodle/vendor-upstream.sums && \
+    composer require --no-interaction --no-scripts --update-no-dev --classmap-authoritative "mtdowling/jmespath.php:${JMESPATH_VERSION}" && \
+    php -n -r '$p = []; foreach (json_decode(file_get_contents("vendor/composer/installed.json"), true)["packages"] as $x) \
+          $p[$x["name"]] = $x["version"] . "@" . ($x["dist"]["reference"] ?? ""); \
+        exit(($p["mtdowling/jmespath.php"] ?? "") === getenv("JMESPATH_VERSION") . "@" . getenv("JMESPATH_COMMIT") ? 0 : 1);' && \
     echo "✓ Composer dependencies installed successfully"
 
 # Create moodledata directory with proper permissions

@@ -40,7 +40,7 @@ services:
       memoryBase: 1
       cpuBase: 1
     x-clouve-bundle-metadata:
-      appVersion: 10.16.0
+      appVersion: 10.16.6
       appTitle: ownCloud
       appDescription: ownCloud is a powerful, open-source file sync and share platform that enables businesses to securely store, access, and collaborate on files from anywhere. With its robust security features, including end-to-end encryption and granular access controls, ownCloud ensures that sensitive business data remains protected while facilitating seamless collaboration across teams. The platform offers flexible deployment options, comprehensive file versioning, and extensive integration capabilities with enterprise tools. Whether for document management, team collaboration, or secure file sharing with external partners, ownCloud provides a scalable, self-hosted solution that gives organizations complete control over their data while enhancing productivity and compliance.
     x-clouve-healthcheck:
@@ -90,6 +90,8 @@ services:
       isPublic: false
       memoryBase: 1
       cpuBase: 0.5
+    x-clouve-database-password:
+      engine: mariadb
     x-clouve-healthcheck:
       enabled: false
       type: HTTP

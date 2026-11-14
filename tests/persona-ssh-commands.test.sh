@@ -17,7 +17,8 @@
 #   - no tail of /var/log/apache2/error.log, a link to the container's stderr (the tail hangs), and no "restarting
 #     mysqld";
 #   - no "prefer the env-driven path" for a password rotation: the image writes config.php's database lines from
-#     the deployment's settings at every start and only Clouve can change them;
+#     the deployment's settings at every start and only Clouve can change them; the text names the Rotate database
+#     password action (where the deployment's Settings tab shows it) and Clouve support (where it doesn't), 4.5.6;
 #   - no "showing the diff" of config.php, which holds the database password.
 # For wordpress: wp runs through the skill's scripts/wp.sh, never a plain `sudo -u www-data wp` over SSH (it can't
 # reach the database) and never an --allow-root fallback.
@@ -153,6 +154,14 @@ for app in gibbon moodle wordpress nextcloud limesurvey suitecrm ai-studio; do
       none_match "$app: no restarting mysqld (no systemd; stopping it stops the container)" "$tpl" 'restarting `?mysqld'
       none_match "$app: no env-driven path for a password rotation" "$tpl" 'prefer (the |that )?env[- ]'
       none_match "$app: no diff of config.php (it holds the database password)" "$tpl" 'showing the diff|show(ing)? a diff'
+      # Release 4.5.6, #109: a new database password comes from the Rotate action where the deployment has it, and from
+      # Clouve support where it doesn't (a deployment from an earlier listing version has no such section).
+      if grep -qF "admins see Database password on the deployment's Settings tab" "$tpl" &&
+         grep -qF "Otherwise Clouve support can do it for you" "$tpl"; then
+        pass "$app: a new database password: the Rotate action where it is shown, Clouve support otherwise"
+      else
+        fail "$app: a new database password: the Rotate action where it is shown, Clouve support otherwise"
+      fi
       ;;
     wordpress)
       none_match "wordpress: no plain wp over SSH (it can't reach the database)" "$tpl" 'sudo -u www-data wp'

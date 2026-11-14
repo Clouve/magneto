@@ -22,7 +22,7 @@
 #
 # Usage: bash tests/db-image-gosu.test.sh [--image NAME=REF]... [NAME...]
 #   NAME  gibbon-mysql, moodle-mysql, wordpress-mariadb, nextcloud-mariadb,
-#         limesurvey-mariadb or suitecrm-mariadb (default: all)
+#         limesurvey-mariadb, suitecrm-mariadb or owncloud-mariadb (default: all)
 # ============================================================================
 
 set -uo pipefail
@@ -32,7 +32,7 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 GOSU_VERSION=1.20
 MIN_GO=1.26.11
 
-ALL=(gibbon-mysql moodle-mysql wordpress-mariadb nextcloud-mariadb limesurvey-mariadb suitecrm-mariadb)
+ALL=(gibbon-mysql moodle-mysql wordpress-mariadb nextcloud-mariadb limesurvey-mariadb suitecrm-mariadb owncloud-mariadb)
 declare -A CONTEXT=(
   [gibbon-mysql]="$REPO_DIR/apps/gibbon/image/mysql"
   [moodle-mysql]="$REPO_DIR/apps/moodle/image/mysql"
@@ -40,6 +40,7 @@ declare -A CONTEXT=(
   [nextcloud-mariadb]="$REPO_DIR/apps/nextcloud/image/mariadb"
   [limesurvey-mariadb]="$REPO_DIR/apps/limesurvey/image/mariadb"
   [suitecrm-mariadb]="$REPO_DIR/apps/suitecrm/image/mariadb"
+  [owncloud-mariadb]="$REPO_DIR/apps/owncloud/image/mariadb"
 )
 declare -A IMAGE=()
 

@@ -708,6 +708,7 @@ if wants 4; then
     echo '  "buildx inspect") [[ -f "$STATE/builder-$3" ]] ;;'
     echo '  "buildx create")  for a in "$@"; do [[ "${prev:-}" == "--name" ]] && touch "$STATE/builder-$a"; prev="$a"; done ;;'
     echo '  "context show")   echo default ;;'
+    echo '  "buildx imagetools") echo "ERROR: $4: not found" >&2; exit 1 ;;'
     echo '  *) exit 0 ;;'
     echo 'esac'
   } > "$WORK/gbin/docker"
@@ -745,7 +746,7 @@ if wants 4; then
   assert_eq "--all --skip-new-disk-check: every app builds" "0|4" "$RC|$(grep -c 'buildx build' <<< "$CALLS_TXT")"
   build build.sh beta --push
   assert_eq "no NEW_DISK_GATE: no gate" 0 "$RC"
-  build build-dev.sh beta --push
+  build build-dev.sh beta --push --tag 2026.11.13
   assert_eq "build-dev.sh: no gate" 0 "$RC"
   build build-e2e.sh beta --push
   assert_eq "build-e2e.sh: no gate" 0 "$RC"

@@ -258,6 +258,9 @@ if [[ -d "$MOODLE_PACKAGE_PATH" && -n "$IMAGE_VERSION" && "$IMAGE_VERSION" -gt "
   echo "##################################################################"
 fi
 
+# The image's PHP libraries reach a site already on this Moodle version (tests/vendor-refresh.test.sh).
+"$MOODLE_PACKAGE_INSTALLER"/refresh-vendor.sh moodle "$MOODLE_PACKAGE_PATH" "$MOODLE_INSTALL_PATH" "$INSTALLED_VERSIONS_PATH"
+
 # Ensure proper permissions
 echo "Setting permissions for Moodle files ..."
 chown -R www-data:www-data "$MOODLE_INSTALL_PATH"
@@ -278,6 +281,11 @@ chmod -R 0777 "$MOODLEDATA_PATH"
 
 # Run the update-config.sh script to update database credentials and wwwroot
 "$MOODLE_PACKAGE_INSTALLER"/update-config.sh
+
+# The Education Kit: Moodle's own copy of Gibbon's database password (the sign-in through Gibbon and the enrolment
+# sync) follows the deployment's, so a rotated password reaches it here too (release 4.5.6). It does nothing outside
+# the kit.
+"$MOODLE_PACKAGE_INSTALLER"/gibbon-integration-password.sh
 
 # ============================================================================
 # CONFIGURE SSL PROXY ON EVERY STARTUP

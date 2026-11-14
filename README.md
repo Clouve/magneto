@@ -517,17 +517,40 @@ and again when it is published:
 - No alias has the name of a container in the listing (in any case, public or not), and no two aliases share a name,
   even on different containers. The same goes the other way round: a container can't be named like an alias.
 
-A listing's first published version also fixes its aliases. From then on, Clouve refuses to save a version that
-doesn't declare the same alias names on the same containers; their titles, descriptions, versions, icons and admin
-paths can change. To add, remove or move an alias, publish a new listing.
+A later version may add, remove, rename or move aliases (since release 4.5.6). A running deployment takes the change
+only when it is upgraded: until then it keeps the aliases it runs with. A renamed alias is a new host to a deployment
+that upgrades: its old address stops answering, and a custom domain set on it has to be entered again under the new
+name. See "New versions and running deployments".
 
 One more limit applies when a deployment is installed or copied: each of its hosts has to fit in 63 characters, and
 Clouve refuses the install or the copy when one would be longer. A long alias name leaves less room for the
 organization's part of the host.
 
-In this repo, `./check-manifests.sh` checks every manifest against all of this section's rules except the two only
-Clouve can check: the aliases a published version fixes, and the 63 characters at install. It also needs a container
+In this repo, `./check-manifests.sh` checks every manifest against all of this section's rules except the one only
+Clouve can check: the 63 characters at install. It also needs a container
 with aliases to state `isPublic` and `purpose` in its `x-clouve-metadata`, which an upload would otherwise guess.
+
+### New versions and running deployments
+
+When a listing publishes a new version, its running deployments keep the version they run until someone presses
+Upgrade (agents, and clients of free services). Upgrade renders the deployment again from the newest version and keeps
+its data and settings. The rules, as they reach a manifest:
+
+- Keep each volume's name, and keep every container that has a volume. Upgrade refuses a version that would leave a
+  disk with data unmounted, because a renamed volume is a new, empty disk and the old one would be left behind.
+- Keep the main app (the first public container). Upgrade refuses a version that serves another container at a
+  deployment's main address.
+- Keep the AI Assistant (`x-clouve-agent`) once a version has it. Upgrade refuses a version without it for a
+  deployment that uses it.
+- Secrets: a key the deployment already has keeps its value. A new `secret` or `applicationPassword` variable gets a
+  new random value, so an app must take a value it hasn't seen before on its first start after an upgrade.
+- Sizes: each running container keeps its CPU, memory and disk sizes, whatever `memoryBase`, `cpuBase` or a volume's
+  `size` say in the new version. A new container or a new volume gets the new version's size for the deployment's
+  plan.
+- `static` values, images, ports and health checks are the new version's. `userConfigurable` values keep what the
+  customer set at install.
+- The image upgrades its own data at its first start on the new version, as LimeSurvey, SuiteCRM, Moodle and Nextcloud
+  do (each app's README). Test that with `tests/new-disk-start.test.sh <app> --upgrade-from <previous build>`.
 
 ### Values Clouve refuses
 
@@ -620,6 +643,72 @@ environment:
 | `{user.firstName}` | User's first name |
 | `{user.lastName}` | User's last name |
 | `{org.name}` | Organization name |
+
+### Database password rotation (`x-clouve-database-password`)
+
+A listing can let its customers give the app's database user a new password from the deployment's page in Clouve
+(release 4.5.6). The database's own service opts in:
+
+```yaml
+services:
+  shop-db:
+    environment:
+      MYSQL_USER: shop
+      MYSQL_PASSWORD: shop-db-password
+    x-clouve-environment-types:
+      MYSQL_USER: static
+      MYSQL_PASSWORD: secret
+    x-clouve-metadata:
+      containerName: shop-db
+      purpose: Database
+    x-clouve-database-password:
+      engine: mariadb          # mysql, mariadb or postgres
+```
+
+Clouve takes the rest from what the service already says. The password is the value of its password variable
+(`MYSQL_PASSWORD` or `MARIADB_PASSWORD`, or `POSTGRES_PASSWORD`), the user is the value of its user variable
+(`MYSQL_USER` or `MARIADB_USER`, or `POSTGRES_USER`, which a PostgreSQL service may leave out for `postgres`), and the
+containers that read the password are the ones whose `secret` variables name the same value.
+
+When an admin of the organization (or Clouve support) presses **Rotate database password** on the deployment's
+Settings tab, Clouve:
+
+1. makes a new password of 32 letters and digits, which nobody sees;
+2. signs in to the database as the user, with the current password, and changes that user's own password (MariaDB
+   and PostgreSQL get only its hash);
+3. checks that the new password signs in and the old one is refused, then puts the new one in the deployment's
+   settings;
+4. restarts every container that reads it, then the AI Assistant. The database itself keeps running.
+
+The app is unavailable for a minute or two while it restarts. A rotation that stops part way finishes the next time
+someone presses Rotate.
+
+What a listing has to keep, for this to work:
+
+- **Every container that reads the password reads it from its environment, at start or at each request.** An image
+  that copies it into a file at install, and never again, keeps the old password after a rotation. The house images
+  write their config files from the environment at every start (Gibbon, Moodle, Odoo, Nextcloud, LimeSurvey and
+  SuiteCRM), or read the environment on every request (WordPress, ownCloud). The Education Kit's Moodle also keeps
+  Gibbon's password in two of its own settings, which `gibbon-integration-password.sh` brings in step at every start.
+- **The database user has one account, which the app signs in to over the network** (`'user'@'%'` in MySQL and
+  MariaDB, as the official images make it). Clouve changes the account the user signs in to over the network. If the
+  old password still signs in over the network afterwards (a MySQL retained second password, say), the rotation
+  fails with a message for staff. An account the user has only on the database's own host (`'user'@'localhost'`)
+  can't be seen from the network, so Clouve neither changes it nor notices it; the app never uses it.
+- **The database image has its client** (`mysql` or `mariadb`, or `psql`) and `/bin/sh`: Clouve runs the change in a
+  short-lived pod made from the database's own image.
+
+The rules, which `./check-manifests.sh`, Clouve's upload and save, and Clouve's manifest renderer all check:
+
+- only on a service whose `x-clouve-metadata.purpose` is `Database`, and never on the AI Assistant;
+- a mapping with one key, `engine`: `mysql`, `mariadb` or `postgres`;
+- exactly one of the engine's password variables, typed `secret`;
+- the engine's user variable, typed `static` and not `root` (a PostgreSQL service may leave it out);
+- no other password variable of the service has the same secret (the root password's, say).
+
+A deployment gets the action only when it runs a listing version that declares the field: a new install, or an
+existing one after it is upgraded to that version. A listing without the field shows no action, and nothing changes
+for it.
 
 ---
 
@@ -883,13 +972,17 @@ An image follows these rules:
    `tests/new-disk-start.test.sh <app> --upgrade-from <previous build>` (see "Testing on new cluster disks").
 7. `tests/new-disk-start.test.sh <app>` passes before every push to UAT or prod. `build-uat.sh` and `build-prod.sh`
    check for that pass and refuse to push an app whose current source doesn't have one.
-8. A push to UAT or prod names a dated tag: `build.sh` refuses `--push` to UAT's or prod's registry (any project on
-   the hosts their Harbors answer on: `demo.cr0.io` and `demo.reg.clouve.com`, `cr0.io` and `registry.clouve.com`;
-   through `build-uat.sh`, `build-prod.sh` or `REGISTRY` set by hand) without
-   `--tag <YYYY.MM.DD>` (an optional suffix such as `2026.11.11-2` is allowed), before anything is built. Without
-   `--tag`, a push also moves `:latest`, which every deployment that pins it pulls at its next restart. A rebuilt image
-   reaches tenants only through a listing's new version. Pushes to dev's registry (`dev.cr0.io`,
-   `dev.reg.clouve.com`) and the rig's (`r.clv.zone`) don't need a tag.
+8. A push to dev, UAT or prod names a new dated tag: `build.sh` refuses `--push` to dev's, UAT's or prod's registry
+   (any project on the hosts their Harbors answer on: `dev.cr0.io` and `dev.reg.clouve.com`, `demo.cr0.io` and
+   `demo.reg.clouve.com`, `cr0.io` and `registry.clouve.com`; through `build-dev.sh`, `build-uat.sh`,
+   `build-prod.sh` or `REGISTRY` set by hand) without `--tag <YYYY.MM.DD>`, a real date from 2000 to 2099 (a hyphen
+   suffix such as `2026.11.11-2` is allowed), before anything is built. Without `--tag`, a push also moves `:latest`,
+   which every deployment that pins it pulls at its next restart. It also refuses a tag that one of the app's images
+   already has in that registry: it looks each one up first, and a lookup that fails for any reason other than "not
+   found" refuses too. A dated tag is never pushed over, because every running deployment on it would pull the new
+   image at its next restart. A rebuilt image reaches tenants only through a listing's new version. Every other
+   registry follows both rules too, a new environment's Harbor included; only the rig's Harbor (`r.clv.zone`,
+   `registry.clouve.dev`) needs neither.
 
 ---
 

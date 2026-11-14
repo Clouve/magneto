@@ -141,6 +141,9 @@ if [[ ! -f "$INSTALLED_VERSIONS_PATH/$GIBBON_VERSION" && -d "$GIBBON_PACKAGE_PAT
   echo "##################################################################"
 fi
 
+# The image's PHP libraries reach a site already on this Gibbon version (tests/vendor-refresh.test.sh).
+"$GIBBON_PACKAGE_INSTALLER"/refresh-vendor.sh gibbon "$GIBBON_PACKAGE_PATH" "$GIBBON_INSTALL_PATH" "$INSTALLED_VERSIONS_PATH"
+
 echo "Clearing uploads cache ..."
 rm -rf /var/www/html/uploads/cache/*
 chown -R www-data:www-data /var/www/html/uploads/cache

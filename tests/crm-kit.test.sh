@@ -15,7 +15,8 @@
 #
 # The bundle's files (no container):
 #   - the manifest differs from the one at commit OLD_COMMIT only in the two
-#     appVersions, the two descriptions and the x-clouve-agent block with both
+#     appVersions, the two descriptions, the two databases' x-clouve-database-password (release 4.5.6, each
+#     engine mariadb) and the x-clouve-agent block with both
 #     skills: no variable, capacity, volume, probe number or name changed;
 #   - docker-compose.yml gives all four services one CLOUVE_OPS_PASSWORD and
 #     has the magneto-agent service with both skills and the four siblings;
@@ -661,6 +662,8 @@ same = []
 for name in sorted(set(old["services"]) | set(new["services"])):
     a, b = old["services"].get(name) or {}, new["services"].get(name) or {}
     for key in sorted(set(a) | set(b)):
+        if key == "x-clouve-database-password":
+            continue  # release 4.5.6 adds it (the "dbpassword" line below)
         if key == "x-clouve-bundle-metadata":
             ma, mb = dict(a.get(key) or {}), dict(b.get(key) or {})
             for changed in ("appVersion", "appDescription"):
@@ -672,6 +675,10 @@ if old.get("volumes") != new.get("volumes"): same.append("volumes")
 extra = sorted(set(new) - set(old) - {"x-clouve-agent"})
 line("unchanged", not same and not extra, "changed: %s" % ", ".join(same + extra))
 meta = lambda s: (new["services"].get(s) or {}).get("x-clouve-bundle-metadata") or {}
+# Release 4.5.6, #109: both databases let their app user's password be rotated from the deployment's page.
+dbp = lambda s: (new["services"].get(s) or {}).get("x-clouve-database-password")
+line("dbpassword", dbp("limesurvey-mariadb") == {"engine": "mariadb"} and dbp("suitecrm-mariadb") == {"engine": "mariadb"},
+     "limesurvey-mariadb %r, suitecrm-mariadb %r" % (dbp("limesurvey-mariadb"), dbp("suitecrm-mariadb")))
 line("versions", str(meta("limesurvey").get("appVersion")) == "7.10.0" and str(meta("suitecrm").get("appVersion")) == "8.10.2",
      "limesurvey %s, suitecrm %s" % (meta("limesurvey").get("appVersion"), meta("suitecrm").get("appVersion")))
 agent = new.get("x-clouve-agent") or {}
@@ -706,9 +713,10 @@ line("crm", not missing, "the kit's SuiteCRM description: %s" % "; ".join(missin
 print("\n".join(out))
 PY
 )" || report=""
-  for key in unchanged versions agent ops compose-agent mail crm; do
+  for key in unchanged dbpassword versions agent ops compose-agent mail crm; do
     case "$key" in
       unchanged) label="the manifest keeps every variable, capacity, volume, probe and name of the kit at ${OLD_COMMIT:0:7}" ;;
+      dbpassword) label="both databases declare a database password rotation (engine mariadb)" ;;
       versions) label="its appVersions are LimeSurvey 7.10.0 and SuiteCRM 8.10.2" ;;
       agent) label="it offers the AI Assistant with the limesurvey and suitecrm skills and a 600 s sidecar wait" ;;
       ops) label="docker-compose.yml gives the four services and the agent one CLOUVE_OPS_PASSWORD" ;;

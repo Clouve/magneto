@@ -55,7 +55,7 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 M="$WORK/magneto"
 mkdir -p "$M/apps/alpha/image/db" "$M/apps/beta/image" "$M/apps/gamma/image/db" "$M/apps/gamma/shared" \
-  "$M/apps/delta/image/db" "$WORK/bin"
+  "$M/apps/delta/image/db" "$M/apps/epsilon/image" "$WORK/bin"
 cp "$BUILD_SH" "$M/build.sh"
 chmod +x "$M/build.sh"
 printf 'FROM scratch\n' > "$M/apps/alpha/image/Dockerfile"
@@ -71,6 +71,10 @@ printf 'FROM golang:1.26 AS tool\nFROM debian@sha256:%064d\nCOPY --from=tool /x 
   > "$M/apps/delta/image/Dockerfile"
 printf 'FROM \\\n  mariadb\n' > "$M/apps/delta/image/db/Dockerfile"
 printf 'APP_IMAGE="delta"\nDB_IMAGE="delta-db"\nDB_NAME="DB"\n' > "$M/apps/delta/image/build.config"
+# epsilon names :latest, a tag in name only: with --pull it is whatever :latest is that day.
+printf 'FROM mariadb:latest AS db\nCOPY --from=composer:latest /c /c\nFROM php:8.3-apache\nCOPY --from=db /d /d\n' \
+  > "$M/apps/epsilon/image/Dockerfile"
+printf 'APP_IMAGE="epsilon"\n' > "$M/apps/epsilon/image/build.config"
 
 # docker stub: records each call; every builder exists.
 cat > "$WORK/bin/docker" <<'EOF'
@@ -148,6 +152,13 @@ assert_ne "exits non-zero" "0" "$RC"
 assert_eq "nothing is built" "0" "$(count "$BUILDS" "docker buildx build")"
 assert_contains "it names the file and the image" "$OUT_TXT" "image/db/Dockerfile: mariadb"
 assert_eq "a stage, a stage number and a digest aren't named" "0" "$(grep -cE 'Dockerfile: (tool|0|debian)' <<< "$OUT_TXT")"
+echo "S7b: --push refuses :latest the same way"
+run epsilon --push
+assert_ne "exits non-zero" "0" "$RC"
+assert_eq "nothing is built" "0" "$(count "$BUILDS" "docker buildx build")"
+assert_contains "it names the FROM" "$OUT_TXT" "image/Dockerfile: mariadb:latest"
+assert_contains "it names the COPY --from" "$OUT_TXT" "image/Dockerfile: composer:latest"
+assert_eq "a pinned base and a stage aren't named" "0" "$(grep -cE 'Dockerfile: (php:8.3-apache|db)$' <<< "$OUT_TXT")"
 echo "S8: a local build of the same target still runs"
 run delta
 assert_eq "exits 0" "0" "$RC"
