@@ -35,7 +35,7 @@ The marketplace packaging system enables you to:
 | Concept | Description |
 |---------|-------------|
 | **Application** | A single deployable unit (e.g., WordPress, Moodle) with its dependencies |
-| **Bundle** | Multiple applications packaged together with integrations (e.g., Education Kit) |
+| **Bundle** | Multiple applications packaged together with integrations (e.g., Education Kit, Customer Kit) |
 | **Development Compose** | `docker-compose.yml` for local testing and development |
 | **Marketplace Manifest** | `clv-docker-compose.yml` with metadata for marketplace deployment |
 | **Image Directory** | Contains Dockerfiles and build configuration for custom images |
@@ -240,7 +240,7 @@ Three rules come with it:
   restart still reach the server. In a database image, also start the sshd
   detached, `( start-clouve-ops-sshd.sh & )`: the subshell exits at once, so
   sshd's parent is tini, not the database server that the entrypoint's `exec`
-  turns the shell into. Both Odoo images and the four MySQL and MariaDB images
+  turns the shell into. Both Odoo images and the six MySQL and MariaDB images
   do this (`tests/odoo-init.test.sh`, `tests/db-image-zombies.test.sh`). Oracle
   Linux, the MySQL images' base, has no tini package, so they copy Debian's
   static build from a build stage. Add a new database image to
@@ -251,10 +251,10 @@ Three rules come with it:
   the database server (anything that runs as the database's user can read the
   server's environment), and the app images before Apache or the app (PHP's
   getenv() reads Apache's environment). The password signs in as clouve-ops,
-  who has sudo. The WordPress, Gibbon, Moodle, Odoo and Nextcloud images do
-  this (`tests/app-ops-password.test.sh` for the three PHP apps,
-  `tests/db-image-zombies.test.sh` for the database images); a new image does
-  it too. Where tini is PID 1 it keeps the password, in an environment only
+  who has sudo. The WordPress, Gibbon, Moodle, Odoo, Nextcloud, LimeSurvey and
+  SuiteCRM images do this (`tests/app-ops-password.test.sh` for WordPress,
+  Gibbon, Moodle, LimeSurvey and SuiteCRM, `tests/db-image-zombies.test.sh` for
+  the database images); a new image does it too. Where tini is PID 1 it keeps the password, in an environment only
   root can read, and the AI Assistant never copies it.
 
 ---
@@ -355,6 +355,11 @@ or not the customer added the AI Assistant. The images also run without it,
 because the `clouve-ops` sshd in them starts only when the platform injects
 `CLOUVE_OPS_PASSWORD`.
 
+The agent-capable apps here are WordPress, Moodle, Gibbon, Odoo, Nextcloud,
+LimeSurvey, SuiteCRM and AI Studio, and both bundles: the Education Kit
+(Gibbon and Moodle) and the Customer Kit (LimeSurvey and SuiteCRM). ownCloud
+has no AI Assistant.
+
 ### AI Assistant (`x-clouve-agent`)
 
 An agent-capable manifest adds a top-level `x-clouve-agent` block. The
@@ -378,7 +383,7 @@ x-clouve-agent:
 | `enabled` | `true` offers the AI Assistant on this listing. A manifest without the block has no AI Assistant. |
 | `skills.url` | Optional. The skills marketplace repo, with a non-empty `?plugins=` filter and an optional `#branch`. Left out, the agent starts with its base context and no skills plugins. |
 | `skills.git.token` / `skills.git.username` | Optional credentials for a private skills repo. |
-| `advanced.sidecarPullTimeout` | Optional, in seconds (at most 1800). How long the agent waits at init to pull each sibling's persona and env over `clouve-ops` SSH. Raise it for siblings with a slow first install, as Moodle, Gibbon, Odoo and Nextcloud do here. |
+| `advanced.sidecarPullTimeout` | Optional, in seconds (at most 1800). How long the agent waits at init to pull each sibling's persona and env over `clouve-ops` SSH. Raise it for siblings with a slow first install, as Moodle, Gibbon, Odoo, Nextcloud, LimeSurvey and SuiteCRM do here. |
 | `advanced.passthroughEnv` | Optional map of extra env vars for the agent container. It is an escape hatch; `apps/ai-studio` uses it. |
 
 On a paid plan, the AI Assistant's monthly price is Clouve's platform fee for
@@ -512,17 +517,40 @@ and again when it is published:
 - No alias has the name of a container in the listing (in any case, public or not), and no two aliases share a name,
   even on different containers. The same goes the other way round: a container can't be named like an alias.
 
-A listing's first published version also fixes its aliases. From then on, Clouve refuses to save a version that
-doesn't declare the same alias names on the same containers; their titles, descriptions, versions, icons and admin
-paths can change. To add, remove or move an alias, publish a new listing.
+A later version may add, remove, rename or move aliases (since release 4.5.6). A running deployment takes the change
+only when it is upgraded: until then it keeps the aliases it runs with. A renamed alias is a new host to a deployment
+that upgrades: its old address stops answering, and a custom domain set on it has to be entered again under the new
+name. See "New versions and running deployments".
 
 One more limit applies when a deployment is installed or copied: each of its hosts has to fit in 63 characters, and
 Clouve refuses the install or the copy when one would be longer. A long alias name leaves less room for the
 organization's part of the host.
 
-In this repo, `./check-manifests.sh` checks every manifest against all of this section's rules except the two only
-Clouve can check: the aliases a published version fixes, and the 63 characters at install. It also needs a container
+In this repo, `./check-manifests.sh` checks every manifest against all of this section's rules except the one only
+Clouve can check: the 63 characters at install. It also needs a container
 with aliases to state `isPublic` and `purpose` in its `x-clouve-metadata`, which an upload would otherwise guess.
+
+### New versions and running deployments
+
+When a listing publishes a new version, its running deployments keep the version they run until someone presses
+Upgrade (agents, and clients of free services). Upgrade renders the deployment again from the newest version and keeps
+its data and settings. The rules, as they reach a manifest:
+
+- Keep each volume's name, and keep every container that has a volume. Upgrade refuses a version that would leave a
+  disk with data unmounted, because a renamed volume is a new, empty disk and the old one would be left behind.
+- Keep the main app (the first public container). Upgrade refuses a version that serves another container at a
+  deployment's main address.
+- Keep the AI Assistant (`x-clouve-agent`) once a version has it. Upgrade refuses a version without it for a
+  deployment that uses it.
+- Secrets: a key the deployment already has keeps its value. A new `secret` or `applicationPassword` variable gets a
+  new random value, so an app must take a value it hasn't seen before on its first start after an upgrade.
+- Sizes: each running container keeps its CPU, memory and disk sizes, whatever `memoryBase`, `cpuBase` or a volume's
+  `size` say in the new version. A new container or a new volume gets the new version's size for the deployment's
+  plan.
+- `static` values, images, ports and health checks are the new version's. `userConfigurable` values keep what the
+  customer set at install.
+- The image upgrades its own data at its first start on the new version, as LimeSurvey, SuiteCRM, Moodle and Nextcloud
+  do (each app's README). Test that with `tests/new-disk-start.test.sh <app> --upgrade-from <previous build>`.
 
 ### Values Clouve refuses
 
@@ -616,6 +644,72 @@ environment:
 | `{user.lastName}` | User's last name |
 | `{org.name}` | Organization name |
 
+### Database password rotation (`x-clouve-database-password`)
+
+A listing can let its customers give the app's database user a new password from the deployment's page in Clouve
+(release 4.5.6). The database's own service opts in:
+
+```yaml
+services:
+  shop-db:
+    environment:
+      MYSQL_USER: shop
+      MYSQL_PASSWORD: shop-db-password
+    x-clouve-environment-types:
+      MYSQL_USER: static
+      MYSQL_PASSWORD: secret
+    x-clouve-metadata:
+      containerName: shop-db
+      purpose: Database
+    x-clouve-database-password:
+      engine: mariadb          # mysql, mariadb or postgres
+```
+
+Clouve takes the rest from what the service already says. The password is the value of its password variable
+(`MYSQL_PASSWORD` or `MARIADB_PASSWORD`, or `POSTGRES_PASSWORD`), the user is the value of its user variable
+(`MYSQL_USER` or `MARIADB_USER`, or `POSTGRES_USER`, which a PostgreSQL service may leave out for `postgres`), and the
+containers that read the password are the ones whose `secret` variables name the same value.
+
+When an admin of the organization (or Clouve support) presses **Rotate database password** on the deployment's
+Settings tab, Clouve:
+
+1. makes a new password of 32 letters and digits, which nobody sees;
+2. signs in to the database as the user, with the current password, and changes that user's own password (MariaDB
+   and PostgreSQL get only its hash);
+3. checks that the new password signs in and the old one is refused, then puts the new one in the deployment's
+   settings;
+4. restarts every container that reads it, then the AI Assistant. The database itself keeps running.
+
+The app is unavailable for a minute or two while it restarts. A rotation that stops part way finishes the next time
+someone presses Rotate.
+
+What a listing has to keep, for this to work:
+
+- **Every container that reads the password reads it from its environment, at start or at each request.** An image
+  that copies it into a file at install, and never again, keeps the old password after a rotation. The house images
+  write their config files from the environment at every start (Gibbon, Moodle, Odoo, Nextcloud, LimeSurvey and
+  SuiteCRM), or read the environment on every request (WordPress, ownCloud). The Education Kit's Moodle also keeps
+  Gibbon's password in two of its own settings, which `gibbon-integration-password.sh` brings in step at every start.
+- **The database user has one account, which the app signs in to over the network** (`'user'@'%'` in MySQL and
+  MariaDB, as the official images make it). Clouve changes the account the user signs in to over the network. If the
+  old password still signs in over the network afterwards (a MySQL retained second password, say), the rotation
+  fails with a message for staff. An account the user has only on the database's own host (`'user'@'localhost'`)
+  can't be seen from the network, so Clouve neither changes it nor notices it; the app never uses it.
+- **The database image has its client** (`mysql` or `mariadb`, or `psql`) and `/bin/sh`: Clouve runs the change in a
+  short-lived pod made from the database's own image.
+
+The rules, which `./check-manifests.sh`, Clouve's upload and save, and Clouve's manifest renderer all check:
+
+- only on a service whose `x-clouve-metadata.purpose` is `Database`, and never on the AI Assistant;
+- a mapping with one key, `engine`: `mysql`, `mariadb` or `postgres`;
+- exactly one of the engine's password variables, typed `secret`;
+- the engine's user variable, typed `static` and not `root` (a PostgreSQL service may leave it out);
+- no other password variable of the service has the same secret (the root password's, say).
+
+A deployment gets the action only when it runs a listing version that declares the field: a new install, or an
+existing one after it is upgraded to that version. A listing without the field shows no action, and nothing changes
+for it.
+
 ---
 
 ## Health Checks and Readiness
@@ -682,6 +776,27 @@ x-clouve-healthcheck:
 ```
 
 > **Note:** Set `enabled: false` for supporting containers (databases) that don't need external health checking.
+
+### A stand-in for a long install or upgrade
+
+The platform makes a liveness probe and a readiness probe from `x-clouve-healthcheck`, and restarts a container that
+fails the probe for long enough: about 105 seconds for LimeSurvey and SuiteCRM. A first install on a network disk,
+or an upgrade of an existing site, can take longer. So these two images answer the probe through a stand-in until
+the app is ready:
+
+- The stand-in is PHP's built-in server on the app's port, with one router file from the image
+  (`image/installer/standin-router.php`). It serves no code of the app. It is not a second Apache: stopping one
+  signals every process in the container, the sshd included.
+- `GET /` and `HEAD /` get 200 and a short page. Everything else gets 503 with `Retry-After`, so a program that
+  calls the app, such as an API client, never takes the page for the app's answer.
+- Every answer has the header `X-Clouve-Standin` with the app's name. A tool that waits for the app itself looks
+  for it, as `./test.sh` and `tests/new-disk-start.test.sh` do.
+- Right before Apache starts, the entrypoint stops the stand-in by its PID and waits until the port is free.
+
+A stand-in keeps the probe passing whatever happens behind it. So an image that has one says in its log when a
+start can't finish: both images log one line that starts with `[clouve-upgrade] FAILED`, and that line is what an
+alert looks for. `apps/limesurvey/README.md` and `apps/suitecrm/README.md` say when each image waits and when it
+ends the container.
 
 ---
 
@@ -857,13 +972,17 @@ An image follows these rules:
    `tests/new-disk-start.test.sh <app> --upgrade-from <previous build>` (see "Testing on new cluster disks").
 7. `tests/new-disk-start.test.sh <app>` passes before every push to UAT or prod. `build-uat.sh` and `build-prod.sh`
    check for that pass and refuse to push an app whose current source doesn't have one.
-8. A push to UAT or prod names a dated tag: `build.sh` refuses `--push` to UAT's or prod's registry (any project on
-   the hosts their Harbors answer on: `demo.cr0.io` and `demo.reg.clouve.com`, `cr0.io` and `registry.clouve.com`;
-   through `build-uat.sh`, `build-prod.sh` or `REGISTRY` set by hand) without
-   `--tag <YYYY.MM.DD>` (an optional suffix such as `2026.11.11-2` is allowed), before anything is built. Without
-   `--tag`, a push also moves `:latest`, which every deployment that pins it pulls at its next restart. A rebuilt image
-   reaches tenants only through a listing's new version. Pushes to dev's registry (`dev.cr0.io`,
-   `dev.reg.clouve.com`) and the rig's (`r.clv.zone`) don't need a tag.
+8. A push to dev, UAT or prod names a new dated tag: `build.sh` refuses `--push` to dev's, UAT's or prod's registry
+   (any project on the hosts their Harbors answer on: `dev.cr0.io` and `dev.reg.clouve.com`, `demo.cr0.io` and
+   `demo.reg.clouve.com`, `cr0.io` and `registry.clouve.com`; through `build-dev.sh`, `build-uat.sh`,
+   `build-prod.sh` or `REGISTRY` set by hand) without `--tag <YYYY.MM.DD>`, a real date from 2000 to 2099 (a hyphen
+   suffix such as `2026.11.11-2` is allowed), before anything is built. Without `--tag`, a push also moves `:latest`,
+   which every deployment that pins it pulls at its next restart. It also refuses a tag that one of the app's images
+   already has in that registry: it looks each one up first, and a lookup that fails for any reason other than "not
+   found" refuses too. A dated tag is never pushed over, because every running deployment on it would pull the new
+   image at its next restart. A rebuilt image reaches tenants only through a listing's new version. Every other
+   registry follows both rules too, a new environment's Harbor included; only the rig's Harbor (`r.clv.zone`,
+   `registry.clouve.dev`) needs neither.
 
 ---
 
@@ -995,6 +1114,11 @@ no swap beyond that. A container passes when its `x-clouve-healthcheck` probe pa
 probe asks the container's IP, follows redirects to the same host and judges the last answer, as the kubelet does.
 Then, for a 90-second settle period, nothing may exit or restart, and no probe may fail for longer than the platform
 allows. The Magneto Agent's service is left out unless `--with-agent` is given.
+
+LimeSurvey and SuiteCRM answer their probe through a stand-in while they install or upgrade (`GET /` gets 200 and the
+header `X-Clouve-Standin`). The runner doesn't take that for the app: such a container passes when the app itself
+answers, and it has the 600 seconds for that, because the stand-in keeps the probe passing in the meantime
+(`tests/new-disk-standin.test.sh` checks this part of the runner with made-up answers).
 
 `build-uat.sh` and `build-prod.sh` push an app only when this test passed on its current source, on the machine that
 pushes: a record of each pass is kept in `~/.cache/magneto/new-disk-passes/` there, and any change to the app's files

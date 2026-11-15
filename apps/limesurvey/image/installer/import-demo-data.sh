@@ -1,172 +1,100 @@
 #!/bin/bash
-
-# LimeSurvey Demo Data Import Script
-# This script imports demo survey data into LimeSurvey when INSTALL_DEMO_DATA=true
-# It follows the same pattern as configure-suitecrm-plugin.sh
+# Imports the demo survey. site.sh runs it as www-data when INSTALL_DEMO_DATA is true, after the install and the
+# SuiteCRM plugin's setup and before Apache starts. The marker .demo_data_installed in the web root keeps a later
+# start from importing it again.
 #
-# Required environment variables:
-#   DB_HOST          - Database host
-#   DB_USERNAME      - Database username
-#   DB_PASSWORD      - Database password
-#   DB_NAME          - Database name
-#   DB_TABLE_PREFIX  - Table prefix (default: lime_)
-#   LIMESURVEY_INSTALL_PATH - LimeSurvey installation path (default: /var/www/html)
+# A start that is cut off must not import the demo survey a second time. So the script writes .demo_data_importing,
+# with the survey's id, before it imports, adds "imported=yes" once the import is through, and removes the file
+# when the marker is written. A start that finds the file knows what the last one left:
+#   - "imported=yes" and the survey is there: the import had finished. Only the rest is done (the link to SuiteCRM
+#     and the marker).
+#   - no "imported=yes" and the survey is there: the import was cut off halfway. LimeSurvey's command line has no
+#     way to remove a survey, so the unfinished survey stays, nothing is imported beside it, and the log says how to
+#     get the demo survey after all.
+#   - the survey is not there: nothing was left, and the import runs again.
 #
-# Optional environment variables:
-#   DEMO_DATA_SOURCE - Path to the .lss file (default: /clouve/limesurvey/installer/demo_data.lss)
+# With the SuiteCRM plugin (ENABLE_SUITECRM_INTEGRATION=true), the survey's link to SuiteCRM is switched on: the
+# plugin keeps that in one survey_enabled setting, and this script leaves exactly one row of it, with the value 1.
+# Two rows used to switch the link off, because the plugin then read the first one.
+#
+# No password is on a command line: the database client gets its password in MYSQL_PWD.
 
-# Color codes for console output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+installer=/clouve/limesurvey/installer
+# shellcheck source=/dev/null
+. "$installer/lib.sh" || exit 1
 
-# Set defaults
-DB_TABLE_PREFIX=${DB_TABLE_PREFIX:-'lime_'}
-LIMESURVEY_INSTALL_PATH=${LIMESURVEY_INSTALL_PATH:-'/var/www/html'}
-DEMO_DATA_SOURCE=${DEMO_DATA_SOURCE:-'/clouve/limesurvey/installer/demo_data.lss'}
-DEMO_DATA_MARKER="${LIMESURVEY_INSTALL_PATH}/.demo_data_installed"
+log() { printf '[demo-data] %s\n' "$*"; }
 
-echo -e "${YELLOW}[DEMO-DATA]${NC} Starting demo data import..."
+source_file="${DEMO_DATA_SOURCE:-$installer/demo_data.lss}"
+language="${DEMO_DATA_LANG:-en}"
+marker="$LS_ROOT/.demo_data_installed"
+stamp="$LS_ROOT/.demo_data_importing"
 
-# ============================================================================
-# Validate required environment variables
-# ============================================================================
-
-if [ -z "$DB_HOST" ] || [ -z "$DB_USERNAME" ] || [ -z "$DB_PASSWORD" ] || [ -z "$DB_NAME" ]; then
-    echo -e "${RED}[DEMO-DATA ERROR]${NC} Missing required database environment variables"
-    echo -e "${RED}[DEMO-DATA ERROR]${NC} Required: DB_HOST, DB_USERNAME, DB_PASSWORD, DB_NAME"
-    exit 1
-fi
-
-# ============================================================================
-# Check if demo data file exists
-# ============================================================================
-
-if [ ! -f "$DEMO_DATA_SOURCE" ]; then
-    echo -e "${RED}[DEMO-DATA ERROR]${NC} Demo data file not found at $DEMO_DATA_SOURCE"
-    exit 1
-fi
-
-echo -e "${GREEN}[DEMO-DATA]${NC} Demo data file found: $DEMO_DATA_SOURCE"
-
-# ============================================================================
-# Check if demo data was already imported (marker file exists)
-# ============================================================================
-
-if [ -f "$DEMO_DATA_MARKER" ]; then
-    echo -e "${YELLOW}[DEMO-DATA]${NC} Demo data already imported (marker file exists)"
-    echo -e "${YELLOW}[DEMO-DATA]${NC} Marker contents:"
-    cat "$DEMO_DATA_MARKER"
+if [ -f "$marker" ]; then
+    log "the demo survey was imported before ($(sed -n 's/^Survey ID: //p' "$marker" | head -n 1))"
     exit 0
 fi
-
-# ============================================================================
-# Wait for LimeSurvey to be fully initialized
-# ============================================================================
-
-echo -e "${YELLOW}[DEMO-DATA]${NC} Waiting for LimeSurvey to be fully initialized..."
-
-TIMEOUT=180
-ELAPSED=0
-POLL_INTERVAL=3
-
-while [ $ELAPSED -lt $TIMEOUT ]; do
-    # Check 1: Verify surveys table exists (LimeSurvey is fully installed)
-    if mariadb -h "$DB_HOST" -u "$DB_USERNAME" -p"$DB_PASSWORD" "$DB_NAME" \
-        -e "SELECT 1 FROM ${DB_TABLE_PREFIX}surveys LIMIT 1;" 2>/dev/null >/dev/null; then
-
-        # Check 2: Verify config files exist and are not empty
-        if [ -s "$LIMESURVEY_INSTALL_PATH/application/config/config.php" ] && \
-           [ -s "$LIMESURVEY_INSTALL_PATH/application/config/security.php" ]; then
-
-            # Check 3: Verify web server is responding
-            if curl -s -f http://localhost:8080 >/dev/null 2>&1; then
-                echo -e "${GREEN}[DEMO-DATA]${NC} LimeSurvey is fully initialized!"
-                break
-            fi
-        fi
-    fi
-
-    sleep $POLL_INTERVAL
-    ELAPSED=$((ELAPSED + POLL_INTERVAL))
-done
-
-if [ $ELAPSED -ge $TIMEOUT ]; then
-    echo -e "${RED}[DEMO-DATA ERROR]${NC} Timeout waiting for LimeSurvey initialization after ${TIMEOUT}s"
+if [ ! -f "$source_file" ]; then
+    log "the demo survey file $source_file is missing"
     exit 1
 fi
+case "$language" in
+    *[!A-Za-z0-9_-]* | '') log "DEMO_DATA_LANG is not a language code"; exit 1 ;;
+esac
 
-# ============================================================================
-# Wait for database to stabilize
-# ============================================================================
-
-echo -e "${YELLOW}[DEMO-DATA]${NC} Waiting 5 seconds for database to stabilize..."
-sleep 5
-
-# ============================================================================
-# Import the demo survey using LimeSurvey CLI
-# ============================================================================
-
-# Determine the base language for the survey
-# The demo data file is typically in English, but this can be customized
-DEMO_DATA_LANG=${DEMO_DATA_LANG:-'en'}
-
-echo -e "${YELLOW}[DEMO-DATA]${NC} Importing demo survey from $DEMO_DATA_SOURCE (language: $DEMO_DATA_LANG)..."
-
-cd "$LIMESURVEY_INSTALL_PATH"
-# Note: LimeSurvey's importsurvey command requires the format "filename:language"
-# due to a bug in the command that doesn't handle missing language suffix properly
-IMPORT_RESULT=$(php application/commands/console.php importsurvey "${DEMO_DATA_SOURCE}:${DEMO_DATA_LANG}" 2>&1)
-
-if [[ "$IMPORT_RESULT" =~ ^[0-9]+$ ]]; then
-    SURVEY_ID="$IMPORT_RESULT"
-    echo -e "${GREEN}[DEMO-DATA]${NC} Demo survey imported successfully with Survey ID: $SURVEY_ID"
-
-    # ============================================================================
-    # Configure SuiteCRM Integration for the demo survey (if enabled)
-    # ============================================================================
-
-    if [ "$ENABLE_SUITECRM_INTEGRATION" = "true" ]; then
-        echo -e "${YELLOW}[DEMO-DATA]${NC} Configuring SuiteCRM integration for demo survey..."
-
-        # Get the plugin ID
-        PLUGIN_ID=$(mariadb -h "$DB_HOST" -u "$DB_USERNAME" -p"$DB_PASSWORD" "$DB_NAME" \
-            -sN -e "SELECT id FROM ${DB_TABLE_PREFIX}plugins WHERE name='SuiteCRMIntegration';" 2>/dev/null || echo "")
-
-        if [ -n "$PLUGIN_ID" ]; then
-            # Insert survey-specific settings (values are JSON-encoded for LimeSurvey's DbStorage)
-            if mariadb -h "$DB_HOST" -u "$DB_USERNAME" -p"$DB_PASSWORD" "$DB_NAME" << SQL_EOF
--- Enable SuiteCRM integration for this survey (1 is valid JSON integer)
-INSERT INTO ${DB_TABLE_PREFIX}plugin_settings (plugin_id, model, model_id, \`key\`, \`value\`)
-VALUES ($PLUGIN_ID, 'Survey', '$SURVEY_ID', 'survey_enabled', '1')
-ON DUPLICATE KEY UPDATE \`value\` = '1';
-SQL_EOF
-            then
-                echo -e "${GREEN}[DEMO-DATA]${NC} SuiteCRM integration enabled for demo survey"
-            else
-                echo -e "${YELLOW}[DEMO-DATA WARNING]${NC} Failed to enable SuiteCRM integration for demo survey"
-            fi
-
-            # Field mappings are stored in question attributes (suitecrm_mappings_json)
-            # and are read directly at response time by the plugin
-            echo -e "${GREEN}[DEMO-DATA]${NC} CRM field mappings configured via question attributes"
+# What a start that was cut off left behind.
+survey_id=""
+if [ -f "$stamp" ] && [ ! -L "$stamp" ]; then
+    cut_off="$(sed -n 's/^sid=\([0-9]\{1,\}\)$/\1/p' "$stamp" | head -n 1)"
+    if [ -n "$cut_off" ] && [ "$(ls_sql "SELECT COUNT(*) FROM \`$(ls_table surveys)\` WHERE sid = $cut_off")" = 1 ]; then
+        if grep -qx 'imported=yes' "$stamp"; then
+            log "the demo survey was imported as survey $cut_off before the last start was cut off. It is not imported again"
+            survey_id="$cut_off"
         else
-            echo -e "${YELLOW}[DEMO-DATA WARNING]${NC} SuiteCRM plugin not found, skipping survey configuration"
+            log "an import of the demo survey was cut off and left survey $cut_off unfinished. It is not imported a second" \
+                "time. To get the demo survey, delete survey $cut_off in LimeSurvey, then restart: the import runs again."
+            exit 0
         fi
     fi
-
-    # Create marker file to prevent re-import on container restart
-    echo "Survey ID: $SURVEY_ID" > "$DEMO_DATA_MARKER"
-    echo "Imported: $(date)" >> "$DEMO_DATA_MARKER"
-    echo "Source: $DEMO_DATA_SOURCE" >> "$DEMO_DATA_MARKER"
-    chown www-data:www-data "$DEMO_DATA_MARKER"
-
-    echo -e "${GREEN}[DEMO-DATA]${NC} Demo data installation complete!"
-    exit 0
-else
-    echo -e "${RED}[DEMO-DATA ERROR]${NC} Failed to import demo survey"
-    echo -e "${RED}[DEMO-DATA ERROR]${NC} Import result: $IMPORT_RESULT"
-    exit 1
 fi
 
+if [ -z "$survey_id" ]; then
+    # The id the survey file asks for. LimeSurvey gives the survey another one when that id is taken.
+    want_id="$(sed -n 's:.*<sid><!\[CDATA\[\([0-9]\{1,\}\)\]\]></sid>.*:\1:p' "$source_file" | head -n 1)"
+    printf 'sid=%s\nstarted=%s\n' "$want_id" "$(ls_now)" > "$stamp" || { log "cannot write $stamp"; exit 1; }
+
+    # The importer can rewrite or delete the file it is given, so it gets a copy.
+    work="$(mktemp -d)" || exit 1
+    trap 'rm -rf "$work"' EXIT
+    cp "$source_file" "$work/demo.lss" || exit 1
+    rc=0
+    result="$(ls_console importsurvey "$work/demo.lss:$language" 2>&1)" || rc=$?
+    survey_id="$(printf '%s' "$result" | tr -d ' \r\n')"
+    if [ "$rc" -ne 0 ] || ! [[ "$survey_id" =~ ^[0-9]+$ ]]; then
+        log "the demo survey could not be imported (status $rc): $(printf '%s' "$result" | head -n 1 | cut -c1-200)"
+        exit 1
+    fi
+    printf 'sid=%s\nstarted=%s\nimported=yes\n' "$survey_id" "$(ls_now)" > "$stamp" || { log "cannot write $stamp"; exit 1; }
+    log "imported the demo survey as survey $survey_id"
+    ls_test_pause demo-imported
+fi
+
+if [ "${ENABLE_SUITECRM_INTEGRATION:-}" = true ]; then
+    settings="$(ls_table plugin_settings)"
+    plugin_id="$(ls_sql "SELECT id FROM \`$(ls_table plugins)\` WHERE name = 'SuiteCRMIntegration'")"
+    if [[ "$plugin_id" =~ ^[0-9]+$ ]]; then
+        if ls_sql "DELETE FROM \`$settings\` WHERE plugin_id = $plugin_id AND model = 'Survey' AND model_id = $survey_id AND \`key\` = 'survey_enabled';
+            INSERT INTO \`$settings\` (plugin_id, model, model_id, \`key\`, \`value\`) VALUES ($plugin_id, 'Survey', $survey_id, 'survey_enabled', '\"1\"')"; then
+            log "the demo survey's link to SuiteCRM is switched on"
+        else
+            log "the demo survey's link to SuiteCRM could not be switched on"
+        fi
+    else
+        log "the SuiteCRM plugin is not registered, so the demo survey's link to it stays off"
+    fi
+fi
+
+printf 'Survey ID: %s\nImported: %s\nSource: %s\n' "$survey_id" "$(ls_now)" "$source_file" > "$marker" || exit 1
+rm -f -- "$stamp"
+log "done"
+exit 0

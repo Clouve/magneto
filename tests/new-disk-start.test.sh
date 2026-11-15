@@ -11,7 +11,11 @@
 #   - each container must pass its own probe (x-clouve-healthcheck: HTTP, TCP or
 #     Command) within its liveness budget, initialDelay + failureThreshold x
 #     interval seconds and never more than 600, and then keep passing through a
-#     settle period without exiting or restarting.
+#     settle period without exiting or restarting;
+#   - an image's stand-in for its health check (the header X-Clouve-Standin, as
+#     LimeSurvey and SuiteCRM send while they install or upgrade) passes the
+#     probe but is not the app: the container is healthy when the app itself
+#     answers, within 600 s (tests/new-disk-standin.test.sh).
 # A run uses its own Compose project with no published ports and no fixed
 # container names, so it never collides with a local stack, and it removes
 # everything it made when it ends. The Magneto Agent's service is left out

@@ -23,13 +23,13 @@ The bundle follows the established Clouve patterns:
 ## Container Structure
 
 ### Main Application Container (`owncloud`)
-- **Base Image**: `owncloud/server`
+- **Base Image**: `owncloud/server:10.16.6`
 - **Port**: 8080 (HTTP)
 - **Purpose**: Frontend application server
 - **Data Volume**: `/mnt/data` - stores all ownCloud files and configuration
 
 ### Database Container (`owncloud-mariadb`)
-- **Base Image**: `mariadb`
+- **Base Image**: `mariadb:12.3`, with gosu rebuilt from source as in the other database images
 - **Port**: 3306
 - **Purpose**: Database server
 - **Data Volume**: `/var/lib/mysql` - stores database files
@@ -155,9 +155,18 @@ The `clv-docker-compose.yml` file contains the production configuration with all
 
 ## Version
 
-- ownCloud Server: 10.16 (latest)
-- MariaDB: Latest (10.11+)
+- ownCloud Server: 10.16.6 (`owncloud/server:10.16.6`)
+- MariaDB: 12.3 (`mariadb:12.3`)
 - Redis: 6
+
+The image takes no `:latest`. A site moves to a new pin in place at its next start (`owncloud migrate`, and MariaDB's
+`MARIADB_AUTO_UPGRADE`), but neither runs older code on data a newer version wrote. So before a new ownCloud listing
+version goes to an environment, list every ownCloud and owncloud-mariadb image that environment's ownCloud
+deployments run, paused ones included, with `bash tests/owncloud-images.sh <kube context>...` (read-only; it exits 1
+and says why when a context or an image can't be read). Pull each one by digest, give `bash tests/owncloud-pin-check.sh`
+every one as `<ref>@<digest>` (or the reference as printed when it already has `@sha256:`), never the tag alone, and
+publish only when it prints both pins `ok`.
+`tests/owncloud-image.test.sh` installs a 10.16.0 site on MariaDB 11.4 and moves it to the current images.
 
 ## Support
 

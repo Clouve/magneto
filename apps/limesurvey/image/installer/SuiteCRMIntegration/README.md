@@ -1,25 +1,17 @@
-# SuiteCRM Integration Plugin for LimeSurvey (v2.0)
+# SuiteCRM Integration plugin for LimeSurvey
 
-## Overview
+Version 2.1.0. Works with LimeSurvey 6 and 7 and with SuiteCRM 8 (its V8 API, with OAuth2).
 
-This plugin enables LimeSurvey to automatically create leads and cases in SuiteCRM based on survey responses.
+When someone completes a survey, the plugin creates a lead or a case in SuiteCRM from the answers. Each question
+says which SuiteCRM fields it fills. The plugin keeps a sync log for each survey.
 
-**Key Features:**
-- Automatic Lead/Case creation on survey completion
-- Per-question field mapping via dropdown selector
-- Dynamic field discovery from SuiteCRM API
-- OAuth2 authentication (auto-configured)
-- Sync logging for audit trail
+The plugin writes to two SuiteCRM modules, Leads and Cases, and only to fields that SuiteCRM lists for them. The
+list is in the plugin's code, and no setting adds to it. See "What a mapping can name" below.
 
-## Quick Start (CRM Kit Bundle)
+## In Clouve's Customer Kit
 
-If using the CRM Kit bundle with `ENABLE_SUITECRM_INTEGRATION=true`, the plugin is **automatically installed and configured**. Skip to [Configure Field Mappings](#configure-field-mappings).
-
-## Installation
-
-### Option 1: Docker (CRM Kit Bundle)
-
-Add to your `docker-compose.yml`:
+The LimeSurvey image carries the plugin. With `ENABLE_SUITECRM_INTEGRATION=true` the image registers the plugin,
+switches it on the first time, and writes its connection settings from these variables at every start:
 
 ```yaml
 limesurvey:
@@ -34,48 +26,44 @@ limesurvey:
     SUITECRM_DB_PASSWORD: suitecrm_password
 ```
 
-### Option 2: Manual Installation
+The two passwords are stored encrypted, with the keys in LimeSurvey's `application/config/security.php`. A start
+never changes whether the plugin is switched on. If an admin switches it off, it stays off.
 
-1. Copy plugin to LimeSurvey: `cp -r SuiteCRMIntegration /path/to/limesurvey/plugins/`
-2. Set permissions: `chown -R www-data:www-data /path/to/limesurvey/plugins/SuiteCRMIntegration`
-3. Activate in **Configuration** → **Plugin Manager**
-4. Configure global settings (see below)
+The settings page never shows a stored password or the OAuth2 client secret. Their fields are empty when the page
+opens. Type a new value to change one. A field you leave empty keeps what is stored.
 
-## Configuration
+The plugin makes its OAuth2 client in SuiteCRM's database (`oauth2clients`, named "LimeSurvey Integration") the
+first time it talks to SuiteCRM, so LimeSurvey starts whether or not SuiteCRM is up. Changing SuiteCRM's admin
+password, that OAuth2 client or SuiteCRM's key pair breaks the link until the settings match again.
 
-### Global Settings (Manual Installation Only)
+## Installing it by hand
 
-Go to **Configuration** → **Plugin Manager** → **Settings**:
+1. Copy the folder to LimeSurvey: `cp -r SuiteCRMIntegration /path/to/limesurvey/plugins/`
+2. Give it to the web server's user: `chown -R www-data:www-data /path/to/limesurvey/plugins/SuiteCRMIntegration`
+3. In LimeSurvey, open Configuration, then Plugin manager, and activate "SuiteCRM Integration".
+4. Open its settings, set "Enable SuiteCRM Integration" to Enabled, and fill in SuiteCRM's address, the admin
+   name and password, and SuiteCRM's database host, name, user and password.
 
-| Setting | Example Value |
-|---------|---------------|
-| SuiteCRM URL | `http://suitecrm:80` |
-| Admin Username | `admin` |
-| Admin Password | `Admin@123` |
-| Database Host | `suitecrm-mariadb` |
-| Database Name | `suitecrm` |
-| Database User/Password | Your DB credentials |
+## Switch it on for a survey
 
-OAuth2 credentials are auto-generated on activation.
+Open the survey's settings, then its plugin settings, set "Enable SuiteCRM Integration for this survey" to
+Enabled and save.
 
-### Enable for a Survey
+## Map questions to SuiteCRM fields
 
-1. Go to **Survey Settings** → **Plugin Settings**
-2. Enable **SuiteCRM Integration for this survey**
-3. Save
+Field mapping is done in the classic question editor. LimeSurvey 7 opens its new survey editor by default, and the
+new editor has no place for a plugin's fields. To switch, open the menu under your name at the top right, choose
+the entry for the new editor, pick "Classic" and save. The plugin's settings page has a link that opens the same
+switch. You can switch back the same way at any time.
 
-## Configure Field Mappings
+For each question that should reach SuiteCRM:
 
-For each question you want to sync to SuiteCRM:
+1. Edit the question in the classic editor.
+2. Open its "SuiteCRM Integration" section.
+3. Choose the SuiteCRM field, for example `Leads: first_name`.
+4. Save.
 
-1. **Edit the question**
-2. Scroll to **"SuiteCRM Integration"** section
-3. **Select the CRM field** from dropdown (e.g., `Leads: first_name`)
-4. **Save**
-
-### Example Mapping
-
-| Question | CRM Field |
+| Question | SuiteCRM field |
 |----------|-----------|
 | firstName | Leads: first_name |
 | lastName | Leads: last_name |
@@ -84,45 +72,89 @@ For each question you want to sync to SuiteCRM:
 | company | Leads: account_name |
 | message | Leads: description |
 
-**Required fields:** `last_name` for Leads, `name` for Cases
+A lead needs `last_name` and a case needs `name`. The plugin sends only the fields that are mapped. It sets no
+`lead_source` and no `status` itself.
+[FIELD_MAPPING_GUIDE.md](FIELD_MAPPING_GUIDE.md) lists every field.
 
-**Auto-set values:** `lead_source=Survey`, `status=New`
+The "SuiteCRM Integration" section shows only while the survey's link is switched on. A question keeps its mapping
+while the link is off, and saving the question doesn't remove it.
 
-See [FIELD_MAPPING_GUIDE.md](FIELD_MAPPING_GUIDE.md) for complete field reference.
+### What a mapping can name
+
+The plugin accepts a mapping when its module is `Leads` or `Cases`, its field name is made of letters, digits and
+underscores, and SuiteCRM lists that field for the module. The plugin leaves a few system fields, such as `id` and
+`assigned_user_id`, off that list, so a mapping can't name them. It refuses any other mapping, because it talks to
+SuiteCRM as SuiteCRM's admin, and whoever may edit a survey can write a mapping.
+
+The plugin checks a mapping twice:
+
+- When someone saves it, in the question editor, through LimeSurvey's API or through the plugin's own address. The
+  plugin doesn't store a mapping it refuses. It checks the field against the list it has cached, so a field that
+  is new in SuiteCRM passes once the cache has it.
+- When it sends a response. A survey import stores mappings without the first check, so the plugin checks each one
+  again here, against SuiteCRM's current list. A refused mapping sends nothing, and the rest of the response still
+  goes.
+
+Each refusal is one line in the web server's error log, with the question's id and no answer. When the plugin
+refuses a mapping while it sends a response, the survey's sync log also gets a failed row with the module `Refused`.
+
+## Who can use the plugin's pages
+
+The plugin's AJAX addresses (`/index.php/plugins/direct?plugin=SuiteCRMIntegration&function=...`) answer only a
+signed-in LimeSurvey admin. A caller who isn't signed in gets 401, and an account without the right gets 403.
+
+| What | Right needed |
+|------|--------------|
+| A survey's sync log | Read that survey's settings and its responses |
+| Read a question's mappings | Read its survey's settings |
+| Save a question's mappings | Change its survey's content |
+| The lists the question editor loads (modules, fields, rules) | The global settings right, or read the settings or the content of the survey being edited |
+| Connection status, test the connection, refresh the field cache, set up OAuth2 | Change the global settings |
+| The plugin's settings page | Change the global settings |
+
+LimeSurvey opens a plugin's settings page to an account that may only read the global settings. For such an account
+this plugin's page holds a note and none of the settings.
+
+Four addresses change something: `actionSaveMappings`, `actionTestConnection`, `actionRefreshCache` and
+`actionInitializeOAuth2`. They take POST with LimeSurvey's CSRF token (`YII_CSRF_TOKEN`). A GET gets 405.
+
+Only an account that may change the global settings makes the plugin talk to SuiteCRM from these pages. For any
+other account the field lists come from the plugin's cache, however old it is, and the plugin never sets up the
+OAuth2 client on its request. The cache fills when a response is completed, when an account that may change the
+global settings opens the question editor, or when one calls `actionRefreshCache`.
 
 ## Troubleshooting
 
-### Enable Debug Mode
+The sync log has one row for each record the plugin tried to make. For a sync that failed, the row keeps what was
+sent, the mappings that were used and the error message, which has SuiteCRM's own error text when SuiteCRM gave
+one. Those rows hold answers, so only an admin with rights on the survey can read the
+log. For a sync that worked, the row keeps the id of the record SuiteCRM made and nothing of the response. The
+plugin removes rows older than 90 days the next time it writes to the log. To see the latest rows:
 
-1. Go to plugin global settings → Set **Debug Mode** to "Enabled"
-2. Check logs: `/tmp/suitecrm_integration.log`
-3. Check sync history:
-   ```sql
-   SELECT * FROM lime_survey_crm_sync_log ORDER BY id DESC LIMIT 10;
-   ```
+```sql
+SELECT id, response_id, crm_module, sync_status, error_message, synced_at
+FROM lime_survey_crm_sync_log ORDER BY id DESC LIMIT 10;
+```
 
-### Common Issues
+Debug mode is off unless an admin switches it on in the plugin's settings. While it is on, the plugin writes what
+it does to `tmp/runtime/suitecrm_integration.log` in LimeSurvey's folder, which the web server never serves. The
+log holds counts and ids. It never holds answers or passwords. Switch debug mode off again when you are done.
 
-| Issue | Solution |
+| Problem | What to check |
 |-------|----------|
-| "OAuth2 client not initialized" | Check database connection settings |
-| "OAuth2 authentication failed" | Verify SuiteCRM admin credentials and URL |
-| No records created | Check field mappings; ensure `last_name` (Leads) or `name` (Cases) is mapped |
-| Records created with empty fields | Check question codes match and survey responses are filled |
+| "OAuth2 client not yet initialized" or "OAuth2 initialization failed" (Check Status) | SuiteCRM's database settings in the plugin's settings, then "Initialize OAuth2" |
+| "OAuth2 authentication failed" | SuiteCRM's address, admin name and password |
+| No record is created | The survey's link is switched on, and `last_name` (leads) or `name` (cases) is mapped |
+| A record has empty fields | The question's mapping, and that the question was answered |
+| A failed row with the module `Refused` | The question it names has a mapping to a module other than Leads or Cases, or to a field SuiteCRM doesn't list |
+| "SuiteCRM answered with a redirect" | The plugin doesn't follow redirects. Put SuiteCRM's own address in the settings |
 
-### Verify OAuth2 Client
+To see the OAuth2 client in SuiteCRM's database:
 
 ```sql
 SELECT id, name, allowed_grant_type FROM oauth2clients WHERE name = 'LimeSurvey Integration';
 ```
 
-## Version Information
-
-- **Version**: 2.0.0
-- **Compatibility**: LimeSurvey 4.0+, 5.0+, 6.0+
-- **API**: SuiteCRM V8 (OAuth2)
-
 ## License
 
 MIT License
-

@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # ============================================================================
-# CLOUVE_OPS_PASSWORD stays out of Apache in the WordPress, Gibbon and Moodle
-# app containers
+# CLOUVE_OPS_PASSWORD stays out of Apache in the WordPress, Gibbon, Moodle,
+# LimeSurvey and SuiteCRM app containers
 # ============================================================================
 # Each app image starts its clouve-ops sshd in the background (which applies
 # CLOUVE_OPS_PASSWORD to the clouve-ops user, who has passwordless sudo) and
@@ -25,12 +25,13 @@
 #     install.php without a command line, signs in (M4).
 #
 # --image NAME=REF uses an image already built (NAME is wordpress,
-# wordpress-mariadb, gibbon, gibbon-mysql, moodle or moodle-mysql); otherwise
+# wordpress-mariadb, gibbon, gibbon-mysql, moodle, moodle-mysql, limesurvey,
+# limesurvey-mariadb, suitecrm or suitecrm-mariadb); otherwise
 # the test builds it and removes it at the end. Naming apps limits the run.
 # Every container is named appops-t-*. Needs Docker and python3 with PyYAML.
 #
 # Usage: bash tests/app-ops-password.test.sh [--image NAME=REF]... [APP...]
-#   APP  wordpress, gibbon or moodle (default: all three)
+#   APP  wordpress, gibbon, moodle, limesurvey or suitecrm (default: all)
 # ============================================================================
 
 set -uo pipefail
@@ -40,17 +41,22 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PREFIX="appops-t-"
 READY_SECONDS=600
 
-ALL=(wordpress gibbon moodle)
-declare -A DB_OF=([wordpress]=wordpress-mariadb [gibbon]=gibbon-mysql [moodle]=moodle-mysql)
+ALL=(wordpress gibbon moodle limesurvey suitecrm)
+declare -A DB_OF=([wordpress]=wordpress-mariadb [gibbon]=gibbon-mysql [moodle]=moodle-mysql
+  [limesurvey]=limesurvey-mariadb [suitecrm]=suitecrm-mariadb)
+# The port Apache listens on, where it isn't 80.
+declare -A PORT=([limesurvey]=8080)
 declare -A CONTEXT=(
   [wordpress]="$REPO_DIR/apps/wordpress/image" [wordpress-mariadb]="$REPO_DIR/apps/wordpress/image/mariadb"
   [gibbon]="$REPO_DIR/apps/gibbon/image" [gibbon-mysql]="$REPO_DIR/apps/gibbon/image/mysql"
   [moodle]="$REPO_DIR/apps/moodle/image" [moodle-mysql]="$REPO_DIR/apps/moodle/image/mysql"
+  [limesurvey]="$REPO_DIR/apps/limesurvey/image" [limesurvey-mariadb]="$REPO_DIR/apps/limesurvey/image/mariadb"
+  [suitecrm]="$REPO_DIR/apps/suitecrm/image" [suitecrm-mariadb]="$REPO_DIR/apps/suitecrm/image/mariadb"
 )
 declare -A IMAGE=()
 
 usage() {
-  sed -n 's/^# \{0,1\}//; /^Usage:/,/(default: all three)/p' "${BASH_SOURCE[0]}" >&2
+  sed -n 's/^# \{0,1\}//; /^Usage:/,/(default: all)/p' "${BASH_SOURCE[0]}" >&2
   exit 2
 }
 
@@ -64,7 +70,7 @@ while [ $# -gt 0 ]; do
       IMAGE[$name]="${2#*=}"
       shift
       ;;
-    wordpress|gibbon|moodle) APPS+=("$1") ;;
+    wordpress|gibbon|moodle|limesurvey|suitecrm) APPS+=("$1") ;;
     *) usage ;;
   esac
   shift
@@ -187,7 +193,7 @@ for app in "${APPS[@]}"; do
   deadline=$((SECONDS + READY_SECONDS))
   while [ "$SECONDS" -lt "$deadline" ]; do
     if [ "$(docker exec "$A" cat /proc/1/comm 2>/dev/null)" = apache2 ] &&
-       docker exec "$A" curl -s -o /dev/null http://127.0.0.1/ 2>/dev/null; then
+       docker exec "$A" curl -s -o /dev/null "http://127.0.0.1:${PORT[$app]:-80}/" 2>/dev/null; then
       ready=true
       break
     fi
@@ -212,7 +218,7 @@ echo 'user=', function_exists('posix_geteuid') ? posix_getpwuid(posix_geteuid())
      ' server=', isset($_SERVER[$n]) ? 'present' : 'absent',
      ' env=', isset($_ENV[$n]) ? 'present' : 'absent', "\n";
 PHP
-  probe="$(docker exec "$A" curl -s http://127.0.0.1/clv-ops-probe.php)"
+  probe="$(docker exec "$A" curl -s "http://127.0.0.1:${PORT[$app]:-80}/clv-ops-probe.php")"
   docker exec "$A" rm -f "$docroot/clv-ops-probe.php"
   assert_eq "PHP under Apache finds no CLOUVE_OPS_PASSWORD" "user=www-data getenv=absent server=absent env=absent" "$probe"
   names="$(docker exec "$A" sh -c 'tr "\0" "\n" < /proc/1/environ | cut -d= -f1')"

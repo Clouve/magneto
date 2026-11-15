@@ -7,7 +7,7 @@ This directory contains shared management scripts for Docker Compose application
 ```
 magneto/
 ├── apps/              # Individual applications (Gibbon, Moodle, Nextcloud, WordPress, etc.)
-├── bundles/           # Application bundles (Education Kit, etc.)
+├── bundles/           # Application bundles (Education Kit, Customer Kit)
 ├── start.sh           # Shared start script
 ├── stop.sh            # Shared stop script
 ├── logs.sh            # Shared logs script
@@ -256,7 +256,9 @@ The test script uses environment variable substitution in docker-compose.yml fil
 
 The test script performs the following steps:
 1. Validates the app directory and docker-compose.yml
-2. Starts the application with the first test domain
+2. Starts the application with the first test domain, and waits until the application itself answers. LimeSurvey
+   and SuiteCRM answer through a stand-in while they install or upgrade (the header `X-Clouve-Standin`), and the
+   script doesn't take that for the application
 3. Stops the application
 4. Restarts with the second test domain (changed URL)
 5. Verifies URL change detection in container logs
@@ -285,6 +287,7 @@ This approach:
 **Supported Applications:**
 - WordPress (`WORDPRESS_SITE_URL`)
 - LimeSurvey (`PUBLIC_URL`)
+- SuiteCRM (`SUITECRM_URL`)
 - Nextcloud (`NEXTCLOUD_URL`)
 
 **Test Output:**
@@ -311,8 +314,16 @@ Individual applications in the `apps/` directory:
 - **gibbon** - Gibbon Education Platform with MySQL 8.0
 - **moodle** - Moodle Learning Management System with MySQL 8.0
 - **wordpress** - WordPress CMS with MariaDB (supports dynamic URL updates)
-- **limesurvey** - LimeSurvey Survey Platform with MariaDB (supports dynamic URL updates)
+- **limesurvey** - LimeSurvey 7 Survey Platform with MariaDB (supports dynamic URL updates)
+- **suitecrm** - SuiteCRM 8 CRM with MariaDB (supports dynamic URL updates)
 - **nextcloud** - Nextcloud file sync and sharing with MariaDB (supports dynamic URL updates)
+- **odoo** - Odoo 19 with PostgreSQL 18
+- **owncloud** - ownCloud with MariaDB and Redis
+- **ai-studio** - AI Studio, a workspace with a running MERN starter project
+
+All of them but ownCloud offer the AI Assistant: their manifest has an `x-clouve-agent` block, their images carry
+the `clouve-ops` sshd that the assistant signs in to, and their `docker-compose.yml` has a `magneto-agent` service
+for local runs.
 
 Each application has:
 - `docker-compose.yml` - Local development configuration with environment variable substitution support
@@ -330,6 +341,9 @@ WORDPRESS_SITE_URL: http://${TEST_DOMAIN:-t1.test.clv}:${TEST_PORT:-8080}
 
 # Example from LimeSurvey
 PUBLIC_URL: http://${TEST_DOMAIN:-t1.test.clv}:${TEST_PORT:-8080}
+
+# Example from SuiteCRM
+SUITECRM_URL: http://${TEST_DOMAIN:-t1.test.clv}:${TEST_PORT:-8080}
 ```
 
 This enables:
@@ -343,6 +357,9 @@ This enables:
 Application bundles in the `bundles/` directory combine multiple applications:
 
 - **education-kit** - Gibbon + Moodle with integrated authentication and enrollment
+- **crm-kit** - LimeSurvey + SuiteCRM (the Customer Kit): survey responses become SuiteCRM leads and cases
+
+Both bundles offer the AI Assistant, each with its two apps' skills.
 
 Each bundle has:
 - `docker-compose.yml` - Local development configuration

@@ -1153,6 +1153,132 @@ run_check
 refused "a private container with braces" "FAIL $APP_FILE [app-worker]: only a public container takes host aliases (x-clouve-metadata.isPublic is not true)" 1
 assert_eq "no brace message" "0" "$(count "$OUT" "can't contain {{ or }}")"
 
+# ============================================================================
+# x-clouve-database-password (release 4.5.6, #109)
+# ============================================================================
+DBP_CONTAINER="x-clouve-database-password goes only on a Database container (x-clouve-metadata.purpose), and never on the AI Assistant (the database password rule)"
+DBP_ENGINE="x-clouve-database-password names one engine and nothing else: engine: mysql, mariadb or postgres (the database password rule)"
+DBP_VARIABLE="x-clouve-database-password needs exactly one of the engine's password variables (MYSQL_PASSWORD or MARIADB_PASSWORD, or POSTGRES_PASSWORD), typed secret (the database password rule)"
+DBP_USER="x-clouve-database-password needs the engine's user variable (MYSQL_USER or MARIADB_USER, or POSTGRES_USER), typed static and not root (the database password rule)"
+DBP_KEY="x-clouve-database-password: the password's secret can't be another password variable's too (the database password rule)"
+
+# db_app <block> [environment] [types] [purpose]: a manifest with an app and its database, "db", whose
+# x-clouve-database-password is <block> (YAML, indented under the key).
+db_app() {
+  local block="$1"
+  local env="${2:-      MYSQL_USER: shop
+      MYSQL_PASSWORD: shop-db-password
+      MYSQL_ROOT_PASSWORD: shop-db-root-password}"
+  local types="${3:-      MYSQL_USER: static
+      MYSQL_PASSWORD: secret
+      MYSQL_ROOT_PASSWORD: secret}"
+  local purpose="${4:-Database}"
+  cat <<YAML
+services:
+  shop:
+    image: registry.example.com/shop
+    environment:
+      SHOP_DB_PASSWORD: shop-db-password
+    x-clouve-environment-types:
+      SHOP_DB_PASSWORD: secret
+    x-clouve-metadata:
+      containerName: shop
+      purpose: Frontend
+      isPublic: true
+  db:
+    image: registry.example.com/shop-db
+    environment:
+$env
+    x-clouve-environment-types:
+$types
+    x-clouve-metadata:
+      containerName: db
+      purpose: $purpose
+      isPublic: false
+    x-clouve-database-password:
+$block
+YAML
+}
+
+echo "S31: a database with a password rotation passes, for each engine"
+for engine in mysql mariadb; do
+  fresh
+  db_app "      engine: $engine" | put apps/shop
+  run_check
+  assert_eq "$engine: exits 0" "0" "$RC"
+  assert_contains "$engine: no problem" "$OUT" "3 manifests checked, 0 problem(s)"
+done
+fresh
+db_app "      engine: postgres" "      POSTGRES_PASSWORD: shop-pg-password" "      POSTGRES_PASSWORD: secret" | put apps/shop
+run_check
+assert_eq "postgres without a user: exits 0" "0" "$RC"
+
+echo "S32: each database password rule refuses a manifest that breaks it"
+DB_FILE="apps/bad/clv-docker-compose.yml"
+fresh
+db_app "      engine: mysql" "" "" Frontend | put apps/bad
+run_check
+refused "on a Frontend" "FAIL $DB_FILE [db]: $DBP_CONTAINER" 1
+fresh
+db_app "      engine: oracle" | put apps/bad
+run_check
+refused "an engine Clouve doesn't know" "FAIL $DB_FILE [db]: $DBP_ENGINE" 1
+fresh
+db_app "      engine: mysql
+      user: root" | put apps/bad
+run_check
+refused "another field in the block" "FAIL $DB_FILE [db]: $DBP_ENGINE" 1
+fresh
+db_app "      - mysql" | put apps/bad
+run_check
+refused "a block that isn't a mapping" "FAIL $DB_FILE [db]: $DBP_ENGINE" 1
+fresh
+db_app "      engine: mysql" "      MYSQL_USER: shop" "      MYSQL_USER: static" | put apps/bad
+run_check
+refused "no password variable" "FAIL $DB_FILE [db]: $DBP_VARIABLE" 1
+fresh
+db_app "      engine: mysql" "      MYSQL_USER: shop
+      MYSQL_PASSWORD: plain-value" "      MYSQL_USER: static
+      MYSQL_PASSWORD: static" | put apps/bad
+run_check
+refused "a password variable that isn't a secret" "FAIL $DB_FILE [db]: $DBP_VARIABLE" 1
+assert_eq "the value isn't repeated" "0" "$(count "$OUT" "plain-value")"
+fresh
+db_app "      engine: mysql" "      MYSQL_PASSWORD: shop-db-password" "      MYSQL_PASSWORD: secret" | put apps/bad
+run_check
+refused "no user variable" "FAIL $DB_FILE [db]: $DBP_USER" 1
+fresh
+db_app "      engine: mariadb" "      MYSQL_USER: root
+      MYSQL_PASSWORD: shop-db-password" "      MYSQL_USER: static
+      MYSQL_PASSWORD: secret" | put apps/bad
+run_check
+refused "the root user" "FAIL $DB_FILE [db]: $DBP_USER" 1
+fresh
+db_app "      engine: mysql" "      MYSQL_USER: shop
+      MYSQL_PASSWORD: shop-db-root-password
+      MYSQL_ROOT_PASSWORD: shop-db-root-password" | put apps/bad
+run_check
+refused "the root password's secret" "FAIL $DB_FILE [db]: $DBP_KEY" 1
+fresh
+db_app "      engine: mariadb" "      MYSQL_USER: shop
+      MYSQL_PASSWORD: shop-db-password
+      MARIADB_PASSWORD: shop-db-password-2" "      MYSQL_USER: static
+      MYSQL_PASSWORD: secret
+      MARIADB_PASSWORD: secret" | put apps/bad
+run_check
+refused "both MYSQL_PASSWORD and MARIADB_PASSWORD" "FAIL $DB_FILE [db]: $DBP_VARIABLE" 1
+fresh
+db_app "      engine: mysql" "      MYSQL_USER: shop
+      MYSQL_PASSWORD: shop-db-password" "      MYSQL_USER: userConfigurable
+      MYSQL_PASSWORD: secret" | put apps/bad
+run_check
+refused "a user variable that isn't static" "FAIL $DB_FILE [db]: $DBP_USER" 1
+fresh
+# The AI Assistant, even one that says it's a Database (x-clouve-metadata.containerName magneto-agent).
+db_app "      engine: mysql" | sed 's/containerName: db$/containerName: magneto-agent/' | put apps/bad
+run_check
+refused "on the AI Assistant" "FAIL $DB_FILE [db]: $DBP_CONTAINER" 1
+
 echo
 if [[ $FAILED -eq 0 ]]; then
   printf '%bAll check-manifests.sh tests passed.%b\n' "$GREEN" "$NC"; exit 0

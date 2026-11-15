@@ -16,6 +16,8 @@
         fieldOptionsCache: null,
         transformRulesCache: null,
         modulesCache: null,
+        // Whether the survey's link is on. The server says so with the field lists. Unknown counts as on.
+        surveyEnabled: null,
         initialized: false,
 
         init: function() {
@@ -191,6 +193,20 @@
         },
 
         /**
+         * The id of the survey whose question is being edited, from the page's address, or from the editor's form
+         * when the address has none. The server answers only an admin who may read that survey, so each request
+         * names it.
+         */
+        getSurveyId: function() {
+            var match = /(?:surveyid|sid)[\/=](\d+)/i.exec(window.location.href);
+            if (match) {
+                return match[1];
+            }
+            var sid = $('input[name="sid"]').first().val();
+            return /^\d+$/.test(sid || '') ? sid : '';
+        },
+
+        /**
          * Load all CRM field options from the server
          */
         loadFieldOptions: function(callback) {
@@ -202,13 +218,17 @@
                 type: 'GET',
                 data: {
                     plugin: 'SuiteCRMIntegration',
-                    function: 'actionGetAllFields'
+                    function: 'actionGetAllFields',
+                    surveyId: self.getSurveyId()
                 },
                 dataType: 'json',
                 success: function(response) {
                     if (response.fields) {
                         self.fieldOptionsCache = response.fields;
                         self.modulesCache = response.modules || Object.keys(response.fields);
+                    }
+                    if (typeof response.surveyEnabled === 'boolean') {
+                        self.surveyEnabled = response.surveyEnabled;
                     }
                     if (typeof callback === 'function') callback();
                 },
@@ -237,7 +257,8 @@
                 type: 'GET',
                 data: {
                     plugin: 'SuiteCRMIntegration',
-                    function: 'actionGetTransformRules'
+                    function: 'actionGetTransformRules',
+                    surveyId: self.getSurveyId()
                 },
                 dataType: 'json',
                 success: function(response) {
@@ -298,15 +319,17 @@
          * Build table selector options HTML
          */
         buildTableOptionsHtml: function() {
+            var self = this;
             var html = '<option value="">-- Select CRM Module --</option>';
 
+            // Names from the server go into the page escaped, here and below.
             if (this.modulesCache && this.modulesCache.length > 0) {
                 this.modulesCache.forEach(function(module) {
-                    html += '<option value="' + module + '">' + module + '</option>';
+                    html += '<option value="' + self.escapeHtml(module) + '">' + self.escapeHtml(module) + '</option>';
                 });
             } else if (this.fieldOptionsCache) {
                 $.each(this.fieldOptionsCache, function(module) {
-                    html += '<option value="' + module + '">' + module + '</option>';
+                    html += '<option value="' + self.escapeHtml(module) + '">' + self.escapeHtml(module) + '</option>';
                 });
             }
 
@@ -322,6 +345,13 @@
             var $formGroup = $jsonField.closest('.mb-3, .form-group');
             if (!$formGroup.length) {
                 $formGroup = $jsonField.parent();
+            }
+
+            // While the survey's link is off the whole section is hidden. The field stays in the form, so saving
+            // the question keeps its mapping. This runs on every call: the controls can be built before the server
+            // has said whether the link is on.
+            if (this.surveyEnabled === false) {
+                $jsonField.closest('.panel-advancedquestionsettings').hide();
             }
 
             if ($formGroup.find('.suitecrm-mapping-container').length) {
@@ -397,14 +427,18 @@
          * Create a module group container
          */
         createModuleGroup: function($groupsContainer, module) {
+            // The module comes from a stored mapping, which another account may have written. It is set as an
+            // attribute and as text, never as part of the markup.
             var $group = $(
-                '<div class="suitecrm-module-group" data-module="' + module + '">' +
+                '<div class="suitecrm-module-group">' +
                 '  <div class="suitecrm-module-header">' +
-                '    <span class="suitecrm-module-label">' + module + '</span>' +
+                '    <span class="suitecrm-module-label"></span>' +
                 '  </div>' +
                 '  <div class="suitecrm-module-fields"></div>' +
                 '</div>'
             );
+            $group.attr('data-module', module);
+            $group.find('.suitecrm-module-label').text(module);
 
             $groupsContainer.append($group);
             return $group;
@@ -415,7 +449,9 @@
          */
         getOrCreateModuleGroup: function($container, module) {
             var $groups = $container.find('.suitecrm-module-groups');
-            var $existingGroup = $groups.find('.suitecrm-module-group[data-module="' + module + '"]');
+            var $existingGroup = $groups.find('.suitecrm-module-group').filter(function() {
+                return $(this).attr('data-module') === module;
+            });
 
             if ($existingGroup.length) {
                 return $existingGroup;
@@ -428,6 +464,7 @@
          * Build the CRM field options HTML for a specific module/table
          */
         buildFieldOptionsHtml: function(module) {
+            var self = this;
             var html = '<option value="">-- Select CRM Field --</option>';
 
             if (!module || !this.fieldOptionsCache || !this.fieldOptionsCache[module]) {
@@ -439,8 +476,8 @@
                 var label = fieldDef.label || fieldName;
                 var required = fieldDef.required ? ' *' : '';
                 var value = JSON.stringify({module: module, field: fieldName});
-                html += '<option value=\'' + value.replace(/'/g, '&#39;') + '\'>' +
-                        label + required + '</option>';
+                html += '<option value="' + self.escapeHtml(value) + '">' +
+                        self.escapeHtml(label) + required + '</option>';
             });
 
             return html;
@@ -450,12 +487,13 @@
          * Build the transform rule options HTML
          */
         buildTransformOptionsHtml: function() {
+            var self = this;
             var html = '<option value="">None (use value as-is)</option>';
 
             if (this.transformRulesCache) {
                 $.each(this.transformRulesCache, function(key, label) {
                     if (key !== 'none') {
-                        html += '<option value="' + key + '">' + label + '</option>';
+                        html += '<option value="' + self.escapeHtml(key) + '">' + self.escapeHtml(label) + '</option>';
                     }
                 });
             }
@@ -470,7 +508,7 @@
             var rowId = 'field-' + Date.now() + '-' + Math.random().toString(36).substring(2, 11);
 
             var $row = $(
-                '<div class="suitecrm-field-row" data-row-id="' + rowId + '" data-module="' + module + '">' +
+                '<div class="suitecrm-field-row" data-row-id="' + rowId + '" data-module="' + this.escapeHtml(module) + '">' +
                 '  <div class="suitecrm-field-col suitecrm-field-col-field">' +
                 '    <label class="suitecrm-field-label">CRM Field</label>' +
                 '    <select class="form-select form-select-sm suitecrm-field-select">' +

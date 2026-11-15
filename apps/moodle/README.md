@@ -540,6 +540,34 @@ For successful integration, ensure:
 
 **The old POST-INSTALL HOOK approach** (mounting scripts at `/clouve/hooks/post-install.sh`) **has been removed**. Use the multi-part environment variable approach documented above instead.
 
+## The PHP libraries on an installed site
+
+Moodle's image installs its PHP libraries with Composer and copies the code, `vendor/` included, onto the site's
+volume at install, and again only when the Moodle version (`$version`) goes up. An image can carry newer libraries
+than the ones a site of the same Moodle version was installed with: Clouve's 4.5.6 image has mtdowling/jmespath.php
+2.9.2, for a critical advisory in the 2.8.0 that Moodle 5.3 pins. So at every start, before Apache,
+`installer/refresh-vendor.sh` puts the image's `vendor/` on a site that runs the image's Moodle version, when the
+site's `vendor/` is still the one a Clouve image put there:
+
+- It compares the package list (`vendor/composer/installed.json`) and every package file with what a Clouve image
+  installed, packages under `vendor/composer/` (composer/pcre, composer/ca-bundle) included. Only the files Composer
+  writes itself (the ones directly in `vendor/composer/`, `vendor/bin/`, `vendor/autoload.php`) aren't compared, and
+  files no package ships (added by someone, say) go with the old tree.
+- When they match, it swaps the folder (the old tree is deleted), copies `composer.json` and `composer.lock`, and logs
+  `[clouve-vendor] vendor/ now has the image's libraries`.
+- When they don't (someone ran Composer on the site, or edited, replaced or deleted a library file), it leaves
+  `vendor/` as it is and logs `[clouve-vendor] vendor/ on this site was changed after Clouve's image put it there, so
+  it was left as it is`. That site keeps the older libraries, advisories included. To bring it back, save any change
+  the site still needs, copy the image's tree (`/clouve/moodle/moodle-<release>/vendor`) over `vendor/`, and
+  restart: the next start records it.
+- A line that starts `[clouve-vendor] FAILED` means the site kept its old `vendor/` (a full disk, say); the next start
+  tries again.
+- `clouve/installed/vendor-id` (the Moodle `$version` and the package list's id) and `clouve/installed/vendor-sums`
+  (the file list) record what was put there.
+
+A site Moodle's upgrade moves to a newer Moodle gets the new image's whole code tree, libraries included, the usual
+way. Don't edit files in `vendor/` in place: the next image with newer libraries leaves such a site on the old ones.
+
 ## Features
 
 - ✅ **AI Agent Companion**: Browser-based Claude Code workspace (the upstream `magneto-agent` image, configured via `MAGNETO_AGENT_SKILLS`) with a Moodle DevOps Skill that can perform upgrades, plugin installs, MUC purges, backups, restores, maintenance-mode toggles, and 500-error diagnostics through natural language.

@@ -221,8 +221,8 @@ PLATFORM_ADDED = re.compile(r"CLOUVE_OPS_PASSWORD|MAGNETO_AGENT_|CLV_SIDECAR_")
 MANIFEST_SERVICE_KEYS = {
     APP: ["environment", "healthcheck", "image", "ports", "volumes", "x-clouve-bundle-metadata",
           "x-clouve-environment-types", "x-clouve-healthcheck", "x-clouve-metadata", "x-clouve-volumes"],
-    DB: ["environment", "image", "ports", "volumes", "x-clouve-environment-types", "x-clouve-healthcheck",
-         "x-clouve-metadata", "x-clouve-volumes"],
+    DB: ["environment", "image", "ports", "volumes", "x-clouve-database-password", "x-clouve-environment-types",
+         "x-clouve-healthcheck", "x-clouve-metadata", "x-clouve-volumes"],
 }
 MANIFEST_PORTS = {APP: ["80:80"], DB: ["3306:3306"]}
 
@@ -423,6 +423,10 @@ def check_manifest(text, doc):
         expect(prefix + "ports", svc.get("ports"), MANIFEST_PORTS[name])
         check_manifest_env(prefix, svc, MANIFEST_ENV[name])
         expect(prefix + "x-clouve-metadata", svc.get("x-clouve-metadata"), MANIFEST_METADATA[name])
+        # The database password can be rotated from the deployment's page (release 4.5.6, README "Database password
+        # rotation"): only the database declares it, and Nextcloud's config hook re-reads the password at every start.
+        expect(prefix + "x-clouve-database-password", svc.get("x-clouve-database-password"),
+               {"engine": "mariadb"} if name == DB else None)
         container = (svc.get("x-clouve-metadata") or {}).get("containerName")
         check(prefix + "the container name has at most one hyphen (plan changes skip names with more)",
               isinstance(container, str) and container.count("-") <= 1 and name.count("-") <= 1,

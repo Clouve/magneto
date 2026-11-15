@@ -1194,7 +1194,7 @@
    <row>
     <qid><![CDATA[6]]></qid>
     <attribute><![CDATA[suitecrm_mappings_json]]></attribute>
-    <value><![CDATA[[{"module":"Leads","field":"account_name","transformRule":""},{"module":"Cases","field":"account_name","transformRule":""}]]]></value>
+    <value><![CDATA[[{"module":"Leads","field":"account_name","transformRule":""}]]]></value>
     <language/>
    </row>
    <row>
@@ -1530,7 +1530,7 @@
    <row>
     <qid><![CDATA[13]]></qid>
     <attribute><![CDATA[suitecrm_mappings_json]]></attribute>
-    <value><![CDATA[[{"module":"Cases","field":"case_number","transformRule":"auto_number"},{"module":"Cases","field":"name","transformRule":""}]]]></value>
+    <value><![CDATA[[{"module":"Cases","field":"name","transformRule":""}]]]></value>
     <language/>
    </row>
    <row>
@@ -1910,12 +1910,6 @@
   </fields>
   <rows>
    <row>
-    <id><![CDATA[16]]></id>
-    <name><![CDATA[SuiteCRMIntegration]]></name>
-    <key><![CDATA[survey_enabled]]></key>
-    <value><![CDATA["0"]]></value>
-   </row>
-   <row>
     <id><![CDATA[17]]></id>
     <name><![CDATA[SuiteCRMIntegration]]></name>
     <key><![CDATA[create_type]]></key>
@@ -1955,7 +1949,7 @@
     <id><![CDATA[23]]></id>
     <name><![CDATA[SuiteCRMIntegration]]></name>
     <key><![CDATA[survey_enabled]]></key>
-    <value><![CDATA[1]]></value>
+    <value><![CDATA["1"]]></value>
    </row>
   </rows>
  </plugin_settings>

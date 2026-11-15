@@ -530,6 +530,32 @@ Verifying integration views...
 
 **Note**: The old POST-INSTALL HOOK approach (mounting scripts at `/clouve/hooks/post-install.sh`) has been removed. Use the multi-part environment variable approach documented above instead.
 
+## The PHP libraries on an installed site
+
+Gibbon copies its code, `vendor/` included, onto the site's volume at install, and again only when its version
+changes. An image can carry newer PHP libraries than the ones a site of the same Gibbon version was installed with:
+Clouve's 4.5.6 image has twig/twig 3.30.0 and phpoffice/phpspreadsheet 1.30.7, for critical advisories in the
+bundle's 3.11.3 and 1.30.0. So at every start, before Apache, `installer/refresh-vendor.sh` puts the image's `vendor/`
+on a site that runs the image's Gibbon version, when the site's `vendor/` is still the one a Clouve image put there:
+
+- It compares the package list (`vendor/composer/installed.json`) and every package file with what a Clouve image
+  installed, packages under `vendor/composer/` (such as composer/pcre) included. Only the files Composer writes itself
+  (the ones directly in `vendor/composer/`, `vendor/bin/`, `vendor/autoload.php`) aren't compared, and files no package
+  ships (left from an older Gibbon, or added by someone) go with the old tree.
+- When they match, it swaps the folder (the old tree is deleted), copies `composer.json` and `composer.lock`, and logs
+  `[clouve-vendor] vendor/ now has the image's libraries`.
+- When they don't (someone ran Composer on the site, or edited, replaced or deleted a library file), it leaves
+  `vendor/` as it is and logs `[clouve-vendor] vendor/ on this site was changed after Clouve's image put it there, so
+  it was left as it is`. That site keeps the older libraries, advisories included. To bring it back, save any change
+  the site still needs, copy the image's tree (`/clouve/gibbon/gibbon-<version>/vendor`) over `vendor/`, and
+  restart: the next start records it.
+- A line that starts `[clouve-vendor] FAILED` means the site kept its old `vendor/` (a full disk, say); the next start
+  tries again.
+- `clouve/installed/vendor-id` (the Gibbon version and the package list's id) and `clouve/installed/vendor-sums` (the
+  file list) record what was put there. Apache never serves `clouve/`.
+
+Don't edit files in `vendor/` in place: the next image with newer libraries leaves such a site on the old ones.
+
 ## Features
 
 - ✅ **AI Agent Companion**: Browser-based Claude Code workspace (the upstream `magneto-agent` image, configured via `MAGNETO_AGENT_SKILLS`) with a Gibbon DevOps Skill that can perform upgrades, module installs, backups, diagnostics, and academic-year rollover through natural language.

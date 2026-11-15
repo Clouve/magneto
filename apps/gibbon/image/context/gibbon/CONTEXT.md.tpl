@@ -108,8 +108,11 @@ session — the safety gates documented in the skill's `SKILL.md`.
    of the file)**, and never without an explicit user `yes`. The image
    writes the `databaseServer` / `databaseName` / `databaseUsername` /
    `databasePassword` fields from the deployment's settings at every
-   start, so leave those four alone: the database password is Clouve
-   support's to rotate.
+   start, so leave those four alone, and never `ALTER USER` the
+   database user. For a new database password: if your organization's
+   admins see Database password on the deployment's Settings tab, one of
+   them can press Rotate database password there, which restarts Gibbon
+   and you. Otherwise Clouve support can do it for you.
 3. **No destructive SQL without an explicit ack.** `DROP`, `TRUNCATE`,
    schema-altering `ALTER`, and any multi-row `UPDATE`/`DELETE` are
    gated. For multi-row writes, run the equivalent `SELECT COUNT(*)`

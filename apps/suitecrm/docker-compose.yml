@@ -7,6 +7,10 @@ networks:
 volumes:
   db_data:
   suitecrm_data:
+  magneto_agent_home:
+  magneto_agent_usr:
+  magneto_agent_opt:
+  magneto_agent_var:
 
 services:
   suitecrm-mariadb:
@@ -18,6 +22,12 @@ services:
       MYSQL_USER: suitecrm
       MYSQL_PASSWORD: suitecrm_password
       MYSQL_ROOT_PASSWORD: root_password
+      # Shared per-pod password for the clouve-ops shell account, for local
+      # runs. suitecrm and suitecrm-mariadb apply it to the clouve-ops user
+      # with chpasswd at start, and the AI Assistant signs in with it. On
+      # Clouve the platform makes it and injects it into every container of
+      # a deployment that has the AI Assistant; without it no sshd starts.
+      CLOUVE_OPS_PASSWORD: clouve_ops_dev_password
     volumes:
       - db_data:/var/lib/mysql
     networks:
@@ -46,7 +56,77 @@ services:
       SUITECRM_ADMIN_USER: admin
       SUITECRM_ADMIN_PASSWORD: Admin@123
       SUITECRM_INSTALL_DEMO_DATA: "no"  # Set to "yes" to install demo data
+      # Same value as the suitecrm-mariadb service: see its comment.
+      CLOUVE_OPS_PASSWORD: clouve_ops_dev_password
     volumes:
       - suitecrm_data:/var/www/html
+    networks:
+      - suitecrm_network
+
+  magneto-agent:
+    image: r.clv.zone/clouveinc/magneto-agent
+    container_name: suitecrm_magneto_agent
+    restart: unless-stopped
+    ports:
+      - "${MAGNETO_AGENT_PORT:-8081}:80"
+    environment:
+      MAGNETO_AGENT_USERNAME: admin
+      MAGNETO_AGENT_PASSWORD: Admin@123
+      MAGNETO_AGENT_ROOT_PASSWORD: Root@123
+
+      # AI Assistant model access, for local runs only. A Clouve
+      # deployment gets a managed key from the platform and never reads
+      # these. Export one option in your shell before ./start.sh:
+      #   - MAGNETO_AGENT_LLM_BASE_URL + MAGNETO_AGENT_LLM_KEY: a LiteLLM
+      #     gateway URL and a key it issued, or
+      #   - ANTHROPIC_API_KEY: your own Anthropic API key.
+      # With neither set, the agent shows "The AI Assistant isn't
+      # available yet". There is no key screen.
+      MAGNETO_AGENT_LLM_BASE_URL: ${MAGNETO_AGENT_LLM_BASE_URL:-}
+      MAGNETO_AGENT_LLM_KEY: ${MAGNETO_AGENT_LLM_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+
+      # Activates the SuiteCRM plugin from the magneto-skills Claude Code
+      # marketplace. The Magneto Agent loader clones the marketplace at
+      # container start, stages the suitecrm plugin's payload at
+      # /clouve/skills/suitecrm/plugin/, appends ## Skill: suitecrm to
+      # ~/.claude/CLAUDE.md from context/suitecrm/CONTEXT.md.tpl baked into
+      # THIS suitecrm image (pulled by Magneto Agent at init via clouve-ops
+      # SSH using sidecar-fetcher), and runs the plugin's install.sh hook
+      # to apt-install the runtime binaries the skill's scripts use
+      # (mysql-client, openssh-client, sshpass, jq, curl, unzip). The hook
+      # is idempotent across restarts.
+      MAGNETO_AGENT_SKILLS: https://github.com/Clouve/magneto-skills.git?plugins=suitecrm
+      # MAGNETO_AGENT_SKILLS_GIT_TOKEN: ${MAGNETO_AGENT_SKILLS_GIT_TOKEN:-}
+      # MAGNETO_AGENT_SKILLS_GIT_USERNAME: ${MAGNETO_AGENT_SKILLS_GIT_USERNAME:-}
+
+      # Same value as on the suitecrm and suitecrm-mariadb services. Claude
+      # Code authenticates to both via `sshpass -e ssh clouve-ops@…` using
+      # this password.
+      CLOUVE_OPS_PASSWORD: clouve_ops_dev_password
+
+      # Hosts Magneto Agent SSHs to at init for two parallel pulls:
+      #   - sidecar-fetcher: merges per-plugin CONTEXT.md.tpl files baked
+      #     into each side container's /clouve/context/ tree.
+      #   - sidecar-env-fetcher: reads each sibling's PID 1 env and
+      #     re-exports it under the <UPPER(namespace)>_* prefix, so skills
+      #     can reference SUITECRM_HOST, SUITECRM_URL, SUITECRM_ADMIN_USER
+      #     and SUITECRM_DB_HOST without this file having to hand-inject
+      #     them. The suitecrm container's own SUITECRM_* variables are
+      #     projected verbatim, DATABASE_* become SUITECRM_DATABASE_*, the
+      #     image's SUITECRM_DB_* aliases come with them, and SUITECRM_HOST
+      #     is synthesized. Passwords go to the agent's secret store
+      #     (clv-secret), not to the environment.
+      CLV_SIDECAR_HOSTS: suitecrm,suitecrm-mariadb
+      # 1:1 logical short-names for CLV_SIDECAR_HOSTS, used to derive the
+      # <UPPER(name)>_* namespace prefix. On docker-compose this is
+      # identical to CLV_SIDECAR_HOSTS; on Kubernetes it stays at the
+      # short-names while CLV_SIDECAR_HOSTS gets rewritten to tkt-<id>-*.
+      CLV_SIDECAR_NAMESPACES: suitecrm,suitecrm-mariadb
+    volumes:
+      - magneto_agent_home:/home
+      - magneto_agent_usr:/usr
+      - magneto_agent_opt:/opt
+      - magneto_agent_var:/var
     networks:
       - suitecrm_network

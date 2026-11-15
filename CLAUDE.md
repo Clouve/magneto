@@ -32,12 +32,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # UAT and prod pushes are gated: build-uat.sh/build-prod.sh --push refuse an app until
 # `bash tests/new-disk-start.test.sh <app>` has passed on its current source (see "Testing on new cluster disks").
 # --skip-new-disk-check pushes anyway, for emergencies only.
-# A push to UAT's or prod's registry also needs --tag <YYYY.MM.DD> (a suffix such as 2026.11.11-2 is fine):
-# build.sh refuses one without it to any project on the hosts UAT's and prod's Harbors answer on (demo.cr0.io and
-# demo.reg.clouve.com, cr0.io and registry.clouve.com), before building, however REGISTRY is set and whichever
-# script calls it. Images reach UAT and prod only as dated tags, through a listing's new version, never as :latest
-# (tests/build-push-tag.test.sh). Pushes to dev.cr0.io and dev.reg.clouve.com (build-dev.sh) and r.clv.zone
-# (build-e2e.sh, build.sh's default) don't need one.
+# A push to dev's, UAT's or prod's registry, or any other but the rig's, also needs --tag <YYYY.MM.DD>, a real date (a
+# hyphen suffix such as 2026.11.11-2 is fine), that none of the app's images has there yet: build.sh refuses one
+# without it (dev.cr0.io and dev.reg.clouve.com, demo.cr0.io and demo.reg.clouve.com, cr0.io and registry.clouve.com,
+# and any Harbor a new environment brings), before building, however REGISTRY is set and whichever script calls it.
+# It looks every image up first (docker buildx imagetools inspect) and refuses when one has the tag already, or when
+# the lookup doesn't say exactly that the image isn't there. Images reach an environment only as new dated tags,
+# through a listing's new version, never over a dated tag or as :latest (tests/build-push-tag.test.sh). Pushes to the
+# rig's Harbor (r.clv.zone, registry.clouve.dev; build-e2e.sh, build.sh's default) need neither, so the E2E suite can
+# re-push its fixture tag; PUSH_NEEDS_DATED_TAG=1 turns both rules on there.
 # A rebuilt image with openssh-server goes to an environment only after that environment's AI Assistant image is
 # magneto-agent 4.5.3 or later (it saves no sibling host keys) and its AI Assistants have restarted onto it. Where such
 # an image runs, the AI Assistant image never goes back below 4.5.3 (README.md, "The clouve-ops SSH channel").
@@ -110,6 +113,7 @@ export MAGNETO_AGENT_LLM_BASE_URL=https://llm.example.com MAGNETO_AGENT_LLM_KEY=
 ./test.sh apps/wordpress
 ./test.sh apps/wordpress custom.domain.com custom2.domain.com 8090
 ./test.sh apps/limesurvey
+./test.sh apps/suitecrm
 ```
 
 ### Testing build.sh
@@ -117,20 +121,24 @@ export MAGNETO_AGENT_LLM_BASE_URL=https://llm.example.com MAGNETO_AGENT_LLM_KEY=
 # --prune flag: stubbed docker, builds and pushes nothing, no daemon needed
 bash tests/build-prune.test.sh
 # Every build pulls its base image (--pull), a --tag push names that one tag and no :latest, and a push refuses an
-# app whose Dockerfiles name a base with no tag. Stubbed docker
+# app whose Dockerfiles name a base with no tag or with :latest. Stubbed docker
 bash tests/build-pull.test.sh
-# A push to UAT's or prod's registry without a dated --tag is refused (one line, no docker call), through the
-# wrappers or build.sh with REGISTRY set by hand, in every target mode; local builds and pushes to dev's and the
-# rig's registries work as before. Stubbed docker
+# A push to dev's, UAT's or prod's registry without a dated --tag is refused (one line, no docker call), through the
+# wrappers or build.sh with REGISTRY set by hand, in every target mode, and so is a date that doesn't exist; a tag
+# one of the app's images already has, or a lookup that fails, is refused before anything is built (with --all,
+# before any target is); no refusal echoes the tag typed; the four wrappers pass their arguments on unchanged; local
+# builds and pushes to the rig's registry work as before. Stubbed docker
 bash tests/build-push-tag.test.sh
-# Every FROM and COPY --from names a tag, so --pull never moves a base to a new major version. No Docker needed
+# Every FROM and COPY --from names a tag other than :latest, so --pull never moves a base to a new major version.
+# The scan checks itself on a probe first. No Docker needed
 bash tests/dockerfile-base-tags.test.sh
 ```
 
 ### Checking manifests
 ```bash
 # Every apps/*/ and bundles/*/ marketplace manifest against the publish wizard's limits (every container's admin path
-# and version), the container name rule and the host alias rules (README.md, "Host aliases"). Needs python3 with PyYAML
+# and version), the container name rule, the host alias rules (README.md, "Host aliases") and the database password
+# rotation's rules (README.md, "Database password rotation"). Needs python3 with PyYAML
 ./check-manifests.sh
 # The checks themselves, on manifests written for each case (good ones and one per rule)
 bash tests/check-manifests.test.sh
@@ -173,6 +181,25 @@ git -C <magneto checkout> worktree add --detach <folder> <tag or commit> && cd <
 bash tests/new-disk-volumes.test.sh
 # --upgrade-from's image lookup on a fake docker: no latest, no target with the tag on only some images
 bash tests/new-disk-upgrade-tags.test.sh
+# A stand-in that answers an image's health check during an install or upgrade (LimeSurvey, SuiteCRM) is not the app:
+# the runner waits for the app itself. The runner's own code, with made-up answers. No Docker needed
+bash tests/new-disk-standin.test.sh
+```
+
+### Testing the Customer Kit
+```bash
+# bundles/crm-kit with the manifest's own settings, on new disks: the four probes, Clouve's SuiteCRM plugin for
+# LimeSurvey, the demo survey, a response over HTTP that becomes a lead (and a support request a case) in a real
+# SuiteCRM, the plugin's endpoints, the way back when its OAuth2 client is deleted, and the clouve-ops channel on all
+# four containers. It also compares the manifest with the one before LimeSurvey 7: only the versions, the
+# descriptions, x-clouve-agent and the databases' x-clouve-database-password (4.5.6) may differ. About a minute with
+# the four images built (--image NAME=REF)
+bash tests/crm-kit.test.sh
+# An old kit first (LimeSurvey 6.16.1 and SuiteCRM 8.9.1 from this repo's earlier Dockerfiles, MariaDB 11.8 and 12.1,
+# a lead made through the plugin), then the new images on copies of its volumes: both apps upgrade in one start,
+# nothing the customer had is lost, the link works, a response sent while SuiteCRM upgrades is logged as failed,
+# and a plugin the old image marked as faulty is loaded again. About ten minutes
+bash tests/crm-kit.test.sh --upgrade-from
 ```
 
 ### Testing the AI Assistant personas
@@ -186,9 +213,10 @@ bash tests/new-disk-upgrade-tags.test.sh
 bash tests/persona-hosts.test.sh
 # The gibbon, moodle and wordpress personas' commands run as written: every ssh command passes
 # StrictHostKeyChecking=accept-new and UserKnownHostsFile=/dev/null (checked with ssh -G, which connects to nothing),
-# SSHPASS is set on each command, no tail of Apache's error log, no password rotation through the environment, and
-# wordpress runs wp through the skill's wp.sh. ai-studio's sshpass commands and nextcloud's SSH options too. Needs
-# ssh and python3
+# SSHPASS is set on each command, no tail of Apache's error log, no password rotation through the environment
+# (gibbon and moodle name the Rotate database password action where it is shown, and Clouve support otherwise), and
+# wordpress runs wp through the skill's wp.sh. ai-studio's sshpass commands and the SSH options of nextcloud's,
+# limesurvey's and suitecrm's too. Needs ssh and python3
 bash tests/persona-ssh-commands.test.sh
 ```
 
@@ -221,9 +249,52 @@ MOODLE_PLUGIN_ZIPS=<folder> bash tests/moodle-upgrade-plugins.test.sh
 # own copy stays on its old code and says why. About 5 minutes. Needs Docker and python3
 bash tests/moodle-site-upgrade.test.sh --from <previous dated tag> [--plugin-zips <folder>] [--cut-off]
 bash tests/moodle-site-upgrade.test.sh --from <previous dated tag> --newer-core-plugin
+# The Education Kit's Moodle keeps its copy of Gibbon's database password (auth_db and enrol_database) in step with the
+# deployment's at every start, so a database password rotation reaches it: gibbon-integration-password.sh with a
+# stand-in Moodle, in php:8.3-cli with no network. Needs Docker
+bash tests/moodle-gibbon-password.test.sh
 # The Moodle and Moodle MySQL images ship no SSH host keys, and each container makes its own (./build.sh moodle first).
 # Needs Docker
 bash tests/moodle-ssh-host-keys.test.sh [--tag <tag>]
+```
+
+### Testing Gibbon's and Moodle's PHP libraries
+```bash
+# The images update libraries in vendor/ that have critical advisories (Gibbon: twig/twig, phpoffice/phpspreadsheet;
+# Moodle: mtdowling/jmespath.php), and installer/refresh-vendor.sh puts them on sites that already run the same app
+# version, before Apache starts, when the site's package list and every package file still match what a Clouve image
+# put there (apps/gibbon/README.md and apps/moodle/README.md, "The PHP libraries on an installed site"). Its cases as
+# root in php:8.3-apache with no network: the package-list id and file list (packages under vendor/composer/
+# included), the swap, a vendor/ whose list or files someone changed left alone, other versions skipped, cut-off
+# starts finished, links, hard links and pipes never followed, a full disk, a leftover that can't be removed. Needs
+# Docker
+bash tests/vendor-refresh.test.sh
+# The built images: the fixed versions and no other package changed, upstream's id and file list recorded, then a
+# site the old images installed starts on the new ones (vendor/ refreshed once); Gibbon signs in, serves its Twig
+# pages, exports a report as XLSX and never serves clouve/; Moodle signs in and serves its dashboard and runs
+# JmesPath\search(). --image NAME=REF (gibbon, moodle, their -mysql images, and the same with -old); old images are
+# built from --old-ref otherwise. Needs Docker
+bash tests/php-vendor.test.sh [--image <name>=<ref>]... [--old-ref <commit>] [gibbon|moodle]
+```
+
+### Testing the ownCloud image
+```bash
+# owncloud/server at the listing's appVersion and mariadb 12.3; a new install with no network reaches status.php,
+# passes the manifest's health check and ownCloud's own integrity check (with a control that the check runs); and a
+# site ownCloud 10.16.0 installed on MariaDB 11.4 moves to the current images with its files. Needs Docker
+bash tests/owncloud-image.test.sh [--image <name>=<ref>]...
+# The gate before an ownCloud listing version goes to an environment. First list every ownCloud and owncloud-mariadb
+# image that environment's ownCloud deployments run, paused ones included (read-only: kubectl get on each cluster
+# context, and a registry lookup per image; it prints references and digests only). It exits 1 when a context can't
+# be read (and prints no list) or a line says unreadable: fix that and run it again. Then pull each image by digest
+bash tests/owncloud-images.sh <kube context>...
+# Then run the gate on all of them, each as <ref>@<digest> (or the reference as printed when it already has
+# @sha256:), never the tag alone: pulling by digest doesn't move a local tag. Publish only when it prints both
+# "ownCloud pin <version>: ok" and "MariaDB pin <series>: ok" (exit 0): neither app runs older code on newer data
+bash tests/owncloud-pin-check.sh --owncloud <ref>@<digest>... --mariadb <ref>@<digest>...
+# The two tools' own cases, with a stub kubectl and docker. No cluster or Docker needed
+bash tests/owncloud-images.test.sh
+bash tests/owncloud-pin-check.test.sh
 ```
 
 ### Testing the WordPress image
@@ -252,6 +323,80 @@ bash tests/nextcloud-mariadb.test.sh
 bash tests/nextcloud-manifest.test.sh
 ```
 
+### Testing the LimeSurvey image
+```bash
+# Every test here builds the two images, or takes --image limesurvey=<ref> --image limesurvey-mariadb=<ref>.
+# What the two images hold: LimeSurvey 7.10.0 from upstream's zip with its checksum, upstream's fix 6487164b in
+# Update_700.php, the in-app updater off, /clouve root's, the folders the Apache drop-in denies, the build id, no SSH
+# host key, this checkout's persona and installer; and the MariaDB 11.8 image, whose wrapper refuses a data directory
+# that a newer MariaDB wrote. Needs Docker
+bash tests/limesurvey-image.test.sh
+# A new install on new cluster disks, and what every start does: PID 1's environment for the AI Assistant, the
+# stand-in on the health check's port, no password on a command line or in the log, config.php following PUBLIC_URL
+# and a rotated database password, allowed_hosts.php, a cut-off install done again, a restore the skill has under
+# way, and a start that waits for repair (no code on the volume, but tables in the database). Needs Docker. About
+# 2 minutes
+bash tests/limesurvey-entrypoint.test.sh
+# What the running site serves and logs: no query string and no Referer in the access log, Apache's log and run
+# folders closed to www-data through a reload, clouve/, node_modules/ and installer/ denied, and no PHP file in
+# upload/ run or served, and cookies Secure behind the ingress's forwarded HTTPS. Needs Docker
+bash tests/limesurvey-apache.test.sh
+# A real LimeSurvey 6 site (6.16.1 and 6.17.18, built from this repo's earlier Dockerfile, on mariadb:11.8) with
+# surveys, responses, an added plugin and an added theme, upgraded in place by the new image. The health check holds
+# through an upgrade slowed past 105 s; a failed database update ends on a working 6.16.1; kills in every phase and
+# at random moments end on one whole version; a dump that is cut short is never loaded; a volume that fills up; a
+# stop request; a planted state folder; the README's runbook, run as written; the starts that wait for repair.
+# Cases: upgrade, upgrade-6.17, failure, kills, kills-random, bad-dump, no-space, full-volume, stuck-state, stop,
+# untrusted-state, runbook, refusals (default: all, about 12 minutes). --old-image 6.16.1=<ref> and 6.17.18=<ref>
+# take old images that are already built, and --snapshot 6.16.1=<volume> keeps the seeded old site for the next run.
+# Needs Docker and git
+bash tests/limesurvey-upgrade.test.sh [--old-image <version>=<ref>]... [--snapshot <version>=<volume>]... [<case>...]
+# Clouve's SuiteCRM plugin on LimeSurvey 7, against a stand-in for SuiteCRM: registered and on, its settings from the
+# environment with both passwords stored encrypted, the eleven AJAX endpoints closed to callers without rights, the
+# question editor's script (run in jsdom, and kept off respondents' pages), a response over HTTP that becomes a lead, Leads and Cases as the only
+# targets, no answer in any log, and a sync log that keeps what was sent only for a sync that failed. The Customer
+# Kit's test covers the real pair. Needs Docker, and the npm registry once for a small Node image
+# (LS_PLUGIN_JS_IMAGE names one that is already built)
+bash tests/limesurvey-plugin.test.sh
+# ./test.sh apps/limesurvey passes too: the image's stand-in doesn't count as the app, and the log says
+# "PUBLIC_URL has changed"
+```
+
+### Testing the SuiteCRM image
+```bash
+# Every test here builds the two images, or takes --image suitecrm=<ref> --image suitecrm-mariadb=<ref>.
+# What the two images hold: SuiteCRM 8.10.2 from the release zip with its checksum, on php:8.3-apache, nothing
+# fetched over plain HTTP, /clouve root's, no compiler left, the image's own entries on SuiteCRM's keep-list, the
+# Apache drop-in (HTTPS behind the ingress, the client's address, no query string in the log), no SSH host key, this
+# checkout's persona and installer; and the MariaDB 12.3 image, whose wrapper refuses a data directory that a newer
+# MariaDB wrote. Needs Docker and python3
+bash tests/suitecrm-image.test.sh
+# A new install on a new cluster disk at the Customer Kit's 1 GB, and what every start does: PID 1's environment for
+# the AI Assistant, the stand-in (X-Clouve-Standin: suitecrm), no password on a command line or in any log, the
+# scheduler and the Messenger worker running as www-data, a Secure session cookie behind forwarded HTTPS, settings
+# that follow a new address and a rotated database password, a cut-off install done again, and the starts that stop
+# or wait for repair. Cases: wait, refuse, install, restart, cut-off, demo, password, address, empty-db. It makes a
+# network on 198.51.100.0/24, so run one copy at a time. Needs Docker. About 5 minutes
+bash tests/suitecrm-entrypoint.test.sh [<case>...]
+# A real 8.9.1 site (this repo's earlier image, on MariaDB 12.1) with records, a second user with a role, a custom
+# field, files in uploads/ and public/media-upload/, an outgoing mail account and the Customer Kit's OAuth2 client,
+# upgraded in place by the new image, in 28 cases: plain, slowed past 105 s, the stale-cache data loss, a failure of
+# either upgrade command, kills in every phase and at several moments, a dump that is cut short, too little space, a
+# state folder that is not root's any more, root-owned files, the held scheduler, the README's runbook, run as
+# written. About 80 minutes for all cases; naming cases limits the run. SUITECRM_TEST_GOLD=<dir> keeps the 8.9.1
+# site between runs, and runs with different SUITECRM_TEST_PREFIX values can then share it side by side.
+# --image suitecrm-old=<ref> and suitecrm-mariadb-old=<ref> take old images that are already built. Needs Docker
+# and git
+bash tests/suitecrm-upgrade.test.sh [<case>...]
+# A site that this image installed, upgraded by a later one: the same image with a rehearsal package (the release
+# zip with another VERSION in it) upgrades it. Cases: plain, kill (between SuiteCRM's two commands), migration (the
+# first command changes the database, and the way back loads the dump), other-version (a roll-back). Needs Docker
+# and python3. About 5 minutes
+bash tests/suitecrm-self-upgrade.test.sh [<case>...]
+# ./test.sh apps/suitecrm passes too: the image's stand-in doesn't count as the app, and the log says "the site
+# address in SuiteCRM's settings is now <url>"
+```
+
 ### Testing the Odoo image
 ```bash
 # addons_path names /mnt/extra-addons as a pattern, so an empty folder logs no warning
@@ -268,8 +413,8 @@ bash tests/odoo-persona-commands.test.sh
 # and then PostgreSQL in time (PostgreSQL with a clean shutdown). Builds both Odoo images and runs them with no network.
 # Needs Docker
 bash tests/odoo-init.test.sh
-# No image with the clouve-ops sshd ships SSH host keys (Odoo, WordPress, Gibbon, Nextcloud, AI Studio and their
-# database images), and each container makes its own. Naming images limits the run. Needs Docker
+# No image with the clouve-ops sshd ships SSH host keys (Odoo, WordPress, Gibbon, Nextcloud, LimeSurvey, SuiteCRM,
+# AI Studio and their database images), and each container makes its own. Naming images limits the run. Needs Docker
 bash tests/ssh-host-keys.test.sh [--image <name>=<ref>]... [<name>...]
 # odoo-postgres's gosu is built from upstream's source with the Dockerfile's Go (past CVE-2025-68121): root's,
 # mode 755, static, and it still drops to postgres. Needs Docker
@@ -299,15 +444,24 @@ bash tests/db-image-zombies.test.sh
 # gosu in the MySQL and MariaDB images is 1.20 built with a current Go (the bases' 1.19 was built with Go 1.24.6,
 # CVE-2025-68121), with the base's path, owner and mode, and still starts the server as mysql. Needs Docker
 bash tests/db-image-gosu.test.sh [--image <name>=<ref>]... [<name>...]
-# Passwords stay off command lines in the Gibbon, Moodle and WordPress images: update-config.sh logs none and gives
-# mysql, sed and awk none (config.php gets it as a PHP string), Moodle's install gives php none, and no image script
-# passes one as an option or expands one into an outside command's arguments, double-quoted text included (the scan
-# reads quotes as the shell does, and checks itself on a probe first). Fake mysql, sed, awk and php; no Docker
+# The MySQL images ship no MySQL Shell (its bundled Python carried a critical certifi advisory), and nothing named
+# after it is left; mysqld, mysql and mysqldump still run. Needs Docker
+bash tests/mysql-image-shell.test.sh [--image <name>=<ref>]... [gibbon-mysql|moodle-mysql]
+# Passwords stay off command lines in the Gibbon, Moodle, WordPress, LimeSurvey and SuiteCRM images:
+# update-config.sh logs none and gives mysql, sed and awk none (config.php gets it as a PHP string), Moodle's install
+# gives php none, and no script of the five images passes one as an option or expands one into an outside command's
+# arguments, double-quoted text included (the scan reads quotes as the shell does, and checks itself on a probe
+# first). Fake mysql, sed, awk and php; no Docker
 bash tests/installer-db-password.test.sh
-# CLOUVE_OPS_PASSWORD stays out of Apache in the three app containers (a PHP probe as www-data finds none, PID 1 holds
+# A rotated database password reaches WordPress, Odoo, Nextcloud and ownCloud at their next start (release 4.5.6): each
+# installs from its manifest, the user's password is changed in the database, the app with the old password can't
+# serve, and made again with the new one it serves without a database error. No network: the app shares the
+# database's network namespace. Needs Docker and the images built (--image NAME=REF)
+bash tests/db-password-restart.test.sh [--image <name>=<ref>]... [wordpress|odoo|nextcloud|owncloud]
+# CLOUVE_OPS_PASSWORD stays out of Apache in the five app containers (a PHP probe as www-data finds none, PID 1 holds
 # none), clouve-ops still signs in, no password reaches the log, and Moodle's admin signs in with the password given
 # at install. Installs each app for real with no network. Needs Docker
-bash tests/app-ops-password.test.sh [--image <name>=<ref>]... [wordpress|gibbon|moodle]
+bash tests/app-ops-password.test.sh [--image <name>=<ref>]... [wordpress|gibbon|moodle|limesurvey|suitecrm]
 ```
 
 ## Architecture
@@ -335,7 +489,7 @@ Each app in `apps/` contains:
 The key distinction between the compose files:
 - **`docker-compose.yml`**: Uses `.data/` volume mounts for local persistence, supports `TEST_DOMAIN`/`TEST_PORT` env var substitution for URL testing
 - **`clv-docker-compose.yml`**: Marketplace manifest — no host volume mounts, uses Clouve-specific YAML extensions for orchestration metadata
-- **`clv-docker-compose-basic.yml`** (retired on 2026-10-18): the AI-disabled twin of the marketplace manifest. No app has one now. Each app has one manifest, and the AI Assistant is chosen at install. An agent-capable app (wordpress, moodle, gibbon, odoo, nextcloud; also `bundles/education-kit/`) carries `x-clouve-agent: enabled: true` in that manifest, and its appTitle is the app's own name ("Moodle", never "Moodle with AI Assistant"), because the deployment page shows the title whether or not the customer added the AI Assistant. The images also run without the AI Assistant: the `clouve-ops` sshd in them starts only when the platform injects `CLOUVE_OPS_PASSWORD`.
+- **`clv-docker-compose-basic.yml`** (retired on 2026-10-18): the AI-disabled twin of the marketplace manifest. No app has one now. Each app has one manifest, and the AI Assistant is chosen at install. An agent-capable app (wordpress, moodle, gibbon, odoo, nextcloud, limesurvey, suitecrm; also `bundles/education-kit/` and `bundles/crm-kit/`) carries `x-clouve-agent: enabled: true` in that manifest, and its appTitle is the app's own name ("Moodle", never "Moodle with AI Assistant"), because the deployment page shows the title whether or not the customer added the AI Assistant. The images also run without the AI Assistant: the `clouve-ops` sshd in them starts only when the platform injects `CLOUVE_OPS_PASSWORD`.
 
 ### Clouve Metadata Extensions
 The `clv-docker-compose.yml` files use custom YAML extensions to describe how the marketplace orchestrates the app:
@@ -351,7 +505,8 @@ The `clv-docker-compose.yml` files use custom YAML extensions to describe how th
   - `userConfigurable`: user can modify at deploy time
 - **`x-clouve-healthcheck`**: HTTP/TCP/command-based health checks for the marketplace
 - **`x-clouve-bundle-metadata`**: App title, version, icon (only the path the publish wizard's upload wrote for the listing's own organization; leave it out of a manifest you write), description, admin path (`adminPath`)
-- **`x-clouve-host-aliases`** (release 4.5.2): up to 3 more hosts for a public Frontend or Backend container. Alias `studio` on a deployment at `acme-12.clouve.app` answers at `studio-acme-12.clouve.app`, a sibling host under the environment's wildcard certificate (never `studio.acme-12.clouve.app`), on the same container and port; the app tells its hosts apart by `Host`. Each entry has `name` (required) and the text fields of `x-clouve-bundle-metadata`: `appTitle` (the wizard asks for it, and for the owning container's; without one, the name with a capital first letter), `appDescription` (empty: "<title> application"), `appVersion` (the owner's when empty) and `adminPath` (a container's rules, which the owner's own `adminPath` then has to keep too). The icon is a PNG uploaded in the wizard, with no manifest field; a manifest downloaded from the wizard leaves alias icons out, so they are uploaded again after a re-upload. The customer sees each alias as its own app with its own custom-domain field, and a domain saved on an alias goes into the owning container's environment. Rules, checked at upload, save and publish: a name matches `^[a-z][a-z0-9]{1,14}$`; it isn't `default`, `ai`, `icon`, `gcp`, `aws`, `azure`, `clv`, `magneto-agent` or `oauth2-proxy`; it isn't a container's name (lower-cased, public or not) or another alias's; never on the AI Assistant; no `{{` or `}}` in an alias's title or description, or in the owning container's title, description or version. Every save after the first publish also keeps the first published version's aliases (adding, removing or moving one means a new listing), and installs and copies keep every host of the deployment within 63 characters. `./check-manifests.sh` checks magneto's manifests against the rules a file can show, and needs a container with aliases to state `isPublic` and `purpose` in its `x-clouve-metadata` (an upload would guess them). Spec: README.md, "Host aliases".
+- **`x-clouve-host-aliases`** (release 4.5.2): up to 3 more hosts for a public Frontend or Backend container. Alias `studio` on a deployment at `acme-12.clouve.app` answers at `studio-acme-12.clouve.app`, a sibling host under the environment's wildcard certificate (never `studio.acme-12.clouve.app`), on the same container and port; the app tells its hosts apart by `Host`. Each entry has `name` (required) and the text fields of `x-clouve-bundle-metadata`: `appTitle` (the wizard asks for it, and for the owning container's; without one, the name with a capital first letter), `appDescription` (empty: "<title> application"), `appVersion` (the owner's when empty) and `adminPath` (a container's rules, which the owner's own `adminPath` then has to keep too). The icon is a PNG uploaded in the wizard, with no manifest field; a manifest downloaded from the wizard leaves alias icons out, so they are uploaded again after a re-upload. The customer sees each alias as its own app with its own custom-domain field, and a domain saved on an alias goes into the owning container's environment. Rules, checked at upload, save and publish: a name matches `^[a-z][a-z0-9]{1,14}$`; it isn't `default`, `ai`, `icon`, `gcp`, `aws`, `azure`, `clv`, `magneto-agent` or `oauth2-proxy`; it isn't a container's name (lower-cased, public or not) or another alias's; never on the AI Assistant; no `{{` or `}}` in an alias's title or description, or in the owning container's title, description or version. A later version may add, remove, rename or move aliases (since 4.5.6; a running deployment takes them when it is upgraded, README.md "New versions and running deployments"), and installs and copies keep every host of the deployment within 63 characters. `./check-manifests.sh` checks magneto's manifests against the rules a file can show, and needs a container with aliases to state `isPublic` and `purpose` in its `x-clouve-metadata` (an upload would guess them). Spec: README.md, "Host aliases".
+- **`x-clouve-database-password`** (release 4.5.6): on a Database service, `engine: mysql | mariadb | postgres`. The organization's admin (or Clouve support) can then rotate the app user's password from the deployment's Settings tab: Clouve sets a new one in the database and in the deployment's settings, and restarts every container that reads it, then the AI Assistant. Every reader must read the password from its environment at start or at each request (the house images do; the Education Kit's Moodle also brings its copy of Gibbon's password in step, `gibbon-integration-password.sh`). Rules, checked by `./check-manifests.sh`, thermo and Tropo: only on a Database container, never the AI Assistant; one engine; exactly one of the engine's password variables typed `secret`; its user variable typed `static` and not `root` (PostgreSQL's may be left out). Spec: README.md, "Database password rotation".
 - **`x-clouve-volumes`**: Volume sizing and human-readable descriptions
 - **`x-clouve-agent`**: AI Assistant opt-in for agent-capable apps: `enabled`, `skills.url` (plus optional `skills.git`), and optional `advanced.sidecarPullTimeout` / `advanced.passthroughEnv`. There is no `advanced.client` (one built-in client; uploads reject any value other than `null` or `claude-code`) and no API key: Clouve manages model access, with one key per paid deployment (a free trial or free services use the customer's own Claude subscription). `quota` is retired (Clouve sets the usage allowance; uploads ignore it); the publisher's AI Assistant fee is a pricing setting in the publish wizard, not a manifest field. Spec: README.md, "AI Assistant (`x-clouve-agent`)".
 
@@ -368,6 +523,7 @@ Bundles in `bundles/` combine multiple apps with integration:
 - Each service's environment variables can cross-reference other services via `containerReference` type
 - Used for SSO, enrollment sync, shared databases between apps
 - Example: `bundles/education-kit/` integrates Gibbon + Moodle
+- Example: `bundles/crm-kit/` (the Customer Kit) runs LimeSurvey + SuiteCRM. Clouve's SuiteCRM plugin for LimeSurvey (`apps/limesurvey/image/installer/SuiteCRMIntegration/`) turns survey responses into leads and cases, and the AI Assistant has both skills (`?plugins=limesurvey,suitecrm`). `bundles/crm-kit/README.md` says what the link needs from each side and what breaks it
 
 ### Build System
 `build.sh` reads `image/build.config` from each app directory to determine image names and registry paths. It uses Docker Buildx for multi-platform builds (`linux/amd64` + `linux/arm64`).
@@ -376,7 +532,10 @@ Bundles in `bundles/` combine multiple apps with integration:
 A new volume on a cluster is an empty disk: a top folder of root's (mode 755), `lost+found`, and none of the files the image keeps at that path. Docker named volumes copy the image's folder in instead, which is how Nextcloud's first GKE install broke on 2026-10-26 while every local test passed. So an image's entrypoint starts as root and, before the app's user runs anything, makes each volume's top folder usable when it is root's; it keeps the files it needs outside volume paths and copies them in when they're missing; it treats `lost+found` as empty; and it switches to the app's user only after that. A fix for an app with installs changes only what a working install never has, and passes `--upgrade-from`. `./start.sh` and `tests/new-disk-start.test.sh` reproduce the cluster's volumes locally. The full rules are in README.md, "Volumes on a cluster".
 
 ### The clouve-ops SSH channel
-An image the AI Assistant works in runs an sshd for `clouve-ops`. It ships no SSH host keys (`rm -f /etc/ssh/ssh_host_*` in the `RUN` that installs openssh-server), so each container makes its own at start; every image does this since 4.5.5. AI Assistants older than magneto-agent 4.5.3 save each sibling's key and refuse a changed one, so a rebuilt image with openssh-server goes to an environment only after its AI Assistant image is 4.5.3 or later and its AI Assistants have restarted onto it, and the AI Assistant image never goes back below 4.5.3 where such an image runs. PID 1 has to reap what SSH sessions leave behind: tini is PID 1 when the server doesn't reap them (Odoo, MySQL, MariaDB) or takes one for a crashed process of its own (PostgreSQL then ends every connection and restarts). A database image also starts its sshd detached, `( start-clouve-ops-sshd.sh & )`, so that sshd's parent is tini. Every image unsets `CLOUVE_OPS_PASSWORD` once its sshd start has its own copy, before it execs a server that runs code a tenant controls or reaches: the database server, or Apache and the app (PHP reads Apache's environment); `tests/app-ops-password.test.sh` and `tests/db-image-zombies.test.sh` check it. Both Odoo images and the four MySQL and MariaDB images do all of this. The full rules are in README.md, "The clouve-ops SSH channel".
+An image the AI Assistant works in runs an sshd for `clouve-ops`. It ships no SSH host keys (`rm -f /etc/ssh/ssh_host_*` in the `RUN` that installs openssh-server), so each container makes its own at start; every image does this since 4.5.5. AI Assistants older than magneto-agent 4.5.3 save each sibling's key and refuse a changed one, so a rebuilt image with openssh-server goes to an environment only after its AI Assistant image is 4.5.3 or later and its AI Assistants have restarted onto it, and the AI Assistant image never goes back below 4.5.3 where such an image runs. PID 1 has to reap what SSH sessions leave behind: tini is PID 1 when the server doesn't reap them (Odoo, MySQL, MariaDB) or takes one for a crashed process of its own (PostgreSQL then ends every connection and restarts). A database image also starts its sshd detached, `( start-clouve-ops-sshd.sh & )`, so that sshd's parent is tini. Every image unsets `CLOUVE_OPS_PASSWORD` once its sshd start has its own copy, before it execs a server that runs code a tenant controls or reaches: the database server, or Apache and the app (PHP reads Apache's environment); `tests/app-ops-password.test.sh` and `tests/db-image-zombies.test.sh` check it. Both Odoo images and the six MySQL and MariaDB images do all of this. The full rules are in README.md, "The clouve-ops SSH channel".
+
+### LimeSurvey and SuiteCRM: install, upgrade and the stand-in
+Both images keep the app's code outside the volume (`/clouve/limesurvey/package`, `/clouve/suitecrm/app`). Their entrypoint starts as root and, before Apache starts, installs a new site or upgrades an older one in place: LimeSurvey 6 to 7.10.0, SuiteCRM 8.9.1 to 8.10.2. An upgrade makes a backup first, and puts the old version back and keeps it running when the upgrade fails. While an install or an upgrade runs, a stand-in answers the health check on the app's port (`standin-router.php` on PHP's built-in server): `GET /` gets 200, everything else 503 with `Retry-After`, and every answer has the header `X-Clouve-Standin`. `./test.sh` and `tests/new-disk-start.test.sh` read that header, so they never take the stand-in for the app. When a start finds a site that a person has to repair, the container doesn't exit. It waits with a "needs attention" page and the sshd up, and logs one `[clouve-upgrade] FAILED` line. The platform sees a healthy pod then, so that line is what staff and alerts look for. The AI Assistant can't read the container's log, so the waiting image also leaves a root-owned note, `needs-attention`, in its state folder, with the same five `key=value` lines in both images: `reason` (the FAILED line's words), `since`, `from`, `to` and `kind` (`repair`, or `restore` while the skill's restore is under way). Each image keeps its state in a folder of root's on the volume, mode 700: `/var/www/html/clouve/` for LimeSurvey and `/var/www/html/tmp/clouve-backup/` for SuiteCRM. A folder there that is not root's any more is moved aside and never read. `apps/limesurvey/README.md` and `apps/suitecrm/README.md` have the state files, the log lines and the staff runbook, and the upgrade tests run each runbook's code blocks as written.
 
 ### AI Studio (`apps/ai-studio/`)
 The AI Studio app is an Ubuntu 26.04 LTS workspace **pre-seeded with a running MERN starter project** (Node.js 22 LTS, MongoDB 7.0, Express API on `:4000`, Vite React frontend on `:5173`, mongo-express on `:8081` — all supervised by `supervisord` as PID 1; there is no systemd in the container). It is **not** a UI host — it is a sibling workspace operated by the Magneto Agent. The user talks to the agent in the chat UI (provided automatically because `x-clouve-agent: enabled: true` is always set in [apps/ai-studio/clv-docker-compose.yml](apps/ai-studio/clv-docker-compose.yml)), and the agent SSHes in as `clouve-ops` (passwordless sudo) to iterate on the seeded project at `/home/clouve-ops/projects/starter/`, install software, run services, and verify deploys. In a cluster deploy the dev servers are reached through the fleet clv-proxy at `https://<port>-<workspace-id>.<base>/`, which signs the user in first. The deployment's own address goes to port 80, where an image-owned supervisor program (`page`, busybox httpd as nobody) serves a fixed page that points to the AI Assistant at `ai-<AI_STUDIO_APP_HOST>` (an `applicationHost` variable); before 4.5.5 it showed the Vite dev server to anyone. Four volumes (`/home`, `/usr`, `/opt`, `/var`) persist across pod restarts, so apt-installed packages, user files and Mongo data survive. The agent's behavioral contract lives in the `ai-studio` skill at [magneto-skills/plugins/ai-studio/](../magneto-skills/plugins/ai-studio/); the per-tenant persona is templated from [apps/ai-studio/image/context/ai-studio/CONTEXT.md.tpl](apps/ai-studio/image/context/ai-studio/CONTEXT.md.tpl); the seed app sources live in [apps/ai-studio/image/seed/](apps/ai-studio/image/seed/). Local dev: `./build.sh ai-studio && ./start.sh ai-studio`, then browse the seeded app at `http://localhost:5173` (API `:4000`, mongo-express `:8082`) or `ssh -p 2222 clouve-ops@localhost` (password `clouve_ops_dev_password`, set in [apps/ai-studio/docker-compose.yml](apps/ai-studio/docker-compose.yml)).

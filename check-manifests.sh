@@ -47,6 +47,17 @@
 #       wizard's version format: 1 to 3 numbers with no leading zeros and an
 #       optional pre-release part, written as text ("5.3", not 5.3).
 #
+#   x-clouve-database-password (release 4.5.6): a Database container lets its
+#   app user's password be rotated from the deployment's page. README.md,
+#   "Database password rotation", explains the field. It goes only on a
+#   Database container, never the AI Assistant; it is a mapping with one key,
+#   engine: mysql, mariadb or postgres; the service has exactly one of the
+#   engine's password variables (MYSQL_PASSWORD or MARIADB_PASSWORD, or
+#   POSTGRES_PASSWORD) typed secret, and its user variable (MYSQL_USER or
+#   MARIADB_USER, or POSTGRES_USER, which a postgres service may leave out)
+#   typed static and not root; and no other password variable of the service
+#   has the same secret. thermo and Tropo check the same.
+#
 #   Lengths are counted as the wizard counts them: in UTF-16 units (an emoji
 #   counts 2), after JavaScript's trim(). Only the digits 0 to 9 make a version.
 #
@@ -93,6 +104,15 @@ MAX_CONTAINER_NAME = 63
 # The characters JavaScript's String.prototype.trim() removes: its white space and line terminators.
 JS_TRIMMED = "\t\n\v\f\r " + "".join(map(chr, (0xA0, 0x1680, *range(0x2000, 0x200B),
                                                0x2028, 0x2029, 0x202F, 0x205F, 0x3000, 0xFEFF)))
+# x-clouve-database-password (release 4.5.6): the engines strato's rotate_db_password knows, and each engine's password
+# and user variables (thermo's databasePasswordValidation.js and Tropo's validator keep the same).
+DBP_KEY = "x-clouve-database-password"
+DBP_VARIABLES = {
+    "mysql": (("MYSQL_PASSWORD", "MARIADB_PASSWORD"), ("MYSQL_USER", "MARIADB_USER")),
+    "mariadb": (("MYSQL_PASSWORD", "MARIADB_PASSWORD"), ("MYSQL_USER", "MARIADB_USER")),
+    "postgres": (("POSTGRES_PASSWORD",), ("POSTGRES_USER",)),
+}
+DBP_RULE = " (the database password rule)"
 # Blocks of a service that the checks read as mappings.
 MAPPING_BLOCKS = ("x-clouve-metadata", "x-clouve-bundle-metadata", "x-clouve-environment-types")
 
@@ -275,6 +295,37 @@ def check_alias_types(problem, service, svc):
             problem(service, "%s (%s) must name a host alias of this container" % (show(var), kind))
 
 
+def check_database_password(problem, service, svc, meta):
+    """x-clouve-database-password (release 4.5.6): on a Database container only, one engine, the engine's password
+    variable typed secret and its user variable typed static. The messages repeat no value."""
+    if service == AGENT or meta.get("containerName") == AGENT or meta.get("purpose") != "Database":
+        problem(service, "%s goes only on a Database container (x-clouve-metadata.purpose), and never on the AI "
+                         "Assistant%s" % (DBP_KEY, DBP_RULE))
+        return
+    block = svc[DBP_KEY]
+    if not (isinstance(block, dict) and list(block) == ["engine"] and block["engine"] in DBP_VARIABLES):
+        problem(service, "%s names one engine and nothing else: engine: mysql, mariadb or postgres%s" % (DBP_KEY, DBP_RULE))
+        return
+    passwords, users = DBP_VARIABLES[block["engine"]]
+    env = environment(svc)
+    types = svc.get("x-clouve-environment-types") or {}
+    found = [name for name in passwords if name in env]
+    if len(found) != 1 or types.get(found[0]) != "secret" or not present(env.get(found[0])):
+        problem(service, "%s needs exactly one of the engine's password variables (MYSQL_PASSWORD or MARIADB_PASSWORD, "
+                         "or POSTGRES_PASSWORD), typed secret%s" % (DBP_KEY, DBP_RULE))
+        return
+    user = next((name for name in users if name in env), None)
+    if (user is None and block["engine"] != "postgres") or (
+            user is not None and (types.get(user) != "static" or not present(env.get(user)) or env.get(user) == "root")):
+        problem(service, "%s needs the engine's user variable (MYSQL_USER or MARIADB_USER, or POSTGRES_USER), typed "
+                         "static and not root%s" % (DBP_KEY, DBP_RULE))
+        return
+    key = env.get(found[0])
+    if any(name != found[0] and value == key and types.get(name) in ("secret", "applicationPassword")
+           for name, value in env.items()):
+        problem(service, "%s: the password's secret can't be another password variable's too%s" % (DBP_KEY, DBP_RULE))
+
+
 def shape_problems(doc):
     """(service, message) for each block that isn't the shape the checks read. The messages quote no file text."""
     if not isinstance(doc, dict):
@@ -322,6 +373,8 @@ def check_manifest(path, doc):
         if ALIASES_KEY in svc:
             check_aliases(problem, name, svc, meta, containers, taken)
         check_alias_types(problem, name, svc)
+        if DBP_KEY in svc:
+            check_database_password(problem, name, svc, meta)
 
 
 for path in sys.argv[1:]:
