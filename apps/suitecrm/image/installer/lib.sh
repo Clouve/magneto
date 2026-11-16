@@ -12,12 +12,16 @@
 #     in two places, both in upgrade.sh: it renames the customer's upload folders out of SuiteCRM's reach and
 #     back, and a way back removes the upgraded code as root, so that a file of root's can't stop it.
 #   - Root's own files are the state folder (tmp/clouve-backup), the install stamp and /run/clouve. www-data
-#     owns tmp/, so it can rename the state folder and put another in its place. Root therefore reads the
-#     folder only when it is a real folder of root's that nobody else can write in (sc_state_dir_status), and
-#     a file in it only when it is a plain file of root's (sc_state_has). Anything else at that name is moved
+#     owns tmp/, so it can rename the state folder and put another in its place at any moment, also between a
+#     check of root's and the use that relies on it. Root therefore reads and writes the state folder's files
+#     only from inside the folder, once it checked that this is the real folder of root's that nobody else can
+#     write in (sc_in_state), and only by relative names. It deletes and changes owners in the install the same
+#     way, from inside the folder it checked (sc_in_dir). Anything else at the state folder's name is moved
 #     aside by the entrypoint, never adopted and never removed (sc_state_dir_vet).
 #   - No password is on a command line, in the log or in a file others can read. The database clients get an
-#     options file of mode 600 in /run/clouve, and PHP reads the environment.
+#     options file of mode 600 in /run/clouve, and PHP reads the environment. The one client that runs as
+#     www-data, the way back's, gets a copy that www-data may read (sc_db_cnf_www): www-data knows the password
+#     already.
 
 SC_ROOT=/var/www/html
 SC_PACKAGE=/clouve/suitecrm/app
@@ -207,6 +211,19 @@ sc_db_cnf() {
     chmod 600 "$SC_DB_CNF"
 }
 
+# sc_db_cnf_www: the options file for a database client that runs as www-data: SC_WWW_CNF, a copy of SC_DB_CNF
+# that www-data may read (root's, group www-data, mode 640), in a folder root makes under /run (mode 750). The way
+# back loads a dump with it, so that the client has no more power than SuiteCRM's own code: a client runs the
+# client commands it finds in its input (system, for one) as its own user. sc_db_cnf_www_drop removes it.
+SC_RUN_WWW=/run/clouve-www
+SC_WWW_CNF=$SC_RUN_WWW/db.cnf
+sc_db_cnf_www() {
+    install -d -m 750 -o root -g www-data "$SC_RUN_WWW" || return 1
+    ( umask 027; cat -- "$SC_DB_CNF" > "$SC_WWW_CNF.new" ) && chgrp www-data "$SC_WWW_CNF.new" &&
+        chmod 640 "$SC_WWW_CNF.new" && mv -f -- "$SC_WWW_CNF.new" "$SC_WWW_CNF"
+}
+sc_db_cnf_www_drop() { rm -rf -- "$SC_RUN_WWW"; }
+
 # sc_sql QUERY: runs a query as the app's database user, with no database selected, and prints the rows
 # tab-separated without a header.
 sc_sql() { mysql --defaults-extra-file="$SC_DB_CNF" --connect-timeout=10 -N -B -e "$1"; }
@@ -253,7 +270,8 @@ sc_db_version() {
 #              a tmp/ that is itself a link or a file
 # Only root can make a folder of root's, and nobody else can put a file into one that only root can write in.
 # The mode's other bits don't matter for that: a folder made inside tmp/, which has the set-group-ID bit on a
-# volume this image installed, gets that bit too.
+# volume this image installed, gets that bit too. This looks at the folder by its name, which is enough to decide
+# what to do. Reading or writing what is in it goes through sc_in_state.
 sc_state_dir_status() {
     local tmp=$SC_ROOT/tmp
     if [ -L "$tmp" ] || { [ -e "$tmp" ] && [ ! -d "$tmp" ]; }; then echo untrusted; return 0; fi
@@ -267,12 +285,138 @@ sc_state_dir_status() {
 }
 sc_state_dir_trusted() { [ "$(sc_state_dir_status)" = trusted ]; }
 
-# sc_untrusted_dirs: the folders an earlier sc_state_dir_vet moved aside, one per line.
+# The status of sc_in_state and sc_in_dir when the folder is not the one they were asked for.
+SC_NOT_PINNED=97
+
+# sc_in_state COMMAND [ARG...]: runs COMMAND, a function of these scripts or a program, in a subshell whose
+# working directory is the state folder. It first checks that this is the real tmp/clouve-backup, reached through
+# no link, a folder of root's that neither its group nor others can write in. A relative name in COMMAND then
+# reaches that folder and no other: www-data can rename the folder and put one of its own in its place, but it
+# can't change which folder the subshell is in, and it can't put anything into a folder that only root can write
+# in. So root reads and writes the state folder's files only this way, with relative names. A check and the use
+# that relies on it run in the same call. Status 97, with COMMAND not run, when the folder is not that one;
+# COMMAND's own status otherwise.
+sc_in_state() {
+    (
+        cd -P -- "$SC_STATE_DIR" 2> /dev/null && [ "$(pwd -P)" = "$SC_STATE_DIR" ] &&
+            [ "$(stat -c %u .)" = 0 ] && [ -z "$(find . -maxdepth 0 -perm /g=w,o=w)" ] || exit "$SC_NOT_PINNED"
+        "$@"
+    )
+}
+
+# sc_in_dir DIR COMMAND [ARG...]: the same for a folder of the install, DIR relative to SC_ROOT ("" for the top
+# folder). COMMAND runs with DIR as its working directory, once it is checked that DIR is that very folder,
+# reached through no link. Root deletes and changes owners in www-data's folders only this way, with relative
+# names: a folder that www-data swaps for a link meanwhile can't send it anywhere else. Status 97 when DIR is
+# not that folder.
+sc_in_dir() {
+    local want=$SC_ROOT${1:+/$1}
+    shift
+    (
+        cd -P -- "$want" 2> /dev/null && [ "$(pwd -P)" = "$want" ] || exit "$SC_NOT_PINNED"
+        "$@"
+    )
+}
+
+# sc_state_ino: the state folder's inode, read from inside it. sc_state_inos: that and the inode of the folder it
+# is in, tmp/, on one line. Status 1 when the state folder is not at its place. A folder of root's can leave tmp/
+# only with tmp/ (moving a folder to another parent needs the right to write in it), so these two inodes find root's
+# state folder, and tmp/ with root's other folders in it (the suitecrm skill's backups), wherever www-data moved
+# them.
+sc_state_ino() { sc_in_state stat -c %i .; }
+sc_state_inos() { sc_in_state sh -c 'echo $(stat -c %i . ..)'; }
+
+# sc_clear DIR [FIND TEST...]: empties the install folder DIR (relative to SC_ROOT, "" for the top folder) of the
+# entries that the find tests select, at depth 1. The state folder sits in tmp/, which is www-data's, so www-data
+# can move tmp/, with the state folder and root's other folders in it, into the very folder that is being emptied.
+# So root removes nothing here. It gives the folder itself to www-data and opens it to its owner, from inside it,
+# so that a folder of root's, or one that www-data closed, can be emptied. www-data removes what it can, and it
+# can't remove a folder of root's, which it can't look into. What is left belongs to someone else, after a command
+# that ran as root: root gives it to www-data (sc_hand_over), never tmp/ or what of root's is in it, and www-data
+# removes it. Status 1, with root's folders untouched, when the state folder or tmp/ is not at its place before or
+# after, or when something is left.
+sc_clear() {
+    local dir=$1 inos
+    shift
+    inos=$(sc_state_inos) || return 1
+    # shellcheck disable=SC2016  # the script is for the sh that sc_in_dir runs
+    sc_in_dir "$dir" sh -c '[ "$(stat -c %U .)" = www-data ] || chown -h www-data:www-data .; chmod u+rwx .' || return 1
+    sc_in_dir "$dir" sc_as_www find . -mindepth 1 -maxdepth 1 "$@" -exec rm -rf -- {} + 2> /dev/null
+    if [ -n "$(sc_in_dir "$dir" find . -mindepth 1 -maxdepth 1 "$@" -print -quit 2> /dev/null)" ]; then
+        sc_pause clear-handover
+        sc_in_dir "$dir" sc_hand_over "$inos" "$@"
+        sc_in_dir "$dir" sc_as_www find . -mindepth 1 -maxdepth 1 "$@" -exec rm -rf -- {} + 2> /dev/null
+    fi
+    [ -z "$(sc_in_dir "$dir" find . -mindepth 1 -maxdepth 1 "$@" -print -quit 2> /dev/null)" ] &&
+        [ "$(sc_state_inos)" = "$inos" ]
+}
+
+# sc_hand_over "STATE TMP" [FIND TEST...]: inside an install folder (sc_in_dir). Gives the entries that the tests
+# select, and everything in them, to www-data, and opens their folders to their owner. It leaves alone the state
+# folder (inode STATE), tmp/ (inode TMP) and everything in them, wherever www-data has moved them, and any other
+# folder of root's named clouve-*. -xdev keeps the walk on the volume, where the inodes are those folders'. find
+# follows no link.
+sc_hand_over() {
+    local state tmp entry
+    read -r state tmp <<< "$1"
+    tmp=${tmp:-$state}
+    shift
+    find . -mindepth 1 -maxdepth 1 "$@" -print0 | while IFS= read -r -d '' entry; do
+        find "$entry" -xdev \( -inum "$state" -o -inum "$tmp" -o \( -type d -name 'clouve-*' -user root \) \) -prune -o \
+            \( ! -user www-data -exec chown -h www-data:www-data -- {} + \)
+        find "$entry" -xdev \( -inum "$state" -o -inum "$tmp" -o \( -type d -name 'clouve-*' -user root \) \) -prune -o \
+            \( -type d ! -perm -u=rwx -exec chmod u+rwx -- {} + \)
+    done
+}
+
+# sc_moved_state_note: when no state folder is at tmp/clouve-backup but a folder of root's of that name is elsewhere
+# on the volume (code that runs as www-data can move tmp/ with it inside), a sentence for a log line that names
+# where, quoted, and says what staff do. Nothing otherwise.
+sc_moved_state_note() {
+    local found='' path
+    [ "$(sc_state_dir_status)" = absent ] || return 0
+    while IFS= read -r -d '' path; do
+        found="$found $(printf '%q' "$path")"
+    done < <(find "$SC_ROOT" -xdev -mindepth 2 -maxdepth 6 -type d -name clouve-backup -user root -printf '%P\0' 2> /dev/null |
+        head -z -n 3)
+    [ -n "$found" ] || return 0
+    printf ' No state folder is at tmp/clouve-backup, and one of root'"'"'s is at%s: code that runs as www-data moved tmp/ with it inside. As www-data, rename the tmp/ that is there now, move the tmp/ that holds the state folder back to %s/tmp, and restart (README.md, "Staff runbook").' \
+        "$found" "$SC_ROOT"
+}
+
+# sc_present NAME: something is at NAME, a link included. sc_root_file NAME: NAME is a plain file of root's.
+sc_present() { [ -e "$1" ] || [ -L "$1" ]; }
+sc_root_file() { [ -f "$1" ] && [ ! -L "$1" ] && [ "$(stat -c %u -- "$1" 2> /dev/null)" = 0 ]; }
+
+# The names sc_state_dir_vet gives a folder that it moves aside: clouve-backup.untrusted-<UTC time>[-<n>].
+SC_UNTRUSTED_NAME='^clouve-backup\.untrusted-[0-9]{8}T[0-9]{6}Z(-[0-9]{1,4})?$'
+
+# sc_untrusted_dirs: the folders an earlier sc_state_dir_vet moved aside, one per line. Only names of the shape it
+# gives count: www-data can make a folder of any name in tmp/, and a name goes into a command for staff to run.
+# sc_odd_dirs: the other folders in tmp/ whose names start the same way. They are www-data's own, and nothing
+# tells staff how to put one back.
 sc_untrusted_dirs() {
     local dir
     for dir in "$SC_STATE_DIR".untrusted-*; do
-        if [ -e "$dir" ] || [ -L "$dir" ]; then printf '%s\n' "$dir"; fi
+        if { [ -e "$dir" ] || [ -L "$dir" ]; } && [[ ${dir##*/} =~ $SC_UNTRUSTED_NAME ]]; then printf '%s\n' "$dir"; fi
     done
+}
+sc_odd_dirs() {
+    local dir
+    for dir in "$SC_STATE_DIR".untrusted-*; do
+        if { [ -e "$dir" ] || [ -L "$dir" ]; } && ! [[ ${dir##*/} =~ $SC_UNTRUSTED_NAME ]]; then printf '%s\n' "$dir"; fi
+    done
+}
+
+# sc_put_back_command NAME: the staff step that puts a folder that was moved aside back, for log lines. It works
+# from inside the folder it checked: chown and chmod never follow a link that is put in the folder's place
+# meanwhile. The name is quoted for the shell. README.md, "Staff runbook", says what to look at first, and when
+# not to put it back at all.
+sc_put_back_command() {
+    local name
+    name=$(printf '%q' "$1")
+    printf 'in %s/tmp, run: cd -P -- %s && [ "$(pwd -P)" = %s/tmp/%s ] && chown -hR root:root . && chmod -R go= . && cd .. && mv -T -- %s clouve-backup' \
+        "$SC_ROOT" "$name" "$SC_ROOT" "$name" "$name"
 }
 
 # sc_state_dir_vet: for the entrypoint, before anything reads the state. A trusted folder is closed to everyone
@@ -285,7 +429,7 @@ sc_state_dir_vet() {
     case $(sc_state_dir_status) in
         absent) return 0 ;;
         trusted)
-            [ "$(stat -c %a -- "$SC_STATE_DIR" 2> /dev/null)" = 700 ] || chmod 00700 -- "$SC_STATE_DIR"
+            [ "$(stat -c %a -- "$SC_STATE_DIR" 2> /dev/null)" = 700 ] || sc_in_state chmod 00700 .
             return 0
             ;;
     esac
@@ -303,7 +447,7 @@ sc_state_dir_vet() {
         sc_err "$SC_STATE_DIR is not a folder that only root can change, and it could not be moved aside"
         return 1
     fi
-    sc_warn "$SC_STATE_DIR is not a folder that only root can change (it is ${owner:-someone else}'s), so nothing in it was read. It was moved to ${aside#"$SC_ROOT"/} and nothing in it was changed. It may hold the backup of an upgrade and the customer's upload folders, so don't remove it. To put it back: look at what is in it, then run, in $SC_ROOT/tmp: chown -hR root:root ${aside##*/} && chmod -R go= ${aside##*/} && mv ${aside##*/} clouve-backup (README.md, \"Staff runbook\")."
+    sc_warn "$SC_STATE_DIR is not a folder that only root can change (it is ${owner:-someone else}'s), so nothing in it was read. It was moved to ${aside#"$SC_ROOT"/} and nothing in it was changed. It may hold the backup of an upgrade and the customer's upload folders, so don't remove it. It came from a place www-data could write, so its backup is only as good as the site: look at what is in it first (README.md, \"Staff runbook\"). To put it back, $(sc_put_back_command "${aside##*/}")."
     return 1
 }
 
@@ -317,34 +461,50 @@ sc_state_dir_make() {
     if [ ! -d "$SC_ROOT/tmp" ]; then
         sc_as_www mkdir "$SC_ROOT/tmp" || return 1
     fi
-    mkdir -- "$SC_STATE_DIR" && chmod 00700 -- "$SC_STATE_DIR" && sc_state_dir_trusted
+    mkdir -- "$SC_STATE_DIR" && sc_in_state chmod 00700 . && sc_state_dir_trusted
 }
 
 # sc_state_has NAME: succeeds when the trusted state folder holds NAME as a plain file of root's.
-sc_state_has() {
-    local file=$SC_STATE_DIR/$1
-    sc_state_dir_trusted && [ -f "$file" ] && [ ! -L "$file" ] && [ "$(stat -c %u -- "$file" 2> /dev/null)" = 0 ]
-}
+sc_state_has() { sc_in_state sc_root_file "$1"; }
 
 # sc_state_get KEY: the value of KEY in the state file, or nothing.
-sc_state_get() {
-    local key=$1 line
-    sc_state_has state || return 0
+sc_state_get() { sc_in_state sc_state_get_here "$1"; }
+sc_state_get_here() {
+    local line
+    sc_root_file state || return 0
     while IFS= read -r line; do
-        if [ "${line%%=*}" = "$key" ]; then printf '%s\n' "${line#*=}"; return 0; fi
-    done < "$SC_STATE"
+        if [ "${line%%=*}" = "$1" ]; then printf '%s\n' "${line#*=}"; return 0; fi
+    done < state
 }
+
+# sc_state_write NAME: writes standard input to the file NAME in the state folder, mode 600. It goes to NAME.new
+# first and is renamed over NAME, so a reader finds the old file or the new one. Status 1 when any of it fails.
+sc_state_write() { sc_in_state sc_state_write_here "$1"; }
+sc_state_write_here() {
+    rm -f -- "$1.new" || return 1
+    if ( umask 077; cat > "$1.new" ) && mv -f -- "$1.new" "$1"; then return 0; fi
+    rm -f -- "$1.new"
+    return 1
+}
+
+# sc_state_rm NAME...: removes these files from the state folder. sc_state_rm_partials: the backups that were cut
+# off before they were complete.
+sc_state_rm() { sc_in_state rm -f -- "$@"; }
+sc_state_rm_partials() { sc_in_state sh -c 'rm -rf -- ./*.partial'; }
 
 # sc_state_set KEY=VALUE...: writes the pairs into the state file, keeping the others. The new file is written
 # next to the old one, checked (every pair is in it, and the phase is not lost), synced and renamed over it, and
 # the folder is synced, so a start finds the old file or the new one, never half of one. Status 1, with the
 # old file in place, when any of that fails: a full disk must not cost the phase.
 sc_state_set() {
-    local pair line keys tmp=$SC_STATE.new status had_phase=no
     sc_state_dir_make || return 1
-    if [ -e "$SC_STATE" ] || [ -L "$SC_STATE" ]; then
-        sc_state_has state || return 1
-        if grep -q '^phase=' "$SC_STATE"; then had_phase=yes; fi
+    sc_in_state sc_state_set_here "$@"
+}
+sc_state_set_here() {
+    local pair line keys tmp=state.new status had_phase=no
+    if sc_present state; then
+        sc_root_file state || return 1
+        if grep -q '^phase=' state; then had_phase=yes; fi
     fi
     rm -f -- "$tmp"
     # Every write is checked by hand: set -e does nothing in a function that is called before || or in an if.
@@ -356,10 +516,10 @@ sc_state_set() {
                 printf '%s\n' "${pair//$'\n'/ }" || exit 1
                 keys="$keys${pair%%=*} "
             done
-            if [ -f "$SC_STATE" ]; then
+            if [ -f state ]; then
                 while IFS= read -r line; do
                     case $keys in *" ${line%%=*} "*) ;; *) printf '%s\n' "$line" || exit 1 ;; esac
-                done < "$SC_STATE"
+                done < state
             fi
         } > "$tmp"
     )
@@ -375,15 +535,12 @@ sc_state_set() {
         return 1
     fi
     sync "$tmp" 2> /dev/null || :
-    mv -f -- "$tmp" "$SC_STATE" || return 1
-    sync "$SC_STATE_DIR" 2> /dev/null || :
+    mv -f -- "$tmp" state || return 1
+    sync . 2> /dev/null || :
 }
 
 # sc_state_clear: no upgrade is under way any more.
-sc_state_clear() {
-    rm -f -- "$SC_STATE" "$SC_STATE.new"
-    sync "$SC_STATE_DIR" 2> /dev/null || :
-}
+sc_state_clear() { sc_in_state sh -c 'rm -f -- state state.new; sync . 2> /dev/null || :'; }
 
 # sc_attention_write KIND FROM TO REASON...: the note that says why the container waits and starts no SuiteCRM:
 # tmp/clouve-backup/needs-attention, root's, mode 600, with one key=value per line. The LimeSurvey image writes
@@ -399,31 +556,23 @@ sc_state_clear() {
 # note is left out: staff put that folder back with mv, and a new folder of its name would turn that step into a
 # move into it. The folder's own name then says why the container waits. Status 1 when no note was written.
 sc_attention_write() {
-    local kind=$1 from=$2 to=$3 tmp=$SC_ATTENTION.new IFS=' '
+    local kind=$1 from=$2 to=$3 IFS=' '
     shift 3
     if ! sc_state_dir_trusted; then
         [ -z "$(sc_untrusted_dirs)" ] || return 1
         sc_state_dir_make || return 1
     fi
-    rm -f -- "$tmp"
-    if (
-        umask 077
-        printf 'reason=%s\nsince=%s\nfrom=%s\nto=%s\nkind=%s\n' "${*//$'\n'/ }" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            "${from//$'\n'/ }" "${to//$'\n'/ }" "$kind" > "$tmp"
-    ) && mv -f -- "$tmp" "$SC_ATTENTION"; then
-        return 0
-    fi
-    rm -f -- "$tmp"
-    return 1
+    printf 'reason=%s\nsince=%s\nfrom=%s\nto=%s\nkind=%s\n' "${*//$'\n'/ }" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        "${from//$'\n'/ }" "${to//$'\n'/ }" "$kind" | sc_state_write needs-attention
 }
 
 # sc_attention_clear: the wait is over, or a new start looks at the site anew. The note goes. A state folder that
-# held nothing but the note goes with it, because a site that never upgraded has no state folder.
+# held nothing but the note goes with it, because a site that never upgraded has no state folder. rmdir removes
+# only an empty folder, and never what a link points at.
 sc_attention_clear() {
     sc_state_dir_trusted || return 0
-    rm -f -- "$SC_ATTENTION.new"
-    if [ -e "$SC_ATTENTION" ] || [ -L "$SC_ATTENTION" ]; then
-        rm -f -- "$SC_ATTENTION"
+    # shellcheck disable=SC2016  # the script is for the sh that sc_in_state runs
+    if sc_in_state sh -c 'rm -f -- needs-attention.new; [ -e needs-attention ] || [ -L needs-attention ] || exit 1; rm -f -- needs-attention'; then
         rmdir -- "$SC_STATE_DIR" 2> /dev/null || :
     fi
 }
@@ -432,11 +581,14 @@ sc_attention_clear() {
 # exactly one backup <version>-to-<TO> with a stamp, both root's. It prints nothing otherwise. upgrade.sh checks
 # the backup's checksums before it uses it.
 sc_backup_from_for() {
-    local to=$1 dir from found='' n=0
     sc_state_dir_trusted || return 0
-    for dir in "$SC_STATE_DIR"/*-to-"$to"; do
+    sc_in_state sc_backup_from_for_here "$1"
+}
+sc_backup_from_for_here() {
+    local to=$1 dir from found='' n=0
+    for dir in ./*-to-"$to"; do
         [ -d "$dir" ] && [ ! -L "$dir" ] && [ "$(stat -c %u -- "$dir" 2> /dev/null)" = 0 ] || continue
-        [ -f "$dir/complete" ] && [ ! -L "$dir/complete" ] && [ "$(stat -c %u -- "$dir/complete" 2> /dev/null)" = 0 ] || continue
+        sc_root_file "$dir/complete" || continue
         from=${dir##*/}
         from=${from%-to-"$to"}
         sc_is_version "$from" && [ "$(sc_version_cmp "$from" "$to")" = lt ] || continue
@@ -474,7 +626,8 @@ sc_install_stamp_database() {
 # X-Clouve-Standin: suitecrm. It is not Apache, because stopping a temporary Apache signals every process in
 # the container, sshd included. It runs as nobody, with only the right to bind a low port, and with an empty
 # environment: it answers the network and needs none of the passwords. Where the container can't grant the
-# right, it runs as root.
+# right, it runs as nobody without it, which works where unprivileged ports start at or below 80 (Docker's
+# default). Where neither works, there is no stand-in, and the log says so. It never runs as root.
 #
 # sc_standin_start: starts it unless it runs already. sc_standin_stop: stops it by PID and waits until port 80
 # is free, so that Apache can bind it. Both are called by entrypoint.sh, which is the stand-in's parent.
@@ -510,14 +663,15 @@ sc_standin_start() {
         sc_warn "port 80 is taken already, so no stand-in was started"
         return 1
     fi
-    for as in nobody root; do
+    for as in "nobody" "nobody without the right to bind a low port"; do
         if [ "$as" = nobody ]; then
             setpriv --reuid=nobody --regid=nogroup --clear-groups --inh-caps=+net_bind_service \
                 --ambient-caps=+net_bind_service -- \
                 env -i "$php" -n -d display_errors=0 -d log_errors=0 -t /clouve/suitecrm/standin -S 0.0.0.0:80 \
                 "$SC_INSTALLER/standin-router.php" > /dev/null 2>&1 &
         else
-            env -i "$php" -n -d display_errors=0 -d log_errors=0 -t /clouve/suitecrm/standin -S 0.0.0.0:80 \
+            setpriv --reuid=nobody --regid=nogroup --clear-groups -- \
+                env -i "$php" -n -d display_errors=0 -d log_errors=0 -t /clouve/suitecrm/standin -S 0.0.0.0:80 \
                 "$SC_INSTALLER/standin-router.php" > /dev/null 2>&1 &
         fi
         SC_STANDIN_PID=$!
@@ -529,7 +683,7 @@ sc_standin_start() {
         wait "$SC_STANDIN_PID" 2>/dev/null
         SC_STANDIN_PID=''
     done
-    sc_warn "the stand-in could not start, so the health check gets no answer until Apache starts"
+    sc_warn "the stand-in could not start: this container gives nobody neither the right to bind port 80 nor an open low port, and it never runs as root. The health check gets no answer until Apache starts"
     return 1
 }
 

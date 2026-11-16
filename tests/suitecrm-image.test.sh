@@ -37,13 +37,25 @@
 #     account has no password, and no layer holds an SSH host key;
 #   - no layer was made with a password and the image's environment names none;
 #   - this checkout's persona is at /clouve/context/suitecrm/CONTEXT.md.tpl;
-#   - the installer in the image is this checkout's, and a build id is recorded.
+#   - the installer in the image is this checkout's, and a build id is recorded;
+#   - the PHP libraries with published advisories are at their fixed releases, in
+#     the package and in the kept zip, and the zip holds the package's files;
+#   - root reads and writes the state folder only from inside it, deletes and
+#     changes owners in the install only from inside the folder it checked, and
+#     loads a dump only as www-data with the client's --sandbox (the scripts,
+#     and sc_in_state and sc_in_dir run against a swap and a link);
+#   - Apache and PHP name no version, PHP's sessions run in strict mode, the
+#     clouve-ops sshd forwards nothing and logs to the container's log, and only
+#     sudo and unix_chkpwd keep a set-user-ID or set-group-ID bit.
 #
 # The database image:
 #   - the Dockerfile builds on mariadb:12.3 and sets MARIADB_AUTO_UPGRADE=1;
 #   - tini is PID 1's program, gosu is the rebuilt one and the environment
 #     names its real version, no layer holds an SSH host key, the sshd drop-in
 #     is root's alone to write, and the clouve-ops account has no password;
+#   - the base's packages are upgraded, its sshd forwards nothing and logs to
+#     the container's log, only sudo and unix_chkpwd keep a set-ID bit, and a
+#     new data directory gets root for localhost only;
 #   - on a new disk the server starts and records its version; a data directory
 #     that a newer MariaDB line wrote (13.0) is refused with a clear message and
 #     the server is never started; one from an older line (12.1) starts, and the
@@ -127,6 +139,57 @@ assert_eq "it builds on mariadb:12.3" "FROM mariadb:12.3" "$(grep -i '^FROM ' <<
 assert_eq "it sets MARIADB_AUTO_UPGRADE=1" "1" "$(grep -c '^ENV MARIADB_AUTO_UPGRADE=1$' <<< "$db_lines")"
 assert_eq "the RUN that installs openssh-server removes the SSH host keys" "1" \
   "$(grep -c '^RUN .*openssh-server.*rm -f /etc/ssh/ssh_host_\*' <<< "$db_lines")"
+# The base's own packages go to their newest versions in the same Ubuntu release, as the app image's do. MariaDB's
+# packages come from a list pinned to one release, so the server doesn't move.
+assert_eq "the RUN that installs openssh-server first upgrades the base's packages" "1" \
+  "$(grep -c '^RUN apt-get update && apt-get -y upgrade && apt-get install .*openssh-server' <<< "$db_lines")"
+
+# --- what root does in folders www-data can change --------------------------------
+# www-data owns the install and tmp/, so it can rename the state folder tmp/clouve-backup, or public/, and put
+# its own folder or a link in its place between root's check and root's use. So root reads and writes the state
+# folder only from inside it (sc_in_state), deletes and changes owners in the install only from inside the folder
+# it checked (sc_in_dir), and loads a dump with the client's sandbox on, as www-data.
+echo
+echo "What root does in folders www-data can change (the installer's scripts)"
+scripts="$(for f in lib.sh upgrade.sh entrypoint.sh loops.sh release-scheduler.sh; do logical "$IMAGE_DIR/installer/$f"; done)"
+NL=$'\n'
+upgrade_lines="$(logical "$IMAGE_DIR/installer/upgrade.sh")"
+# A client that reads SQL from its standard input runs the client commands in it (system, source, tee) as its own
+# user. The sandbox refuses them.
+assert_eq "every database client in upgrade.sh that reads its standard input has --sandbox" "0" \
+  "$(grep -E '(^|[[:space:]])mysql --defaults-extra-file' <<< "$upgrade_lines" | grep -vE '(^|[[:space:]])-e[[:space:]]' | grep -vc -- '--sandbox')"
+assert_eq "the dump is loaded by a client that runs as www-data" "1 0" \
+  "$(grep 'db\.sql\.gz' <<< "$upgrade_lines" | grep -c 'sc_as_www mysql --defaults-extra-file="\$SC_WWW_CNF" --sandbox') $(grep 'db\.sql\.gz' <<< "$upgrade_lines" | grep -E '(^|[[:space:]])mysql ' | grep -vc sc_as_www)"
+go_back="$(awk '/^### Go back by hand/ { found = 1 } found && /^```bash/ { inside = 1; next } inside && /^```/ { exit } inside' \
+  "$SC_REPO/apps/suitecrm/README.md")"
+assert_eq "the README's way back by hand loads the dump with --sandbox" "1" \
+  "$(grep -c '^ *gzip -dc "\$S/\$B/db.sql.gz" | mysql --defaults-extra-file=[^ ]* --sandbox ' <<< "$go_back")"
+# Its removals and changes of owner run inside folders it checked, and nothing is dropped or removed unless the
+# checks, the dump's among them, said ok.
+assert_eq "and it removes and changes owners only inside folders it checked, after checks that include the dump" "0 0 1 1" \
+  "$(grep -cE '^ *(find|chown|rm) [^ ]* *(public|cache|tmp)' <<< "$go_back") $(grep -cE '^ *chown -h www-data:www-data \. public' <<< "$go_back") $(grep -c "grep -qF '/\*M!999999" <<< "$go_back") $(grep -c '^echo "\${ok:-stop' <<< "$go_back")"
+# No command names a file of the state folder by its path: the folder could be another one by then.
+# The commands that read or write a file: a file of the state folder by its path, or the folder's contents by a glob.
+state_by_path='(^|[;&|(]|then |do |else )[[:space:]]*(rm|mv|cp|chmod|chown|mkdir|tee|tar|gzip|sha256sum|sed|grep|cat|sync)[[:space:]].*"\$(SC_STATE_DIR"?/|SC_STATE["./]|SC_ASIDE|SC_SKIPPED|SC_ATTENTION|SC_SCHEDULER_HELD|SC_RESTORE_MARKER|SC_LOOPS_PAUSED|console_log|backup["/.]|partial)'
+state_redirect='[<>][[:space:]]*"\$(SC_STATE_DIR"?/|SC_STATE["./]|SC_ASIDE|SC_SKIPPED|SC_ATTENTION|console_log|backup["/.]|partial)'
+assert_eq "no command reads or writes a file of the state folder by its path" "" \
+  "$(grep -nE "$state_by_path|$state_redirect" <<< "$scripts" | cut -c1-120)"
+# www-data can move tmp/, with root's state folder in it, into any folder of its own. So root deletes nothing in the
+# install: every find that deletes runs as www-data (sc_clear), which can't remove root's state folder. The one in
+# sc_symfony_cache_drop runs in a shell of www-data's too.
+lib_lines="$(logical "$IMAGE_DIR/installer/lib.sh")"
+assert_eq "every find that deletes in the install runs as www-data, from the folder it checked" "0" \
+  "$(grep -E -- '-exec rm' <<< "$lib_lines$NL$upgrade_lines" | grep -v 'sc_in_dir "\$dir" sc_as_www find \. ' |
+    grep -vc '^ *find cache -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2> /dev/null$')"
+assert_eq "and upgrade.sh removes nothing in the install as root" "0" \
+  "$(grep -vE '^[[:space:]]*(up_skip|up_failed|up_log|sc_log|sc_warn|sc_err|echo|printf) ' <<< "$upgrade_lines" |
+    grep -cE '(^|[;&|(]|then |do |else )[[:space:]]*(sc_in_dir [^ ]+ )?rm -[a-z]*[rf][a-z]* -- (public|legacy|cache)')"
+# The www-data copy of the database password is removed whenever upgrade.sh ends, and at every start.
+assert_eq "upgrade.sh removes the www-data options file on every exit, the entrypoint at every start and before Apache" "1 2" \
+  "$(grep -c "^trap 'sc_db_cnf_www_drop' EXIT$" "$IMAGE_DIR/installer/upgrade.sh") $(grep -c '^sc_db_cnf_www_drop$' "$IMAGE_DIR/installer/entrypoint.sh")"
+assert_eq "no chown in upgrade.sh names a path in the install: it runs in the folder it checked" "0" \
+  "$(grep -vE '^[[:space:]]*(up_skip|up_failed|up_log|sc_log|sc_warn|sc_err|echo|printf) ' <<< "$upgrade_lines" |
+    grep -cE '(^|[;&|(]|then |do |else )[[:space:]]*chown ')"
 
 # --- the images -----------------------------------------------------------------
 echo
@@ -139,8 +202,69 @@ else
   in_image() { docker run --rm --name "${SC_PREFIX}look" --network none --entrypoint bash "$image" -c "$1" 2>&1; }
 
   assert_eq "the package is SuiteCRM $VERSION" "$VERSION" "$(in_image 'cat /clouve/suitecrm/app/VERSION')"
-  assert_eq "the release zip is kept, with the Dockerfile's checksum" "$SHA256" \
-    "$(in_image "sha256sum /clouve/suitecrm/SuiteCRM-$VERSION.zip | cut -d' ' -f1")"
+  # The build checks the zip against the Dockerfile's checksum before anything else (above), and then moves some PHP
+  # libraries in it to fixed releases, so the kept zip no longer has upstream's checksum.
+  assert_eq "the release zip is kept" "yes" "$(in_image "[ -s /clouve/suitecrm/SuiteCRM-$VERSION.zip ] && echo yes")"
+  # The PHP libraries in the package that have a fixed release in their line (finding 6 of the image review). The
+  # build takes each release from GitHub with its checksum, and patch-vendor.php records it where Composer would. The
+  # kept zip, which SuiteCRM's own upgrade command unpacks, holds the same releases.
+  fixed="mtdowling/jmespath.php=2.9.2 symfony/http-foundation=v6.4.49 symfony/yaml=v6.4.49 smarty/smarty=v4.5.8"
+  fixed="$fixed guzzlehttp/guzzle=7.12.3 guzzlehttp/psr7=2.12.5 phpseclib/phpseclib=3.0.58"
+  # versions_in app|zip|runtime: "name=version" for each package of $fixed, from installed.json in the package or in
+  # the kept zip, or from Composer\InstalledVersions through the package's own autoloader.
+  versions_in() {
+    # shellcheck disable=SC2016  # PHP code
+    docker run --rm --name "${SC_PREFIX}look" --network none --memory 1g -e "T_FIXED=$fixed" -e "T_WHERE=$1" \
+      --entrypoint php "$image" -r '
+        $app = "/clouve/suitecrm/app";
+        if (getenv("T_WHERE") === "zip") {
+            $zip = new ZipArchive();
+            $zip->open(glob("/clouve/suitecrm/SuiteCRM-*.zip")[0]);
+            $json = $zip->getFromName("vendor/composer/installed.json");
+        } else {
+            $json = file_get_contents("$app/vendor/composer/installed.json");
+            require "$app/vendor/autoload.php";
+        }
+        $have = [];
+        foreach (json_decode($json, true)["packages"] as $p) {
+            $have[$p["name"]] = $p["version"];
+        }
+        $out = [];
+        foreach (explode(" ", getenv("T_FIXED")) as $f) {
+            $n = strstr($f, "=", true);
+            $v = getenv("T_WHERE") === "runtime" ? Composer\InstalledVersions::getPrettyVersion($n) : ($have[$n] ?? null);
+            $out[] = "$n=" . ($v ?? "missing");
+        }
+        echo implode(" ", $out);' 2>&1
+  }
+  assert_eq "the package has the fixed releases of its PHP libraries" "$fixed" "$(versions_in app)"
+  assert_eq "and Composer's runtime record says so too" "$fixed" "$(versions_in runtime)"
+  assert_eq "the kept release zip has the same ones" "$fixed" "$(versions_in zip)"
+  # The build checks the release zip against SUITECRM_SHA256 before anything else, and unpacks the package from it.
+  # Then it changes only the packages above and Composer's two records, in both places. So every file of the kept zip
+  # is the package's file, apart from the keep-list, which the image patches in the package alone (patch-keep-list.sh).
+  # shellcheck disable=SC2016  # PHP code
+  assert_eq "every file in the kept zip is the same as the package's, the keep-list aside" "0 differ, 0 missing" \
+    "$(docker run --rm --name "${SC_PREFIX}look" --network none --memory 1g --entrypoint php "$image" -r '
+        $zip = new ZipArchive();
+        $zip->open(glob("/clouve/suitecrm/SuiteCRM-*.zip")[0]);
+        $differ = $missing = 0;
+        for ($i = 0; $i < $zip->numFiles; $i++) {
+            $s = $zip->statIndex($i);
+            if (str_ends_with($s["name"], "/") || $s["name"] === "config/services/system/upgrades.yaml") {
+                continue;
+            }
+            $file = "/clouve/suitecrm/app/" . $s["name"];
+            if (!is_file($file)) {
+                $missing++;
+            } elseif (hexdec(hash_file("crc32b", $file)) !== ($s["crc"] & 0xffffffff) || filesize($file) !== $s["size"]) {
+                $differ++;
+            }
+        }
+        echo "$differ differ, $missing missing";' 2>&1)"
+  # shellcheck disable=SC2016  # PHP code
+  assert_eq "jmespath works through SuiteCRM's autoloader" "1" \
+    "$(in_image 'php -r "require \"/clouve/suitecrm/app/vendor/autoload.php\"; echo JmesPath\\search(\"a.b\", [\"a\" => [\"b\" => 1]]);"')"
   # Root reads the image's version and size from the package and runs the installer next to it. So all of /clouve
   # is root's, and www-data, which runs SuiteCRM's own code, can change none of it. A new install copies the
   # package as www-data and sets upstream's modes on the volume (tests/suitecrm-entrypoint.test.sh).
@@ -258,6 +382,120 @@ else
       mkdir "$SC_STATE_DIR" && chown www-data "$SC_STATE_DIR"; printf "%s " "$(sc_state_dir_status)"; rmdir "$SC_STATE_DIR"
       ln -s /x "$SC_STATE_DIR"; printf "%s " "$(sc_state_dir_status)"; rm "$SC_STATE_DIR"
       mkdir -m 770 "$SC_STATE_DIR"; sc_state_dir_status')"
+  # sc_in_state runs a command inside the state folder it checked. A swap by www-data after the check changes
+  # nothing for that command, and a folder that is not root's, or a link, is never entered (status 97).
+  # shellcheck disable=SC2016  # the script is for the bash inside the container
+  assert_eq "a command run in the state folder keeps reading the folder it checked, while www-data swaps it" \
+    "/var/www/html/tmp/clouve-backup phase=real 97 97 97" "$(in_image '. /clouve/suitecrm/installer/lib.sh
+      mkdir -p /var/www/html/tmp && chown www-data:www-data /var/www/html/tmp
+      mkdir -m 700 "$SC_STATE_DIR" && echo phase=real > "$SC_STATE"
+      printf "%s " "$(sc_in_state pwd -P)"
+      slow() { sleep 2; cat state; }
+      sc_in_state slow > /tmp/out & sleep 0.5
+      setpriv --reuid=www-data --regid=www-data --init-groups -- bash -c "cd /var/www/html/tmp && mv clouve-backup real && mkdir clouve-backup && echo phase=forged > clouve-backup/state"
+      wait; printf "%s " "$(cat /tmp/out)"
+      sc_in_state true; printf "%s " "$?"
+      rm -rf "$SC_STATE_DIR"; ln -s /root "$SC_STATE_DIR"; sc_in_state true; printf "%s " "$?"
+      rm "$SC_STATE_DIR"; mkdir -m 777 "$SC_STATE_DIR"; sc_in_state true; echo "$?"' 2>&1 | tail -n 1)"
+  # shellcheck disable=SC2016  # the script is for the bash inside the container
+  assert_eq "a command run in an install folder runs only where that folder really is, never behind a link" \
+    "/var/www/html/public/legacy 97 97" "$(in_image '. /clouve/suitecrm/installer/lib.sh
+      mkdir -p /var/www/html/public/legacy && printf "%s " "$(sc_in_dir public/legacy pwd -P)"
+      rm -rf /var/www/html/public && ln -s /clouve/suitecrm/app/public /var/www/html/public
+      sc_in_dir public/legacy true; printf "%s " "$?"; sc_in_dir public true; echo "$?"' 2>&1 | tail -n 1)"
+  # www-data can move tmp/, with root's state folder in it, into the folder that root is emptying. sc_clear checks
+  # that the state folder is at its place first, lets www-data remove, gives what is left to www-data except the
+  # state folder (by its inode), and stops when anything is left.
+  # shellcheck disable=SC2016  # the script is for the bash inside the container
+  assert_eq "emptying a folder that www-data moved tmp/ into stops, and root's state folder keeps its backup" \
+    "refused kept root 700 | handed-over kept root 700 www-data" "$(in_image '. /clouve/suitecrm/installer/lib.sh
+      w() { setpriv --reuid=www-data --regid=www-data --init-groups -- "$@"; }
+      mkdir -p /var/www/html/tmp /var/www/html/public/legacy/x && chown -R www-data:www-data /var/www/html
+      mkdir -m 700 "$SC_STATE_DIR" "$SC_STATE_DIR/8.10.2-to-8.10.3" && echo dump > "$SC_STATE_DIR/8.10.2-to-8.10.3/db.sql.gz"
+      w bash -c "cd /var/www/html && mv tmp public/legacy/moved && mkdir tmp"
+      sc_clear public/legacy ! -name upload && printf "removed " || printf "refused "
+      kept() { [ -s /var/www/html/public/legacy/moved/clouve-backup/8.10.2-to-8.10.3/db.sql.gz ] && printf "kept %s | " "$(stat -c "%U %a" /var/www/html/public/legacy/moved/clouve-backup)"; }
+      kept
+      ino="$(stat -c %i /var/www/html/public/legacy/moved/clouve-backup) $(stat -c %i /var/www/html/public/legacy/moved)"
+      touch /var/www/html/public/legacy/x/rootfile
+      sc_in_dir public/legacy sc_hand_over "$ino" ! -name upload && printf "handed-over "
+      kept | sed "s/ | $//"; printf " %s" "$(stat -c %U /var/www/html/public/legacy/x/rootfile)"' 2>&1 | tail -n 1)"
+  # The same move in the middle of sc_clear, after www-data's first pass: sc_as_www moves tmp/ in right after it
+  # runs. tmp/ holds root's other folders too, such as the suitecrm skill's backups. The hand-over leaves tmp/ and
+  # everything of root's in it alone, and sc_clear stops.
+  # shellcheck disable=SC2016  # the script is for the bash inside the container
+  assert_eq "when www-data moves tmp/ in during the removal, every folder of root's in tmp/ stays root's and whole" \
+    "1 | root 700 state | root 700 COMPLETE db.sql.gz" "$(in_image '. /clouve/suitecrm/installer/lib.sh
+      R=/var/www/html; chown www-data:www-data "$R"
+      install -d -o www-data -g www-data "$R/tmp" "$R/public" "$R/public/legacy" "$R/public/legacy/upload" "$R/public/legacy/modules"
+      mkdir -m 700 "$R/tmp/clouve-backup"; echo phase=restore > "$R/tmp/clouve-backup/state"
+      b="$R/tmp/clouve-skill-backups/20261116-100000"; mkdir -m 700 "$R/tmp/clouve-skill-backups" "$b"; echo dump > "$b/db.sql.gz"; echo ok > "$b/COMPLETE"
+      calls=0
+      sc_as_www() { calls=$((calls + 1)); setpriv --reuid=www-data --regid=www-data --init-groups -- "$@"; local rc=$?
+        [ "$calls" = 1 ] && setpriv --reuid=www-data --regid=www-data --init-groups -- sh -c "mv $R/tmp $R/public/legacy/moved && mkdir $R/tmp"; return $rc; }
+      sc_clear public/legacy ! -name upload; printf "%s | " "$?"
+      m=$R/public/legacy/moved
+      printf "%s %s | " "$(stat -c "%U %a" "$m/clouve-backup" 2>&1)" "$(ls "$m/clouve-backup" 2>&1 | xargs)"
+      echo "$(stat -c "%U %a" "$m/clouve-skill-backups/20261116-100000" 2>&1) $(ls "$m/clouve-skill-backups/20261116-100000" 2>&1 | xargs)"' 2>&1 | tail -n 1)"
+  # A folder that www-data can't write (root's 755 after a command run as root, or www-data's own 555) is emptied all
+  # the same: sc_clear gives the folder itself to www-data and opens it to its owner, from inside it.
+  # shellcheck disable=SC2016  # the script is for the bash inside the container
+  assert_eq "a folder that www-data can't write is emptied all the same" "root-755: 0 upload | www-555: 0 upload" \
+    "$(in_image '. /clouve/suitecrm/installer/lib.sh
+      R=/var/www/html; out=""
+      for variant in root-755 www-555; do
+        rm -rf "${R:?}"/* 2>/dev/null; chown www-data:www-data "$R"
+        install -d -o www-data -g www-data "$R/tmp" "$R/public" "$R/public/legacy" "$R/public/legacy/upload" "$R/public/legacy/modules"
+        echo code > "$R/public/legacy/index.php"; chown www-data:www-data "$R/public/legacy/index.php"
+        mkdir -m 700 "$R/tmp/clouve-backup"; echo phase=restore > "$R/tmp/clouve-backup/state"
+        case $variant in root-755) chown root:root "$R/public/legacy" ;; www-555) chmod 555 "$R/public/legacy" ;; esac
+        sc_clear public/legacy ! -name upload; out="$out$variant: $? $(ls -A "$R/public/legacy" | xargs) | "
+      done; echo "${out% | }"' 2>&1 | tail -n 1)"
+  # A second run of upgrade.sh that is refused the lock leaves the running one's options file alone.
+  # shellcheck disable=SC2016  # the script is for the bash inside the container
+  assert_eq "a run of upgrade.sh that doesn't get the lock leaves the www-data options file of the run that has it" \
+    "1 root www-data 640" "$(in_image '. /clouve/suitecrm/installer/lib.sh
+      install -d -m 700 /run/clouve; printf "[client]\nuser=x\n" > /run/clouve/db.cnf; chmod 600 /run/clouve/db.cnf
+      sc_db_cnf_www; flock /run/clouve/upgrade.lock sleep 20 & sleep 1
+      DATABASE_HOST=db DATABASE_NAME=suitecrm DATABASE_USER=u DATABASE_PASSWORD=p /clouve/suitecrm/installer/upgrade.sh --finish-as-is > /dev/null 2>&1
+      echo "$? $(stat -c "%U %G %a" /run/clouve-www/db.cnf 2>&1)"; kill %1 2>/dev/null' 2>&1 | tail -n 1)"
+  # When the state folder is not at tmp/clouve-backup but a folder of root's of that name is elsewhere on the volume
+  # (tmp/ was moved with it inside), the start says where, quoted, and what to do.
+  # shellcheck disable=SC2016  # the script is for the bash inside the container
+  assert_eq "a state folder that www-data moved away with tmp/ is named, quoted, with what staff do" "named do" \
+    "$(in_image '. /clouve/suitecrm/installer/lib.sh
+      R=/var/www/html; install -d -o www-data -g www-data "$R/public/legacy/a b;x" "$R/tmp"
+      mkdir -m 700 "$R/public/legacy/a b;x/clouve-backup"
+      note=$(sc_moved_state_note)
+      case $note in *"public/legacy/a\ b\;x/clouve-backup"*) printf "named " ;; esac
+      case $note in *"move the tmp/ that holds the state folder back"*) echo do ;; *) echo none ;; esac' 2>&1 | tail -n 1)"
+  # The folders that sc_state_dir_vet moved aside have names of one shape. Any other name in tmp/ that starts like
+  # one is www-data's own and is never put into a command for staff to run; the one that is, is quoted.
+  # shellcheck disable=SC2016  # the script is for the bash inside the container
+  assert_eq "only names of the image's own shape count as moved-aside folders, and the put-back command quotes them" \
+    "clouve-backup.untrusted-20261116T101500Z clouve-backup.untrusted-20261116T101500Z-2 | odd: 1 | safe" "$(in_image '. /clouve/suitecrm/installer/lib.sh
+      mkdir -p /var/www/html/tmp && cd /var/www/html/tmp
+      bad='"'"'clouve-backup.untrusted-0;touch${IFS}$HOME.sct-pwned;#'"'"'
+      mkdir clouve-backup.untrusted-20261116T101500Z clouve-backup.untrusted-20261116T101500Z-2 "$bad"
+      printf "%s | odd: %s | " "$(sc_untrusted_dirs | sed "s|.*/||" | xargs)" "$(sc_odd_dirs | grep -c .)"
+      cmd=$(sc_put_back_command "$bad"); cmd=${cmd#*run: }; bash -c "$cmd" >/dev/null 2>&1
+      [ -e /root.sct-pwned ] && echo pwned || echo safe' 2>&1 | tail -n 1)"
+  # Apache and PHP don't say which versions they are (security.conf is Debian's; a drop-in named clouve.conf
+  # loads before it and would lose to it).
+  assert_eq "Apache names no version and signs no page, and PHP doesn't announce itself" "Prod Off 0" \
+    "$(in_image 'echo $(grep -h "^ServerTokens" /etc/apache2/conf-enabled/*.conf | tail -n 1 | cut -d" " -f2) $(grep -h "^ServerSignature" /etc/apache2/conf-enabled/*.conf | tail -n 1 | cut -d" " -f2) $(php -r "echo (int) ini_get(\"expose_php\");")')"
+  assert_eq "PHP's sessions take no id they didn't make, and a stack trace carries no arguments" "1 1" \
+    "$(in_image 'php -r "echo (int) ini_get(\"session.use_strict_mode\"), \" \", (int) ini_get(\"zend.exception_ignore_args\");"')"
+  # The clouve-ops sshd: no forwarding of any kind, and sign-ins logged to the container's log.
+  sshd_t="$(in_image 'ssh-keygen -A >/dev/null 2>&1; mkdir -p /run/sshd; sshd -T -C user=clouve-ops,host=x,addr=127.0.0.1 2>&1')"
+  fwd=''
+  for key in disableforwarding permittunnel; do fwd="$fwd$(grep "^$key " <<< "$sshd_t")|"; done
+  assert_eq "the clouve-ops sshd forwards nothing" "disableforwarding yes|permittunnel no|" "$fwd"
+  assert_eq "it logs at INFO, to the container's log" "loglevel INFO 1" \
+    "$(grep '^loglevel ' <<< "$sshd_t") $(in_image 'grep -c "^exec /usr/sbin/sshd -D -e$" /clouve/suitecrm/installer/start-clouve-ops-sshd.sh')"
+  # Only sudo (clouve-ops) and unix_chkpwd (PAM) keep a set-user-ID or set-group-ID bit.
+  assert_eq "no program but sudo and unix_chkpwd has a set-user-ID or set-group-ID bit" "/usr/bin/sudo /usr/sbin/unix_chkpwd" \
+    "$(in_image 'find / -xdev -perm /6000 -type f 2>/dev/null | sort | xargs')"
   assert_eq "the entrypoint and the command are the image's" \
     '["/clouve/suitecrm/installer/entrypoint.sh"] ["apache2-foreground"]' \
     "$(docker image inspect --format '{{json .Config.Entrypoint}} {{json .Config.Cmd}}' "$image")"
@@ -283,6 +521,21 @@ else
     "$(in_db_image 'case "$(gosu --version)" in "$GOSU_VERSION "*) echo same ;; *) echo "GOSU_VERSION=$GOSU_VERSION, gosu is $(gosu --version)" ;; esac')"
   assert_eq "the sshd drop-in is root's, and only root can write it" "root:root 644" \
     "$(in_db_image 'stat -c "%U:%G %a" /etc/ssh/sshd_config.d/clouve-ops.conf')"
+  db_sshd_t="$(in_db_image 'ssh-keygen -A >/dev/null 2>&1; mkdir -p /run/sshd; sshd -T -C user=clouve-ops,host=x,addr=127.0.0.1 2>&1')"
+  fwd=''
+  for key in disableforwarding permittunnel loglevel; do fwd="$fwd$(grep "^$key " <<< "$db_sshd_t")|"; done
+  assert_eq "its clouve-ops sshd forwards nothing and logs at INFO, to the container's log" \
+    "disableforwarding yes|permittunnel no|loglevel INFO|1" \
+    "$fwd$(in_db_image 'grep -c "^exec /usr/sbin/sshd -D -e$" /usr/local/bin/start-clouve-ops-sshd.sh')"
+  assert_eq "no program but sudo and unix_chkpwd has a set-user-ID or set-group-ID bit" "/usr/bin/sudo /usr/sbin/unix_chkpwd" \
+    "$(in_db_image 'find / -xdev -perm /6000 -type f 2>/dev/null | sort | xargs')"
+  # The official entrypoint makes root@'%' unless MARIADB_ROOT_HOST says otherwise. Nothing signs in as root over
+  # the network: the rotation Job signs in as the app's user, and staff use the socket.
+  assert_contains "a new data directory gets root for localhost only (MARIADB_ROOT_HOST=localhost)" \
+    "$(docker image inspect --format '{{json .Config.Env}}' "$db_image")" '"MARIADB_ROOT_HOST=localhost"'
+  # The base's security updates are in (USN-9065-1 fixed glibc in 2.39-0ubuntu8.12).
+  assert_eq "glibc has the base release's security updates" "yes" \
+    "$(in_db_image 'dpkg --compare-versions "$(dpkg-query -W -f "\${Version}" libc6)" ge 2.39-0ubuntu8.12 && echo yes || dpkg-query -W -f "\${Version}" libc6')"
 fi
 
 # --- no SSH host key and no password in any layer --------------------------------
@@ -357,6 +610,8 @@ if [ -n "${SC_IMAGE[suitecrm-mariadb]:-}" ] && docker image inspect "${SC_IMAGE[
   assert_eq "PID 1 is tini" "tini" "$(sc_pid1 "$D")"
   first="$(recorded)"
   assert_contains "the data directory records the server's version" "$first" "12.3."
+  assert_eq "root is an account for localhost only" "localhost" \
+    "$(sc_sql "$D" mysql "SELECT GROUP_CONCAT(host ORDER BY host) FROM mysql.global_priv WHERE user = 'root'")"
   docker stop -t 30 "$D" >/dev/null 2>&1
 
   set_line "13.0.2-MariaDB"

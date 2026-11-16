@@ -11,8 +11,9 @@
 #      it to the clouve-ops user with chpasswd. This service, suitecrm and
 #      the magneto-agent container get the same value: a fixed one in the
 #      local compose file, one the platform makes on Clouve.
-#   3. Becomes `sshd -D`, so sshd is the only process in this background
-#      tree. It ends with the container, when mariadbd exits.
+#   3. Becomes `sshd -D -e`, so sshd is the only process in this background
+#      tree, and its log lines, sign-ins among them, go to the container's
+#      log. It ends with the container, when mariadbd exits.
 #
 # Running it again at a restart does the same again. It keeps no state other
 # than /etc/ssh/ssh_host_*_key.
@@ -34,4 +35,4 @@ echo "clouve-ops:$CLOUVE_OPS_PASSWORD" | chpasswd
 
 mkdir -p /run/sshd
 echo "$PREFIX Starting sshd (foreground in background tree)"
-exec /usr/sbin/sshd -D
+exec /usr/sbin/sshd -D -e

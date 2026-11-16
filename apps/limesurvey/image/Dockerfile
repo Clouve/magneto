@@ -87,6 +87,17 @@ RUN useradd --create-home --shell /bin/bash --comment "Clouve operator (Claude C
     echo "clouve-ops ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/clouve-ops && \
     chmod 0440 /etc/sudoers.d/clouve-ops
 
+# Neither Apache nor PHP says which version it runs: the Server header is "Apache" alone, Apache's error pages carry
+# no signature, and PHP adds no X-Powered-By header. A visitor then has nothing to pick known bugs by. The two
+# Apache settings are Debian's, in security.conf, and the image's own drop-in sets neither. The checks stop the
+# build when an edit didn't apply.
+RUN sed -i 's/^ServerTokens .*/ServerTokens Prod/; s/^ServerSignature .*/ServerSignature Off/' \
+        /etc/apache2/conf-available/security.conf \
+    && grep -qx 'ServerTokens Prod' /etc/apache2/conf-available/security.conf \
+    && grep -qx 'ServerSignature Off' /etc/apache2/conf-available/security.conf \
+    && echo 'expose_php = Off' > /usr/local/etc/php/conf.d/zz-clouve.ini \
+    && [ "$(php -r 'echo ini_get("expose_php") ? "on" : "off";')" = off ]
+
 # The base image's own copy of LimeSurvey goes: /var/www/html is the volume, and the entrypoint fills it from the
 # package below.
 RUN rm -rf /var/www/html && install -d -o www-data -g www-data -m 755 /var/www/html
@@ -138,6 +149,12 @@ RUN chmod +x /clouve/limesurvey/installer/*.sh \
     && [ "$entries" -gt 0 ] && [ "$kb" -gt 0 ] \
     && printf 'entries=%s\nkb=%s\n' "$entries" "$kb" > /clouve/limesurvey/package-stats \
     && chmod 644 /clouve/limesurvey/image-build /clouve/limesurvey/package-stats
+
+# Programs with the set-user-ID or set-group-ID bit that this image never runs lose it (su, passwd, mount and the
+# like), so code that runs as www-data finds none to try a local bug on. Two keep it: sudo, which clouve-ops uses,
+# and unix_chkpwd, which PAM uses to check a password. The build stops when anything else still has a bit.
+RUN find / -xdev -perm /6000 -type f ! -path /usr/bin/sudo ! -path /usr/sbin/unix_chkpwd -exec chmod ug-s {} + \
+    && [ "$(find / -xdev -perm /6000 -type f | sort | xargs)" = "/usr/bin/sudo /usr/sbin/unix_chkpwd" ]
 
 # The base image's environment names the LimeSurvey that it shipped. The AI Assistant reads this container's
 # environment, so the variable names the LimeSurvey in the package. It comes after the last RUN, where the name

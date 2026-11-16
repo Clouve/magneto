@@ -8,6 +8,10 @@
  *   YII_CONSOLE_COMMANDS=/clouve/limesurvey/installer/commands php application/commands/console.php clouve schema
  *   YII_CONSOLE_COMMANDS=/clouve/limesurvey/installer/commands php application/commands/console.php clouve suitecrm
  *
+ * import-demo-data.sh runs a third one, for the demo survey it has just imported:
+ *
+ *   YII_CONSOLE_COMMANDS=/clouve/limesurvey/installer/commands php application/commands/console.php clouve mappings --sid=<id>
+ *
  * The file is in the image, outside the web root, and nothing is added to the volume. Values come from the
  * environment, never from the command line, and none is printed.
  */
@@ -110,6 +114,44 @@ class ClouveCommand extends CConsoleCommand
         echo strpos($migration, 'Migrated') === 0
             ? "the plugin's tables are in place. " . $migration . "\n"
             : "the plugin's tables are in place\n";
+        return 0;
+    }
+
+    /**
+     * Fills the SuiteCRM plugin's table of mappings for one survey from its questions' mappings, with the plugin's own
+     * code (SuiteCRMIntegration::storeSurveyMappings()). import-demo-data.sh runs it for the demo survey it has just
+     * imported: the import stores each question's mappings on the question and writes nothing to the plugin's table.
+     * A second run writes the same rows and adds none.
+     *
+     *   YII_CONSOLE_COMMANDS=/clouve/limesurvey/installer/commands php application/commands/console.php clouve mappings --sid=<id>
+     *
+     * Status 0 when the rows are written, 1 when not.
+     */
+    public function actionMappings($sid)
+    {
+        $sid = (int) $sid;
+        if ($sid <= 0) {
+            echo "--sid is not a survey id\n";
+            return 1;
+        }
+        $row = Plugin::model()->findByAttributes(['name' => 'SuiteCRMIntegration']);
+        if ($row === null) {
+            echo "the SuiteCRM plugin is not registered\n";
+            return 1;
+        }
+        $plugin = App()->getPluginManager()->loadPlugin('SuiteCRMIntegration', $row->id);
+        if (!$plugin || !method_exists($plugin, 'storeSurveyMappings')) {
+            echo "the SuiteCRM plugin's code could not be loaded\n";
+            return 1;
+        }
+        try {
+            [$questions, $rows] = $plugin->storeSurveyMappings($sid);
+        } catch (Throwable $e) {
+            // The first line of the message, which names tables and columns and holds no value.
+            echo "the plugin's table of mappings could not be written: " . substr((string) strtok($e->getMessage(), "\n"), 0, 200) . "\n";
+            return 1;
+        }
+        echo "the plugin's table of mappings has survey {$sid}'s {$rows} mappings, of {$questions} questions\n";
         return 0;
     }
 

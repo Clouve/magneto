@@ -61,7 +61,7 @@ The app container:
 | --- | --- |
 | `DATABASE_HOST`, `DATABASE_PORT`, `DATABASE_NAME`, `DATABASE_USER`, `DATABASE_PASSWORD` | The database. The port is 3306 when it isn't set. The others are required. The password can hold any character. |
 | `SUITECRM_URL` | The site's address, for example `https://crm.example.com`. Required. It needs `http://` or `https://` and a host name. A value without them is left out with a warning, and the address SuiteCRM has stays. |
-| `SUITECRM_ADMIN_USER`, `SUITECRM_ADMIN_PASSWORD` | The first admin. Read only by a new install. |
+| `SUITECRM_ADMIN_USER`, `SUITECRM_ADMIN_PASSWORD` | The first admin. A new install sets them. They stay in the container's environment, Apache's included, because the AI Assistant reads the password from there to give the admin their first password back. |
 | `SUITECRM_INSTALL_DEMO_DATA` | `yes`, `true` or `1` installs SuiteCRM's demo records with a new install. Anything else doesn't. |
 | `CLOUVE_OPS_PASSWORD` | Set by the platform when the deployment has the AI Assistant. Without it no sshd starts. |
 
@@ -108,7 +108,8 @@ Everything that writes into the install, or runs SuiteCRM's PHP, runs as `www-da
 changes the install in two places, both in the upgrade: it renames the customer's upload folders out of
 SuiteCRM's reach and back, and a way back removes the upgraded code as root. No password is on a command line
 or in the log: the database clients read an options file of mode 600, and SuiteCRM's installer gets its options
-inside the PHP process.
+inside the PHP process. The way back loads the dump with a client that runs as `www-data`, from an options file
+`www-data` may read (it knows the password already), with the client's sandbox on.
 
 ### What the image trusts
 
@@ -119,6 +120,15 @@ of root's, and follows three rules:
 - It reads that folder only while it is a real folder of root's that nobody else can write in. Anything else
   at that name is never read and never used. The entrypoint moves it aside to
   `tmp/clouve-backup.untrusted-<UTC time>`, changes nothing in it, and logs how staff put it back.
+- `www-data` can rename `tmp/clouve-backup`, or `public/`, at any moment. So root reads and writes the state
+  folder's files only from inside the folder, once it checked that this is the real one, and by relative names.
+  It changes owners in the install the same way. If `www-data` puts another folder in its place, root still
+  works in the one it checked.
+- `www-data` can also move all of `tmp/`, with the state folder in it, into another folder of its own. So root
+  removes nothing in the install: `www-data` removes, and it can't remove the state folder, which it can't look
+  into. Root gives `www-data` only what a command run as root left behind, and never the state folder, which it
+  finds by its inode wherever it is. When the state folder isn't at its place any more, the way back stops and
+  says so.
 - A missing state never means that nothing is under way. The site's own facts decide: `VERSION` on the volume,
   the version row in the database, and the tables. A site between two versions with no backup the image can
   trust is not started.
@@ -166,8 +176,9 @@ try that was stopped doesn't count as a failed one.
 The platform asks `GET /` on port 80 and restarts a container that doesn't answer for about 105 seconds. A
 database that starts slowly, an install or an upgrade on a network disk can take longer. So at every start,
 from before the wait for the database until Apache takes over, PHP's built-in server answers on port 80 with
-one file from the image. It runs as `nobody`, or as root where the container can't give `nobody` the right to
-bind port 80. `GET /` and `HEAD /` get a short page and status 200, and every
+one file from the image. It runs as `nobody`, with the right to bind port 80 where the container can give it,
+and without it where unprivileged ports start at 80 or below. Where neither works there is no stand-in, and the
+log says so. It never runs as root. `GET /` and `HEAD /` get a short page and status 200, and every
 other request gets 503 with `Retry-After`, so an API caller never takes the page for an answer. Every answer
 has the header `X-Clouve-Standin: suitecrm`, which tells a tool that waits for SuiteCRM itself that this is not
 it yet. The entrypoint stops the stand-in and waits for the port before Apache starts. The stand-in runs with
@@ -220,13 +231,15 @@ commands. `upgrade.sh` wraps them:
 5. It runs `suitecrm:app:upgrade` and `suitecrm:app:upgrade-finalize` as `www-data`.
 6. The upgrade counts as done when both commands ended well, `VERSION` and the database's version row say the
    new version, and SuiteCRM's own `suitecrm:version` prints it.
-7. When a try fails, it goes back. It removes the upgraded code as root, so that a file of root's in the tree
-   can't stop it half-way, unpacks the old code as `www-data` and gives the media folders their old names. The
-   two marker files stay in place all the way. It
+7. When a try fails, it goes back. It removes the upgraded code as `www-data`, after it gave `www-data` what a
+   command run as root left in the tree, so that such a file can't stop it half-way. It unpacks the old code as
+   `www-data` and gives the media folders their old names. The two marker files stay in place all the way. It
    leaves the database alone only when that is proven: SuiteCRM's second command never started, and the
    database's fingerprint is the one the backup recorded. From SuiteCRM 8.10 on the first command can change
-   the database too. In every other case it drops the database's tables and loads the dump. Then it tries once
-   more.
+   the database too. In every other case it checks that the dump is a whole one from `mysqldump` (its first and
+   last lines, and one table per table the stamp records), then drops the database's tables and loads the dump.
+   The client that loads it runs as `www-data`, with its sandbox on, so a client command in a dump (`system`,
+   `source`) is refused. Then it tries once more.
 8. After two failed tries the old version runs. The script writes the failure to
    `tmp/clouve-backup/upgrade-failed`, and this build of the image doesn't try again while that file exists. A
    newer build tries by itself.
@@ -315,7 +328,8 @@ on when the file is gone.
 TLS ends at the ingress and the pod serves plain HTTP. `apache-clouve.conf` does two things:
 
 - A request with `X-Forwarded-Proto: https` counts as HTTPS. Without that the session cookie has no Secure
-  flag and `/logout` redirects to `http://`.
+  flag and `/logout` redirects to `http://`. On such a request every cookie that lacks the Secure flag gets it,
+  the session cookie of SuiteCRM's older pages included.
 - Apache takes the client's address from `X-Forwarded-For` when the peer has a private address (10.0.0.0/8,
   172.16.0.0/12, 192.168.0.0/16), which is what the ingress has. SuiteCRM's sign-in throttle then counts people.
   Without it, 50 failed sign-ins from anywhere lock everyone out for half an hour.
@@ -326,10 +340,16 @@ The same file has four more rules:
   and without the Referer. Password-reset links and API tokens travel in both. A value that is part of the
   path is still logged.
 - Apache's error lines, which also go to the container's log, are written without the Referer.
-- In the folders where uploads land (`public/legacy/upload`, `public/media` and `public/media-upload`) no PHP
-  file is run or served, and no `.htaccess` file is read. Other files in the two media folders are served as
-  before.
+- In the folders where uploads land (`public/legacy/upload`, `public/media` and `public/media-upload`), and in
+  `public/legacy/cache/images`, where inbound mail keeps the images of an email, no PHP file is run or served,
+  and no `.htaccess` file is read.
+- Everything served from those folders is a file, never a page of the CRM's own address. Each answer has
+  `Content-Security-Policy: sandbox` and `X-Content-Type-Options: nosniff`, and HTML, SVG, XML, XSLT, MHTML
+  and JavaScript files come as a download (`Content-Disposition: attachment`). Images still show in SuiteCRM's
+  pages. A browser that won't show a PDF in a sandbox downloads it instead.
 - The web root gives no folder listing.
+- Apache's `Server` header says `Apache` and no version, and its error pages carry no signature. PHP sends no
+  `X-Powered-By` header.
 
 Apache's log, run and lock folders are root's in this image. Apache's parent process is root and opens files
 there at every start and reload, and the base image leaves those folders to `www-data`.
@@ -355,6 +375,18 @@ MariaDB itself would start on such files without complaint, and going back a lin
 
 SuiteCRM's own list of supported databases ends at MariaDB 11.8. 12.3 passed an install, an upgrade and the
 tests here. The pin can't be lower: the image had no pin before, and the installs it made hold 12.x files.
+
+The build takes the base's own packages to their newest versions in the same Ubuntu release. It sets
+`MARIADB_ROOT_HOST=localhost`, so a new data directory gets `root` for local sign-ins only. Nothing signs in as
+root over the network. A data directory made before keeps its `root@'%'` until someone drops it once, in the
+database container:
+
+```bash
+MYSQL_PWD="${MARIADB_ROOT_PASSWORD:-$MYSQL_ROOT_PASSWORD}" mariadb -uroot -e "DROP USER IF EXISTS 'root'@'%'"
+```
+
+In both images only `sudo` and `unix_chkpwd` keep a set-user-ID or set-group-ID bit. Both sshds allow no
+forwarding of any kind and log each sign-in, and each failed one, to the container's log.
 
 ## Tests
 
@@ -444,26 +476,40 @@ restart also does the same in every other case.
 The line names a folder `tmp/clouve-backup.untrusted-<time>` on the volume and says that it "was not root's any
 more". The start that moved the folder also logged a `[suitecrm] WARNING` line that says "is not a folder that
 only root can change". Something gave the folder to another owner: SuiteCRM's permission reset, or a start of the
-earlier image. The image has read nothing in it. Look at what is in it. It should hold only `state`, a backup
-folder `<from>-to-<to>` with `code.tar.gz`, `db.sql.gz` and `complete`, `upgrade-console.log`, perhaps
-`upgrade-failed` or `upgrade-skipped`, perhaps the hold and pause files (`scheduler-held`, `restore-in-progress`,
-`loops-paused`), perhaps a `needs-attention` note, and perhaps `aside/` with the customer's upload folders and a
-copy of the two marker files. Then
-give it back to root, close it and give it its name again:
+earlier image. The image has read nothing in it.
+
+The folder sat where `www-data` could write, so code that runs as `www-data` (an admin's module, or a bug in
+SuiteCRM) may have made anything in it. Its backup is only as good as the site. Where the site may have been taken
+over (an admin you don't know, a module nobody installed), don't put the folder back: restore the deployment from
+the platform's own backup. Otherwise look at what is in it first. It should hold only `state`, a backup folder
+`<from>-to-<to>` with `code.tar.gz`, `db.sql.gz` and `complete`, `upgrade-console.log`, perhaps `upgrade-failed`
+or `upgrade-skipped`, perhaps the hold and pause files (`scheduler-held`, `restore-in-progress`, `loops-paused`),
+perhaps a `needs-attention` note, and perhaps `aside/` with the customer's upload folders and a copy of the two
+marker files. `state` should name the versions of the upgrade the log speaks of, and `complete` the same ones.
+
+Then give it back to root, close it and give it its name again. The last command is one chain: it works from
+inside the folder, and it stops before it changes anything when the folder isn't one (a link, for example), so it
+changes nothing that someone put in its place meanwhile:
 
 ```bash
 cd /var/www/html/tmp
 ls -laR clouve-backup.untrusted-<time> | head -n 60
-chown -hR root:root clouve-backup.untrusted-<time>
-chmod -R go= clouve-backup.untrusted-<time>
-mv clouve-backup.untrusted-<time> clouve-backup
+cd -P -- clouve-backup.untrusted-<time> && [ "$(pwd -P)" = /var/www/html/tmp/clouve-backup.untrusted-<time> ] &&
+  chown -hR root:root . && chmod -R go= . && cd .. && mv -T -- clouve-backup.untrusted-<time> clouve-backup
 ```
 
-The image gives the upload folders in `aside/` back to `www-data` when it puts them in place.
+The image gives the upload folders in `aside/` back to `www-data` when it puts them in place. A way back from that
+backup loads its dump with the client's sandbox on, as `www-data`, and unpacks its code as `www-data`, so a forged
+backup can do no more than `www-data` could already.
 
 A finished site with such a folder on the volume starts, with a warning, and its scheduler is held until the
 folder is put back or removed. Remove the folder only when the site runs the image's version, the customer has
 checked it, and the folder holds no `aside/`.
+
+The image names such folders `clouve-backup.untrusted-<UTC time>`, as `20261116T101500Z`, sometimes with `-<n>`
+after it. A folder in `tmp/` that starts the same way but has any other name is one that `www-data` made. A start
+logs a `[suitecrm] WARNING` line that names it, quoted, and gives no command for it. Look at it by hand, and never
+paste its name into a command: the name can hold one.
 
 #### The site is between two versions and there is no backup
 
@@ -521,6 +567,12 @@ The log's last `[clouve-upgrade] FAILED` line says why.
 - "going back to <old version> failed": the way back could not finish, most often because the database didn't answer or the
   volume is full. Nothing is lost: the backup is complete. Fix the cause and restart. The next start goes back
   again.
+- "going back ... failed: the state folder is not at tmp/clouve-backup any more": something that runs as `www-data`
+  moved `tmp/` away while the way back ran, with the state folder in it. The way back stopped before it removed
+  anything more. Find the folder (`find /var/www/html -xdev -type d -name clouve-backup -user root`). As `www-data`,
+  rename the `tmp/` that is there now, move the `tmp/` the state folder is in back to `/var/www/html/tmp`, and
+  restart. Ask why code that runs as `www-data` did
+  that: the site may have been taken over.
 - "the state file ... is of an upgrade to" another version: an image with another SuiteCRM started on a volume
   where an upgrade was under way. Start the image that began the upgrade, let it finish or go back, then change
   the image.
@@ -530,34 +582,53 @@ The log's last `[clouve-upgrade] FAILED` line says why.
 The upgrade goes back by itself. These are its steps, for a volume it can't finish on, and for going back
 from an upgrade that finished, while its backup is still kept. They need a shell in a container of this image
 with the volume mounted and SuiteCRM not running, and the database reachable. On a cluster that is a pod of
-this image with `command: ["sleep", "infinity"]`, the deployment's environment and its volume. `B` is the
-backup folder, `D` the database's name. What the customer changed after the backup was made is lost: records
-in the database, and settings.
+this image with `command: ["sleep", "infinity"]`, the deployment's environment and its volume. `B` is the name of
+the backup folder in `tmp/clouve-backup`, `D` the database's name. What the customer changed after the backup was
+made is lost: records in the database, and settings.
+
+The checks come first, and every line after them does something only when they printed `ok`. Each removal and
+change of owner runs inside the folder it checked (`in_dir`), never through a link.
 
 ```bash
 cd /var/www/html
-B=tmp/clouve-backup/8.9.1-to-8.10.2
+B=8.9.1-to-8.10.2
 D=${DATABASE_NAME:-suitecrm}
-sha256sum "$B/code.tar.gz" "$B/db.sql.gz"; grep sha256 "$B/complete"   # the checksums must match
+S=tmp/clouve-backup
+# in_dir DIR COMMAND...: COMMAND inside the install's folder DIR ("" for the top folder), only when DIR is that very
+# folder, reached through no link.
+in_dir() { local d="/var/www/html${1:+/$1}"; shift; (cd -P -- "$d" && [ "$(pwd -P)" = "$d" ] && "$@"); }
+
+# The checks: public/ and public/legacy/ are no links, the state folder is root's and closed, both files have the
+# checksums the stamp recorded, and the dump is a whole one from mysqldump with as many tables as the stamp says.
+ok=''
+[ ! -L public ] && [ ! -L public/legacy ] && [ "$(stat -c '%u %a' "$S")" = "0 700" ] &&
+  [ "$(sha256sum < "$S/$B/code.tar.gz" | cut -d' ' -f1)" = "$(sed -n 's/^code_sha256=//p' "$S/$B/complete")" ] &&
+  [ "$(sha256sum < "$S/$B/db.sql.gz" | cut -d' ' -f1)" = "$(sed -n 's/^database_sha256=//p' "$S/$B/complete")" ] &&
+  gzip -dc "$S/$B/db.sql.gz" | head -n 1 | grep -qF '/*M!999999\- enable the sandbox mode */' &&
+  gzip -dc "$S/$B/db.sql.gz" | tail -n 1 | grep -q '^-- Dump completed' &&
+  [ "$(gzip -dc "$S/$B/db.sql.gz" | grep -c '^CREATE TABLE ')" = "$(sed -n 's/^tables=//p' "$S/$B/complete")" ] && ok=yes
+echo "${ok:-stop: a check failed, so the lines below do nothing}"
 
 # Upload folders that a cut-off upgrade had moved out of the install come back first.
-A=tmp/clouve-backup/aside
 for f in uploads media .suitecrm_initialized .suitecrm_url; do
-  if [ -e "$A/$f" ] && [ ! -e "$f" ]; then mv "$A/$f" "$f"; chown -hR www-data:www-data "$f"; fi
+  if [ "$ok" = yes ] && [ -e "$S/aside/$f" ] && [ ! -e "$f" ]; then mv "$S/aside/$f" "$f" && chown -hR www-data:www-data -- "$f"; fi
 done
 for f in media-upload media; do
-  if [ -e "$A/public__$f" ] && [ ! -e "public/$f" ]; then mv "$A/public__$f" "public/$f"; chown -hR www-data:www-data "public/$f"; fi
+  if [ "$ok" = yes ] && [ -e "$S/aside/public__$f" ] && [ ! -e "public/$f" ]; then
+    mv "$S/aside/public__$f" "public/$f" && in_dir public chown -hR www-data:www-data -- "$f"
+  fi
 done
 
 # The database: drop every table, then load the dump. The options file keeps the password off the command line.
+# --sandbox: the client refuses any client command (system, source) that a dump holds.
 umask 077
 pw=${DATABASE_PASSWORD//\\/\\\\}
 printf '[client]\nhost=%s\nport=%s\nuser=%s\npassword="%s"\n' "$DATABASE_HOST" "${DATABASE_PORT:-3306}" \
   "$DATABASE_USER" "${pw//\"/\\\"}" > /root/db.cnf
-mysql --defaults-extra-file=/root/db.cnf -N -B -e "SELECT CONCAT('DROP ', IF(table_type = 'VIEW', 'VIEW', 'TABLE'),
-  ' IF EXISTS \`', table_name, '\`;') FROM information_schema.tables WHERE table_schema = '$D'" > /root/drop.sql
-(echo 'SET FOREIGN_KEY_CHECKS = 0;'; cat /root/drop.sql) | mysql --defaults-extra-file=/root/db.cnf "$D"
-gzip -dc "$B/db.sql.gz" | mysql --defaults-extra-file=/root/db.cnf "$D"
+[ "$ok" = yes ] && mysql --defaults-extra-file=/root/db.cnf -N -B -e "SELECT CONCAT('DROP ', IF(table_type = 'VIEW', 'VIEW', 'TABLE'),
+  ' IF EXISTS \`', table_name, '\`;') FROM information_schema.tables WHERE table_schema = '$D'" > /root/drop.sql &&
+  (echo 'SET FOREIGN_KEY_CHECKS = 0;'; cat /root/drop.sql) | mysql --defaults-extra-file=/root/db.cnf "$D" &&
+  gzip -dc "$S/$B/db.sql.gz" | mysql --defaults-extra-file=/root/db.cnf --sandbox "$D"
 rm -f /root/db.cnf /root/drop.sql
 umask 022
 
@@ -565,32 +636,32 @@ umask 022
 # (the earlier image installs anew on a volume without .suitecrm_initialized). A folder named <name>.clouve-aside
 # holds the customer's files too: the upgrade left it there when it could not merge them back. Then the archive
 # comes back.
-find . -mindepth 1 -maxdepth 1 ! -name tmp ! -name cache ! -name logs ! -name lost+found \
-  ! -name public ! -name uploads ! -name media ! -name '*.clouve-aside' ! -name .suitecrm_initialized \
-  ! -name .suitecrm_url -exec rm -rf {} +
-find public -mindepth 1 -maxdepth 1 ! -name legacy ! -name media-upload ! -name media \
-  ! -name '*.clouve-aside' -exec rm -rf {} +
-find public/legacy -mindepth 1 -maxdepth 1 ! -name upload -exec rm -rf {} +
-chown -h www-data:www-data . public public/legacy
-sudo -u www-data tar -xzpf - < "$B/code.tar.gz"
+[ "$ok" = yes ] &&
+  in_dir '' find . -mindepth 1 -maxdepth 1 ! -name tmp ! -name cache ! -name logs ! -name lost+found \
+    ! -name public ! -name uploads ! -name media ! -name '*.clouve-aside' ! -name .suitecrm_initialized \
+    ! -name .suitecrm_url -exec rm -rf {} + &&
+  in_dir public find . -mindepth 1 -maxdepth 1 ! -name legacy ! -name media-upload ! -name media \
+    ! -name '*.clouve-aside' -exec rm -rf {} + &&
+  in_dir public/legacy find . -mindepth 1 -maxdepth 1 ! -name upload -exec rm -rf {} + &&
+  in_dir '' chown -h www-data:www-data . && in_dir public chown -h www-data:www-data . &&
+  in_dir public/legacy chown -h www-data:www-data . &&
+  sudo -u www-data tar -xzpf - < "$S/$B/code.tar.gz"
 
 # 8.10 renames the media folders. A version before 8.10 looks in the old places.
-if grep -q '^had_uploads=yes' "$B/complete" && [ -d media ] && [ ! -e uploads ]; then
+if [ "$ok" = yes ] && grep -q '^had_uploads=yes' "$S/$B/complete" && [ -d media ] && [ ! -e uploads ]; then
   sudo -u www-data mv media uploads
 fi
-if grep -q '^had_public_media_upload=yes' "$B/complete" && [ -d public/media ] && [ ! -e public/media-upload ]; then
+if [ "$ok" = yes ] && grep -q '^had_public_media_upload=yes' "$S/$B/complete" && [ -d public/media ] && [ ! -e public/media-upload ]; then
   sudo -u www-data mv public/media public/media-upload
 fi
-rm -rf tmp/package
-find cache -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+[ "$ok" = yes ] && in_dir tmp rm -rf package && in_dir cache find . -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 
 # The state: failed, so the next start runs the old version and doesn't upgrade again. The whole file is
-# written, because after a finished upgrade there is none.
-from=${B##*/}; from=${from%-to-*}; to=${B##*-to-}
-printf 'phase=failed\nfrom=%s\nto=%s\nbuild=%s\nattempts=2\nreason=put back by hand\n' "$from" "$to" \
-  "$(cat /clouve/suitecrm/BUILD)" > tmp/clouve-backup/state
-echo "put back by hand on $(date -u +%Y-%m-%dT%H:%M:%SZ)" > tmp/clouve-backup/upgrade-failed
-chmod 600 tmp/clouve-backup/state tmp/clouve-backup/upgrade-failed
+# written, because after a finished upgrade there is none. Both files are written inside the state folder.
+[ "$ok" = yes ] && in_dir "$S" bash -c 'umask 077 &&
+  printf "phase=failed\nfrom=%s\nto=%s\nbuild=%s\nattempts=2\nreason=put back by hand\n" "${1%-to-*}" "${1##*-to-}" \
+    "$(cat /clouve/suitecrm/BUILD)" > state &&
+  echo "put back by hand on $(date -u +%Y-%m-%dT%H:%M:%SZ)" > upgrade-failed && chmod 600 state upgrade-failed' _ "$B"
 ```
 
 Then start the container the usual way. Its log says `suitecrm stays on <old version>`. To let it upgrade
@@ -601,7 +672,7 @@ again later, remove `upgrade-failed`. A newer build of the image upgrades by its
 Once the customer has checked the upgraded site:
 
 ```bash
-rm -rf /var/www/html/tmp/clouve-backup/*-to-*
+cd -P /var/www/html/tmp/clouve-backup && [ "$(pwd -P)" = /var/www/html/tmp/clouve-backup ] && rm -rf -- ./*-to-*
 ```
 
 Leave the other files in `tmp/clouve-backup/` where they are. The backup holds the old code, the settings with
@@ -682,5 +753,12 @@ is not running. The container's log says why, in lines about "the Messenger work
 - "says that an install was cut off here, but the database ... holds ... users": the install stamp is there
   next to a database that people have worked in. Nothing was changed. If this is a working site, remove
   `/var/www/html/.clouve-install-in-progress`.
+- "the volume holds SuiteCRM's files but no readable VERSION": a way back stopped half-way, or someone removed
+  `VERSION`. When the line goes on with "No state folder is at tmp/clouve-backup, and one of root's is at ...", a
+  way back stopped because code that runs as `www-data` moved `tmp/` away with the state folder in it, and the line
+  names where it is now. As `www-data`, rename the `tmp/` that is there now, move the `tmp/` that holds the state
+  folder back to `/var/www/html/tmp`, and restart: the next start goes back from its backup. Ask why code that runs
+  as `www-data` did that: the site may have been taken over. Without that note, restore the deployment from a
+  backup.
 - From the database container, "refusing to start": the data directory was last used by a newer MariaDB line
   than the image's. Run the database image the deployment had before.

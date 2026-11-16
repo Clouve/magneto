@@ -53,6 +53,9 @@ set -u
 installer=/clouve/suitecrm/installer
 # shellcheck source=lib.sh
 . "$installer/lib.sh" || { printf '[suitecrm] ERROR: cannot read %s\n' "$installer/lib.sh" >&2; exit 1; }
+# A copy of the database password for www-data's database client that a cut-off way back left behind (upgrade.sh
+# removes its own on every exit). /run outlives a restart of the same container.
+sc_db_cnf_www_drop
 
 # --- 0. the variables, and the names the AI Assistant reads ----------------------------------------------------------
 
@@ -303,7 +306,7 @@ decide() {
             # Nothing in the site had changed yet, whichever image wrote the state. So the unfinished backup and
             # the state go, and the site's own facts decide, as at any start.
             sc_log "an upgrade had begun, and the backup was cut off before it was complete. Nothing in the site had changed, so the unfinished backup and its state are removed."
-            rm -rf -- "$SC_STATE_DIR"/*.partial
+            sc_state_rm_partials
             sc_state_clear
             ;;
         upgrade | restore | as-is)
@@ -316,7 +319,7 @@ decide() {
                 sc_state_clear
             elif [ "$(sc_state_get build)" != "$(sc_image_build)" ]; then
                 sc_log "the upgrade failed on another build of this image ($(sc_state_get build)), so this build tries again"
-                rm -f -- "$SC_STATE_DIR/upgrade-failed"
+                sc_state_rm upgrade-failed
                 sc_state_clear
             else
                 action=hold
@@ -337,7 +340,7 @@ decide() {
     fi
     volume_version=$(sc_read_version "$SC_ROOT/VERSION")
     if [ -z "$volume_version" ]; then
-        stop "the volume holds SuiteCRM's files but no readable VERSION, so this image can't tell which SuiteCRM it is. Nothing was changed."
+        stop "the volume holds SuiteCRM's files but no readable VERSION, so this image can't tell which SuiteCRM it is. Nothing was changed.$(sc_moved_state_note)"
     fi
     sc_has_config_table
     case $? in
@@ -364,7 +367,7 @@ decide() {
                 # may be in that folder. Neither the old version nor a new upgrade is started on a guess.
                 action='wait'
                 wait_from=$volume_version
-                wait_why="$untrusted is on the volume: a state folder that was not root's any more and was moved aside. An upgrade may have been under way, with its backup and the customer's upload folders in that folder, so SuiteCRM $volume_version is neither started nor upgraded. Nothing was changed. Look at the folder and put it back: in $SC_ROOT/tmp, chown -hR root:root ${untrusted##*/} && chmod -R go= ${untrusted##*/} && mv ${untrusted##*/} clouve-backup."
+                wait_why="$untrusted is on the volume: a state folder that was not root's any more and was moved aside. An upgrade may have been under way, with its backup and the customer's upload folders in that folder, so SuiteCRM $volume_version is neither started nor upgraded. Nothing was changed. The folder came from a place www-data could write, so look at what is in it before you put it back (README.md, \"Staff runbook\"). To put it back, $(sc_put_back_command "${untrusted##*/}")."
                 return 0
             fi
             action=upgrade
@@ -388,15 +391,22 @@ decide() {
                     wait_from=unfinished
                     wait_why="VERSION says $image_version but the database has no finished-upgrade record for it (${database_version:-none}): an upgrade was cut off, and the volume holds no backup that this image can trust. The site is between two versions, so it is not started, and nothing was changed."
                     if [ -n "$untrusted" ]; then
-                        wait_why="$wait_why $untrusted was moved aside because it was not root's any more, and the backup may be in it. Look at that folder and put it back: in $SC_ROOT/tmp, chown -hR root:root ${untrusted##*/} && chmod -R go= ${untrusted##*/} && mv ${untrusted##*/} clouve-backup."
+                        wait_why="$wait_why $untrusted was moved aside because it was not root's any more, and the backup may be in it. The folder came from a place www-data could write, so look at what is in it before you put it back (README.md, \"Staff runbook\"). To put it back, $(sc_put_back_command "${untrusted##*/}")."
                     else
-                        wait_why="$wait_why Restore the deployment from a backup, or finish the upgrade on the site as it is with $installer/upgrade.sh --finish-as-is (README.md, \"Staff runbook\")."
+                        wait_why="$wait_why Restore the deployment from a backup, or finish the upgrade on the site as it is with $installer/upgrade.sh --finish-as-is (README.md, \"Staff runbook\").$(sc_moved_state_note)"
                     fi
                 fi
             fi
             ;;
     esac
 }
+
+# Folders in tmp/ named like the ones sc_state_dir_vet moves aside, but not of its shape, are www-data's own. They
+# are never read, and no command for them is logged: the name is shown quoted, for a look by hand.
+while IFS= read -r odd; do
+    [ -n "$odd" ] || continue
+    sc_warn "tmp/ holds $(printf '%q' "${odd##*/}"), which is named like a state folder that was moved aside, but this image didn't name it. It is not read and not used, and nothing here says how to put it back: look at it by hand (README.md, \"Staff runbook\")."
+done < <(sc_odd_dirs)
 
 # The decision runs again whenever a wait ends: after the restore's marker has gone, and after a person changed
 # what the start was waiting for.
@@ -504,6 +514,7 @@ fi
 stopped
 sc_standin_stop || exit 1
 rm -f "$SC_DB_CNF"
+sc_db_cnf_www_drop
 
 # Each loop is a small shell of root's, because it reads root's state folder. What it starts is SuiteCRM's own
 # command, as www-data.

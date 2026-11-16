@@ -79,7 +79,11 @@
 #   untrusted-state  www-data moves clouve/ aside and plants a state file and
 #                  a dump: the planted folder is moved aside and never read.
 #                  With the site whole the start goes on. With the site
-#                  between two versions it waits for repair.
+#                  between two versions it waits for repair. A person who
+#                  puts the planted folder back by hand gets its restore,
+#                  which refuses the dump before it drops a table: it is no
+#                  whole dump from mariadb-dump, so the database stays as it is
+#                  and the dump's client command ("system ...") runs nowhere.
 #   runbook        The README's runbook, run as it is written there (the test
 #                  takes the code blocks out of apps/limesurvey/README.md): a
 #                  damaged dump is got past with a dump of one's own, once to
@@ -920,7 +924,7 @@ if wants refusals; then
   echo
   echo "Old code on an empty database"
   new_case refuse 6.16.1
-  docker exec -e "MYSQL_PWD=$LS_DB_ROOT_PW" "$DB" mariadb -h 127.0.0.1 -u root -e 'DROP DATABASE limesurvey; CREATE DATABASE limesurvey' >/dev/null 2>&1
+  docker exec -e "MYSQL_PWD=$LS_DB_ROOT_PW" "$DB" mariadb -u root -e 'DROP DATABASE limesurvey; CREATE DATABASE limesurvey' >/dev/null 2>&1
   REFUSE_SUM="$(ls_db_sum "$DB") / $(ls_db_made "$DB")"
   waits "old code on an empty database" "the volume holds LimeSurvey 6.16.1 and the database limesurvey is empty. This image installs"
   assert_eq "nothing was installed into the empty database" "0" \
@@ -1272,13 +1276,15 @@ fi
 if wants untrusted-state; then
   # plant: as www-data, moves the real clouve/ aside and puts a folder of its own there: a state that asks for a
   # restore, the marker that says the database was changed, and a dump with a stamp that matches it. The dump
-  # drops nothing by itself. It makes one table, so a load would show.
+  # drops nothing by itself. Its first line is a client command that makes a file in the container's /tmp, and
+  # then it makes one table, so a load would show either way.
   plant() {
     docker run --rm --network none -u www-data -v "${PREFIX}$1-html:/v" --entrypoint bash "$NEW_IMAGE" -c '
       cd /v && mv clouve clouve.real && mkdir clouve && d=clouve/upgrade-6.16.1-to-7.10.0 && mkdir "$d" &&
       printf "phase=restore\nrstep=removing-new\nfrom=6.16.1\nfrom_db=640\nto=7.10.0\nto_db=718\n" > "$d/state" &&
       echo "since=planted" > "$d/db-touched" &&
-      printf "%s\n" "CREATE TABLE planted_by_www_data (id INT);" "-- Dump completed" | gzip > "$d/db.sql.gz" &&
+      printf "%s\n" "system touch /tmp/clv-planted-ran" "CREATE TABLE planted_by_www_data (id INT);" "-- Dump completed" |
+        gzip > "$d/db.sql.gz" &&
       printf "sha256=%s\ntables=1\ndbversion=640\ncode=6.16.1\n" "$(sha256sum "$d/db.sql.gz" | cut -d" " -f1)" > "$d/backup-complete"' 2>&1
   }
   echo
@@ -1302,6 +1308,7 @@ if wants untrusted-state; then
   assert_lacks "the planted state was not acted on" "$log" "[clouve-upgrade] restore"
   assert_eq "the planted dump was not loaded" "0" \
     "$(ls_sql "$DB" "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'limesurvey' AND table_name = 'planted_by_www_data'")"
+  assert_eq "and its client command never ran" "absent" "$(docker exec "$APP" sh -c '[ -e /tmp/clv-planted-ran ] && echo there || echo absent')"
   assert_eq "no table was dropped and made again" "$made" "$(ls_db_made "$DB")"
   assert_eq "the tables hold what they held" "$before" "$(site_sum "$DB")"
   check_new_site "after the planted folder"
@@ -1325,7 +1332,8 @@ if wants untrusted-state; then
     assert_eq "the start waits for repair instead of starting a site without its state" "0" "$rc"
     ls_assert_hold "between two versions" "$APP"
     log="$(docker logs "$APP" 2>&1)"
-    assert_contains "the FAILED line names the folder that was moved aside and says to keep it" "$log" "If it holds an upgrade's backup, that backup is the way back, so keep it."
+    assert_contains "the FAILED line names the folder that was moved aside, says to keep it, and that PHP code could have written it" "$log" \
+      "If it holds an upgrade's backup, keep it: it may be the way back. PHP code could have written all of it, so trust it only as far as you trust the site."
     assert_lacks "the planted state was not acted on" "$log" "[clouve-upgrade] restore"
     assert_eq "the planted dump was not loaded, and no table was dropped" "$before / 0" \
       "$(ls_db_sum "$DB") / $(ls_db_made "$DB") / $(ls_sql "$DB" "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'limesurvey' AND table_name = 'planted_by_www_data'")"
@@ -1334,6 +1342,26 @@ if wants untrusted-state; then
     t0=$(date +%s); docker stop -t 60 "$APP" >/dev/null 2>&1; took=$(( $(date +%s) - t0 ))
     if [ "$took" -le 15 ]; then pass "a stop request ends the wait in $took s"; else fail "a stop request ends the wait in $took s"; fi
     assert_eq "with status 0" "0" "$(docker inspect --format '{{.State.ExitCode}}' "$APP")"
+
+    echo
+    echo "A person takes the planted folder for the upgrade's backup and puts it back by hand"
+    # The README says that such a folder came from a place PHP code could write. Someone who puts it back anyway,
+    # made root's, gets its restore at the next start. The restore first checks that the dump is a whole one from
+    # mariadb-dump, and this one's first line is no sandbox line, so nothing is dropped and nothing is loaded. A
+    # dump that passes is loaded by a client that runs as www-data with --sandbox.
+    # shellcheck disable=SC2016  # the script is for the sh in the volume's container
+    vol_run "${PREFIX}plant-html" 'cd /v && d=$(ls -d clouve.untrusted-* | head -n 1) && rm -rf clouve &&
+      chown -R 0:0 "$d" && chmod -R go= "$d" && mv -T "$d" clouve' >/dev/null
+    start_new plant
+    rc=0; ls_wait_hold "$APP" 300 || rc=$?
+    log="$(docker logs "$APP" 2>&1)"
+    assert_contains "the next start runs the adopted folder's restore" "$log" "[clouve-upgrade] restore: putting LimeSurvey 6.16.1 back"
+    assert_eq "the dump's client command ran nowhere: no file in /tmp" "absent" \
+      "$(docker exec "$APP" sh -c '[ -e /tmp/clv-planted-ran ] && echo "made by $(stat -c %U /tmp/clv-planted-ran)" || echo absent')"
+    assert_contains "the restore refused the dump before it dropped a table" "$log" "no table is dropped"
+    assert_eq "the database is as it was: nothing dropped, and nothing of the dump came in" "$before / 0" \
+      "$(ls_db_sum "$DB") / $(ls_db_made "$DB") / $(ls_sql "$DB" "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'limesurvey' AND table_name = 'planted_by_www_data'")"
+    assert_eq "and the start waits for repair" "0" "$rc"
   fi
   docker rm -f -v "$APP" "$DB" >/dev/null 2>&1
 fi

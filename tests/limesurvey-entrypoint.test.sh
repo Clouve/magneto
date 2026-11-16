@@ -26,7 +26,8 @@
 #    ADMIN_PASSWORD; config.php and security.php are www-data's, mode 600;
 #    the upload skeleton is on the nested volume; Apache is PID 1 without
 #    CLOUVE_OPS_PASSWORD (PHP under Apache finds none) and clouve-ops still
-#    signs in; installer/, node_modules/ and clouve/ are denied over HTTP,
+#    signs in, a wrong password doesn't, and both show in the container's
+#    log; installer/, node_modules/ and clouve/ are denied over HTTP,
 #    so the command-line install worked with installer/ closed to the web;
 #    allowed_hosts.php names localhost and PUBLIC_URL's host; the stand-in
 #    is gone and Apache has the port.
@@ -262,6 +263,13 @@ assert_eq "PHP under Apache finds no CLOUVE_OPS_PASSWORD" "user=www-data getenv=
   "$(docker exec "$A" curl -s -m 10 http://127.0.0.1:8080/clv-ops-probe.php)"
 docker exec "$A" rm -f /var/www/html/clv-ops-probe.php
 assert_eq "clouve-ops still signs in over SSH" "clouve-ops" "$(ls_ssh_whoami "$A" "$LS_OPS_PW")"
+# The container has no syslog daemon, so sshd logs to the container's log (sshd -D -e): staff see the guessing.
+assert_eq "a wrong password signs nobody in" "" "$(ls_ssh_whoami "$A" "wrong-$LS_OPS_PW")"
+sleep 1
+log="$(docker logs "$A" 2>&1)"
+assert_eq "and the container's log has the failed sign-in, and the accepted one" "yes yes" \
+  "$(grep -q 'Failed password for clouve-ops' <<< "$log" && echo yes || echo no) $(grep -q 'Accepted password for clouve-ops' <<< "$log" && echo yes || echo no)"
+assert_eq "still with no password in the log" "0" "$(ls_secrets_in "$log")"
 assert_eq "the stand-in is gone" "0" "$(docker exec "$A" pgrep -fc 'php -S')"
 assert_eq "and Apache's answers carry no X-Clouve-Standin header" "0" \
   "$(docker exec "$A" curl -s -m 10 -D - -o /dev/null http://127.0.0.1:8080/ | grep -ci '^X-Clouve-Standin')"

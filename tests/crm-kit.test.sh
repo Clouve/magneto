@@ -32,12 +32,17 @@
 #   - LimeSurvey and SuiteCRM run the versions the manifest names;
 #   - the plugin is registered and on, with its settings from the environment
 #     and no password in clear text; the demo survey is there with its link on;
-#   - the plugin's table of mappings has the plugin's current shape, and a
-#     question's mappings can be saved (two fields, one with a rule);
+#   - the plugin's table of mappings has the plugin's current shape, holds
+#     the demo survey's mappings, the same ones its questions carry (running
+#     the import's step again adds no row), and a question's mappings can be
+#     saved (two fields, one with a rule);
 #   - each of the plugin's endpoints answers 401 to a caller not signed in;
 #   - when the plugin's OAuth2 client is deleted in SuiteCRM, a response is
 #     recorded as failed, and "Initialize OAuth2" on the plugin's settings
 #     page makes a new client, after which responses become leads again;
+#   - the plugin's status check signs in to SuiteCRM: it reads ready, and
+#     after the main admin's password is changed in SuiteCRM it reads not
+#     ready, with the HTTP code and no password in it;
 #   - a sales inquiry submitted over HTTP becomes one lead in SuiteCRM and no
 #     case; a support request becomes a case with its subject, and a lead
 #     with the person's contact details;
@@ -61,7 +66,8 @@
 #             the plugin's settings are still there, and its passwords are now
 #             stored encrypted. The OAuth2 client is the same and still works:
 #             a new response becomes a new lead. The old table of mappings has
-#             the current shape. SuiteCRM's scheduler is held. No sshd runs.
+#             the current shape, and the upgrade added no row to it and changed
+#             no question's mappings. SuiteCRM's scheduler is held. No sshd runs.
 #   standin   SuiteCRM's upgrade is held at its stand-in (the test-only pause)
 #             while LimeSurvey finishes. A response submitted then is recorded
 #             as failed, never as synced, and no lead is made of it. Once
@@ -397,6 +403,28 @@ mappings_shape() {
       (SELECT COUNT(DISTINCT index_name) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = 'lime_survey_crm_mappings' AND index_name = 'unique_question_field_mapping'), ' ',
       (SELECT COUNT(DISTINCT index_name) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = 'lime_survey_crm_mappings' AND index_name = 'unique_question_mapping'))"
 }
+# mapping_rows attributes|table: the demo survey's mappings, one "<question id> <module>.<field> <rule or ->" per
+# line, as its questions carry them (the attribute suitecrm_mappings_json, where a sync reads them) or as the
+# plugin's own table holds them.
+mapping_rows() {
+  if [ "$1" = attributes ]; then
+    lsql "SELECT qa.qid, CONCAT(jt.module, '.', jt.field), IFNULL(NULLIF(jt.rule, ''), '-')
+      FROM lime_question_attributes qa JOIN lime_questions q ON q.qid = qa.qid,
+        JSON_TABLE(qa.value, '\$[*]' COLUMNS (module VARCHAR(100) PATH '\$.module', field VARCHAR(100) PATH '\$.field',
+          rule VARCHAR(100) PATH '\$.transformRule')) jt
+      WHERE q.sid = $SID AND q.parent_qid = 0 AND qa.attribute = 'suitecrm_mappings_json' ORDER BY 1, 2"
+  else
+    lsql "SELECT question_id, CONCAT(crm_module, '.', crm_field_name), IFNULL(NULLIF(transform_rule, ''), '-')
+      FROM lime_survey_crm_mappings WHERE survey_id = $SID ORDER BY 1, 2"
+  fi | tr '\t' ' '
+}
+# mapping_attributes: each of the demo survey's questions with its mapping attribute as stored, one per line.
+mapping_attributes() {
+  lsql "SELECT qa.qid, qa.value FROM lime_question_attributes qa JOIN lime_questions q ON q.qid = qa.qid
+    WHERE q.sid = $SID AND qa.attribute = 'suitecrm_mappings_json' ORDER BY qa.qid, qa.qaid"
+}
+# kit_status: the plugin's status check, as the settings page's "Check Status" asks for it. The admin is signed in.
+kit_status() { web get /tmp/admin.jar "$(direct actionCheckStatus 0)" >/dev/null; body; }
 
 # --- LimeSurvey over HTTP -----------------------------------------------------------------------------------------------
 
@@ -822,6 +850,21 @@ if wants new; then
     [ "$code" = 401 ] || anon_bad="$anon_bad $f=$code"
   done
   assert_eq "each of the plugin's ${#ENDPOINTS[@]} endpoints answers 401 to a caller who is not signed in" "" "$anon_bad"
+  # The demo survey's mappings are on its questions, where a sync reads them. The import also writes them to the
+  # plugin's own table, which the plugin's pages list, as the plugin's code writes a question's mappings there.
+  demo_rows="$(mapping_rows table)"
+  if [ -n "$demo_rows" ] && [ "$demo_rows" = "$(mapping_rows attributes)" ]; then
+    pass "the plugin's table of mappings holds the demo survey's $(grep -c . <<< "$demo_rows") mappings, the same ones its questions carry"
+  else
+    fail "the plugin's table of mappings holds the demo survey's mappings, the same ones its questions carry"
+    printf '       table:      %s\n       attributes: %s\n' "$(xargs <<< "$demo_rows")" "$(mapping_rows attributes | xargs)"
+  fi
+  assert_eq "and no other rows" "$(grep -c . <<< "$demo_rows")" "$(lsql "SELECT COUNT(*) FROM lime_survey_crm_mappings")"
+  assert_contains "the log says so" "$(docker logs "$(c_of limesurvey)" 2>&1)" \
+    "[demo-data] the plugin's table of mappings has survey $SID's $(grep -c . <<< "$demo_rows") mappings"
+  docker exec -u www-data "$(c_of limesurvey)" sh -c "cd /var/www/html && YII_CONSOLE_COMMANDS=/clouve/limesurvey/installer/commands php application/commands/console.php clouve mappings --sid=$SID" >/dev/null 2>&1
+  assert_eq "running the import's step again adds no row and changes none" "$demo_rows $(grep -c . <<< "$demo_rows")" \
+    "$(mapping_rows table) $(lsql "SELECT COUNT(*) FROM lime_survey_crm_mappings")"
   T_PASS="$ADMIN_PW" web login "$LS_ADMIN" /tmp/admin.jar
   check_mappings "a new kit"
 
@@ -870,6 +913,46 @@ if wants new; then
   M4=n4x4469
   assert_eq "the next sales inquiry is completed" "submitted" "$(submit_sales "$M4" "Acme-$M4")"
   check_lead "with the new client, the response" "$M4" "Acme-$M4"
+
+  echo
+  echo "The status check signs in to SuiteCRM"
+  status="$(kit_status)"
+  assert_eq "with the link working, the status check's sign-in is ok and the link is ready" "1 1" \
+    "$(grep -c '"suitecrm_signin":{"status":"ok"' <<< "$status") $(grep -c '"overall":"ready"' <<< "$status")"
+  # Someone changes the main admin's password in SuiteCRM. The stored hash is spoilt in place and put back after, so
+  # no hash and no password passes through the test. SuiteCRM 8.10 answers a wrong password with HTTP 500.
+  csql "UPDATE users SET user_hash = CONCAT(user_hash, 'x') WHERE user_name = '$CRM_ADMIN' AND deleted = 0" >/dev/null
+  status="$(kit_status)"
+  assert_eq "with the admin's password changed in SuiteCRM, the sign-in fails and the link is not ready" "1 0" \
+    "$(grep -c '"suitecrm_signin":{"status":"error"' <<< "$status") $(grep -c '"overall":"ready"' <<< "$status")"
+  # The row's text is the one the READMEs and both skills quote: 500 for the account, 401 for the client.
+  assert_contains "the row names HTTP 500, says what SuiteCRM means by it, and says to check the admin name and password" "$status" \
+    '"suitecrm_signin":{"status":"error","message":"SuiteCRM'"'"'s sign-in failed (HTTP 500), so every sync fails. SuiteCRM answers 500 when the admin name or password is wrong or the admin account is not active, and on an error of its own. Check the SuiteCRM admin name and password in the settings below, and that the account is active in SuiteCRM."}'
+  echo "       the sign-in's row: $(sed -n 's/.*"suitecrm_signin":{"status":"error","message":"\([^.]*\)\..*/\1/p' <<< "$status")"
+  assert_eq "the status holds no password" "0" "$(secrets_in "$status")"
+  csql "UPDATE users SET user_hash = LEFT(user_hash, CHAR_LENGTH(user_hash) - 1) WHERE user_name = '$CRM_ADMIN' AND deleted = 0" >/dev/null
+  status="$(kit_status)"
+  assert_eq "with the password back, the status is ready again" "1 1" \
+    "$(grep -c '"suitecrm_signin":{"status":"ok"' <<< "$status") $(grep -c '"overall":"ready"' <<< "$status")"
+  # Someone deactivates the main admin in SuiteCRM.
+  was="$(csql "SELECT status FROM users WHERE user_name = '$CRM_ADMIN' AND deleted = 0")"
+  csql "UPDATE users SET status = 'Inactive' WHERE user_name = '$CRM_ADMIN' AND deleted = 0" >/dev/null
+  status="$(kit_status)"
+  assert_eq "with the main admin deactivated in SuiteCRM, the sign-in fails with HTTP 500 and the link is not ready" "1 0" \
+    "$(grep -c '"suitecrm_signin":{"status":"error","message":"SuiteCRM'"'"'s sign-in failed (HTTP 500)' <<< "$status") $(grep -c '"overall":"ready"' <<< "$status")"
+  csql "UPDATE users SET status = '$was' WHERE user_name = '$CRM_ADMIN' AND deleted = 0" >/dev/null
+  assert_eq "with the account active again, the status is ready again" "Active 1" \
+    "$(csql "SELECT status FROM users WHERE user_name = '$CRM_ADMIN' AND deleted = 0") $(kit_status | grep -c '"overall":"ready"')"
+  # The client is still there, but its secret no longer matches the one LimeSurvey holds (changed in SuiteCRM). The
+  # stored hash of the secret is spoilt in place and put back after.
+  csql "UPDATE oauth2clients SET secret = CONCAT(secret, 'x') WHERE name = 'LimeSurvey Integration' AND deleted = 0" >/dev/null
+  status="$(kit_status)"
+  assert_eq "with the client's secret changed in SuiteCRM, the client check passes, the sign-in fails with HTTP 401 and the link is not ready" "1 1 0" \
+    "$(grep -c '"oauth2_client":{"status":"ok"' <<< "$status") $(grep -c '"suitecrm_signin":{"status":"error","message":"SuiteCRM refused the sign-in (HTTP 401)' <<< "$status") $(grep -c '"overall":"ready"' <<< "$status")"
+  assert_contains "the row says how to make a new client" "$status" 'click \"Initialize OAuth2\" to make a new one'
+  assert_eq "the status holds no password" "0" "$(secrets_in "$status")"
+  csql "UPDATE oauth2clients SET secret = LEFT(secret, CHAR_LENGTH(secret) - 1) WHERE name = 'LimeSurvey Integration' AND deleted = 0" >/dev/null
+  assert_eq "with the secret back, the status is ready again" "1" "$(kit_status | grep -c '"overall":"ready"')"
 
   echo
   echo "CLOUVE_OPS_PASSWORD on all four"
@@ -961,6 +1044,7 @@ lsql "INSERT INTO lime_plugins (name, active, version, load_error, plugin_type) 
   INSERT INTO lime_survey_crm_mappings (survey_id, question_id, crm_module, crm_field_name, crm_field_label, crm_field_type)
     VALUES ($SID, $(qid email), 'Leads', 'email1', 'Email', 'varchar')" >/dev/null
 assert_eq "its table of mappings has the old shape, with a row in it" "0 0 1 1" "$(mappings_shape) $(lsql "SELECT COUNT(*) FROM lime_survey_crm_mappings")"
+OLD_MAPPING_ATTRS="$(mapping_attributes)"
 OLD_RESPONSES="$(lsql "SELECT COUNT(*) FROM lime_survey_$SID")"
 OLD_SYNC="$(lsql "SELECT COUNT(*) FROM lime_survey_crm_sync_log")"
 OLD_LEADS="$(csql "SELECT COUNT(*) FROM leads WHERE deleted = 0")"
@@ -1092,6 +1176,14 @@ if wants upgrade; then
   T_PASS="$ADMIN_PW" web login "$LS_ADMIN" /tmp/admin.jar
   assert_eq "$c: the old table's row is kept" "email1" \
     "$(lsql "SELECT crm_field_name FROM lime_survey_crm_mappings WHERE question_id = $(qid email)")"
+  # A new install's demo import fills the table with the demo survey's mappings. An upgrade leaves an earlier
+  # install's table and its questions' mappings as they were.
+  assert_eq "$c: the upgrade added no row to the table of mappings" "1" "$(lsql "SELECT COUNT(*) FROM lime_survey_crm_mappings")"
+  if [ -n "$OLD_MAPPING_ATTRS" ] && [ "$(mapping_attributes)" = "$OLD_MAPPING_ATTRS" ]; then
+    pass "$c: and it changed no question's mappings ($(grep -c . <<< "$OLD_MAPPING_ATTRS") questions carry one)"
+  else
+    fail "$c: and it changed no question's mappings"
+  fi
   check_mappings "$c"
 
   echo

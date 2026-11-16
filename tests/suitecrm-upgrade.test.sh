@@ -338,7 +338,9 @@ assert_note() {
 # staff_puts_state_back CASE: the README's step for a state folder the image moved aside: look at it, give it
 # back to root, close it, and give it its name again.
 staff_puts_state_back() {
-  in_app "$1" 'cd /var/www/html/tmp && d="$(ls -d clouve-backup.untrusted-* | head -n 1)" && chown -hR root:root "$d" && chmod -R go= "$d" && mv "$d" clouve-backup'
+  # shellcheck disable=SC2016  # the script is for the bash inside the container
+  in_app "$1" 'cd /var/www/html/tmp && d="$(ls -d clouve-backup.untrusted-* | head -n 1)" &&
+    cd -P -- "$d" && [ "$(pwd -P)" = "/var/www/html/tmp/$d" ] && chown -hR root:root . && chmod -R go= . && cd .. && mv -T -- "$d" clouve-backup'
 }
 # setting_of CASE: what SuiteCRM's own settings say about the scheduler: on or off.
 setting_of() {

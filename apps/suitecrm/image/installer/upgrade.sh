@@ -32,11 +32,15 @@
 #     the database's version row say the new version, and SuiteCRM's own version command prints it. VERSION
 #     alone proves nothing: it changes early in the copy.
 #   - When a try fails, it goes back: it removes the upgraded code, as root, so that nothing in it can be in
-#     the way, unpacks the old code as www-data and names the media folders back. The database is left alone
+#     the way, unpacks the old code as www-data and names the media folders back. Root removes and changes
+#     owners only from inside the folder it checked, never by a path that www-data could point elsewhere
+#     (lib.sh, sc_in_dir). The database is left alone
 #     only when it is proven unchanged: SuiteCRM's second command never started, and the database's
 #     fingerprint is the one the backup recorded. From 8.10 on the first command can change the database too
 #     (pre-upgrade migrations). In every other case all tables are dropped (the upgrade adds some that the dump
-#     doesn't know) and the dump is loaded. Then it tries once more. After two failed tries the old version
+#     doesn't know) and the dump is loaded, from inside the state folder that was checked, by a client that
+#     runs as www-data with its sandbox on: a client command in a dump (system, source) is refused. Then it
+#     tries once more. After two failed tries the old version
 #     runs, and this build of the image doesn't try again until someone removes tmp/clouve-backup/upgrade-failed.
 #   - When going back fails, it changes nothing more and exits with a failing status, so Apache never starts on
 #     old code with a half-changed database, and the next start goes back again.
@@ -85,7 +89,6 @@ to=$(sc_image_version)
 build=$(sc_image_build)
 package=SuiteCRM-$to
 zip=/clouve/suitecrm/$package.zip
-console_log=$SC_STATE_DIR/upgrade-console.log
 max_attempts=2
 reason=''
 from='?'
@@ -96,10 +99,38 @@ aside_folders="uploads public/media-upload media public/media"
 aside_markers=".suitecrm_initialized .suitecrm_url"
 cd "$SC_ROOT" || exit 1
 
-# console_log_ready: the console log is root's alone, like everything else in the state folder.
-console_log_ready() {
-    ( umask 077; : >> "$console_log" ) 2> /dev/null && chmod 600 "$console_log"
+# The functions that run inside the state folder (sc_in_state) run in a subshell, so they can't set $reason. They
+# write it to this file of root's instead, and the caller reads it back with take_reason DEFAULT.
+reason_file=$SC_RUN/reason
+why() { local IFS=' '; printf '%s' "$*" > "$reason_file"; }
+take_reason() {
+    reason=$(cat -- "$reason_file" 2> /dev/null)
+    rm -f -- "$reason_file"
+    reason=${reason:-$1}
 }
+
+# console_log_ready: the console log, tmp/clouve-backup/upgrade-console.log, is root's alone, like everything else
+# in the state folder. console_append adds standard input to it.
+console_log_ready() { sc_in_state console_log_ready_here; }
+console_log_ready_here() { ( umask 077; : >> upgrade-console.log ) 2> /dev/null && chmod 600 upgrade-console.log; }
+console_append() { sc_in_state sh -c 'cat >> upgrade-console.log'; }
+
+# parent_of PATH: the folder PATH is in, relative to the install ("" for its top folder).
+parent_of() { case $1 in */*) printf '%s\n' "${1%/*}" ;; *) printf '\n' ;; esac; }
+sc_real_dir() { [ -d "$1" ] && [ ! -L "$1" ]; }
+
+# held_mv PARENT FROM TO: for a rename between the state folder and the install. It runs inside the state folder
+# (sc_in_state), opens that folder as file descriptor 8 and renames FROM to TO from inside PARENT, a folder of the
+# install that sc_in_dir checked. The state folder's side is named /proc/self/fd/8/<name>, a path that leads to the
+# folder that was checked, whatever its name is by then. So neither end can be another folder: the customer's
+# folders never leave the volume, and nothing of www-data's comes into root's folder.
+held_mv() {
+    exec 8< . || return 1
+    sc_in_dir "$1" mv -T -- "$2" "$3"
+}
+# to_install STATE_PATH INSTALL_PATH, to_state INSTALL_PATH STATE_PATH: such a rename, each way.
+to_install() { sc_in_state held_mv "$(parent_of "$2")" "/proc/self/fd/8/$1" "${2##*/}"; }
+to_state() { sc_in_state held_mv "$(parent_of "$1")" "${1##*/}" "/proc/self/fd/8/$2"; }
 
 up_log() { local IFS=' '; printf '[clouve-upgrade] %s\n' "$*"; }
 up_phase() { up_log "$app $from -> $to: phase $1${2:+ ($2)}"; }
@@ -113,12 +144,21 @@ needs_staff() {
     exit 3
 }
 
-# stamp_get KEY: a value from the backup's "complete" file.
-stamp_get() {
+# stamp_get KEY: a value from the backup's "complete" file. stamp_value NAME KEY does the reading, inside the state
+# folder, for the backup folder NAME.
+stamp_get() { sc_in_state stamp_value "${backup##*/}" "$1"; }
+stamp_value() {
     local line
+    sc_root_file "$1/complete" || return 0
     while IFS= read -r line; do
-        if [ "${line%%=*}" = "$1" ]; then printf '%s\n' "${line#*=}"; return 0; fi
-    done < "$backup/complete"
+        if [ "${line%%=*}" = "$2" ]; then printf '%s\n' "${line#*=}"; return 0; fi
+    done < "$1/complete"
+}
+# backup_file_good NAME FILE KEY: inside the state folder. NAME/FILE is a plain file of root's whose checksum is
+# the one the stamp records under KEY, and gzip reads it whole.
+backup_file_good() {
+    sc_root_file "$1/$2" && [ "$(sha256sum < "$1/$2" | cut -d' ' -f1)" = "$(stamp_value "$1" "$3")" ] &&
+        gzip -t "$1/$2" 2> /dev/null
 }
 
 # --- a stop request ---------------------------------------------------------------------------------------------------
@@ -143,6 +183,9 @@ if ! flock -n 9; then
     echo "[clouve-upgrade] another run of upgrade.sh is under way in this container, so this one does nothing" >&2
     exit 1
 fi
+# The copy of the database password that the way back's www-data client reads goes whenever this script ends. Only
+# the run that holds the lock may remove it: a run that was refused must not take it from the one that runs.
+trap 'sc_db_cnf_www_drop' EXIT
 [ -s "$SC_DB_CNF" ] || sc_db_cnf || { echo "[clouve-upgrade] could not write the database options file" >&2; exit 1; }
 
 # --- the room on the volume ---------------------------------------------------------------------------------------
@@ -184,8 +227,11 @@ up_space_ok() {
 # www-data and can neither replace nor remove them. Root's own places are left out: lost+found, and in tmp/
 # everything named clouve-* (the state folder, what was moved aside from it, and the AI Assistant's backups).
 up_not_www() {
-    find . \( -path ./lost+found -o -path './tmp/clouve-*' \) -prune -o ! -user www-data -print 2> /dev/null | head -n 5 |
-        sed 's|^\./||' | xargs -r
+    local name out=''
+    while IFS= read -r -d '' name; do
+        out="$out $(printf '%q' "$name")"
+    done < <(find . \( -path ./lost+found -o -path './tmp/clouve-*' \) -prune -o ! -user www-data -printf '%P\0' 2> /dev/null | head -z -n 5)
+    printf '%s\n' "${out# }"
 }
 
 # up_skip REASON: this start doesn't try the upgrade, and nothing has changed. The reason, the versions and the
@@ -193,11 +239,8 @@ up_not_www() {
 # volume keeps running. The note blocks nothing: the next start looks again, and removes it when it upgrades.
 up_skip() {
     if sc_state_dir_make; then
-        (
-            umask 077
-            printf 'from=%s\nto=%s\nbuild=%s\ntime=%s\nreason=%s\n' "$from" "$to" "$build" \
-                "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" > "$SC_SKIPPED"
-        ) || :
+        printf 'from=%s\nto=%s\nbuild=%s\ntime=%s\nreason=%s\n' "$from" "$to" "$build" \
+            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" | sc_state_write upgrade-skipped || :
     fi
     up_failed "$1. Nothing was changed and $from keeps running. The next start tries again (${SC_SKIPPED#"$SC_ROOT"/} has this note until then)."
     exit 0
@@ -219,36 +262,43 @@ up_db_fingerprint() {
         {
             printf 'CHECKSUM TABLE '
             sed 's/`/``/g; s/.*/`&`/' <<< "$tables" | paste -sd, -
-        } | mysql --defaults-extra-file="$SC_DB_CNF" --connect-timeout=10 -N -B "$DATABASE_NAME" || exit 1
+        } | mysql --defaults-extra-file="$SC_DB_CNF" --sandbox --connect-timeout=10 -N -B "$DATABASE_NAME" || exit 1
     ) || return 1
     printf '%s\n' "$parts" | sha256sum | cut -d' ' -f1
 }
 
-# up_backup: writes the backup under <name>.partial, checks it, stamps it and gives it its name. An older kept
-# backup goes only once the new one is complete. Sets $reason and returns 1 when the backup is not good; the
-# site is untouched either way.
+# up_backup: writes the backup under <name>.partial, checks it, stamps it and gives it its name, all from inside the
+# state folder (up_backup_here). An older kept backup goes only once the new one is complete. Sets $reason and
+# returns 1 when the backup is not good; the site is untouched either way.
 up_backup() {
-    local partial=$backup.partial status listing must creates tables last other fingerprint
-    rm -rf -- "$SC_STATE_DIR"/*.partial
-    if ! mkdir -- "$partial" || ! chmod 00700 -- "$partial"; then reason="could not make the backup folder"; return 1; fi
+    rm -f -- "$reason_file"
+    if sc_in_state up_backup_here "${backup##*/}"; then return 0; fi
+    take_reason "the backup could not be written in ${SC_STATE_DIR#"$SC_ROOT"/}"
+    return 1
+}
+up_backup_here() {
+    local name=$1 part=$1.partial status listing must creates tables last other fingerprint
+    rm -rf -- ./*.partial
+    if ! mkdir -- "$part" || ! chmod 00700 -- "$part"; then why "could not make the backup folder"; return 1; fi
 
-    # The code and the settings. Root reads, and links are stored as links, never followed.
+    # The code and the settings. Root reads, and links are stored as links, never followed. tar opens the archive
+    # here, in the state folder, before it reads the install from SC_ROOT.
     (
         umask 077
         tar -C "$SC_ROOT" --anchored --exclude=./tmp --exclude=./cache --exclude=./logs --exclude=./lost+found \
             --exclude=./public/legacy/upload --exclude=./uploads --exclude=./media \
-            --exclude=./public/media-upload --exclude=./public/media -czf "$partial/code.tar.gz" .
+            --exclude=./public/media-upload --exclude=./public/media -czf "$part/code.tar.gz" .
     )
     status=$?
-    if [ "$status" -ne 0 ]; then reason="the code archive could not be written (tar exit status $status)"; return 1; fi
-    if ! gzip -t "$partial/code.tar.gz" 2>/dev/null || ! listing=$(tar -tzf "$partial/code.tar.gz" 2>/dev/null); then
-        reason="the code archive does not read back"
+    if [ "$status" -ne 0 ]; then why "the code archive could not be written (tar exit status $status)"; return 1; fi
+    if ! gzip -t "$part/code.tar.gz" 2>/dev/null || ! listing=$(tar -tzf "$part/code.tar.gz" 2>/dev/null); then
+        why "the code archive does not read back"
         return 1
     fi
     for must in ./VERSION ./bin/console ./vendor/autoload.php ./public/index.php ./public/legacy/config.php \
         ./config/services/system/upgrades.yaml; do
         if ! grep -qxF -- "$must" <<< "$listing"; then
-            reason="the code archive has no $must"
+            why "the code archive has no $must"
             return 1
         fi
     done
@@ -256,24 +306,24 @@ up_backup() {
 
     # The database, as the app's own user. The password is in the options file, never on the command line.
     ( umask 077; mysqldump --defaults-extra-file="$SC_DB_CNF" --single-transaction --routines --triggers \
-        "$DATABASE_NAME" | gzip > "$partial/db.sql.gz"; exit "$((PIPESTATUS[0] + PIPESTATUS[1]))" )
+        "$DATABASE_NAME" | gzip > "$part/db.sql.gz"; exit "$((PIPESTATUS[0] + PIPESTATUS[1]))" )
     status=$?
-    if [ "$status" -ne 0 ]; then reason="the database dump failed"; return 1; fi
-    if ! gzip -t "$partial/db.sql.gz" 2>/dev/null; then reason="the database dump does not read back"; return 1; fi
-    last=$(gzip -dc "$partial/db.sql.gz" | tail -n 1)
+    if [ "$status" -ne 0 ]; then why "the database dump failed"; return 1; fi
+    if ! gzip -t "$part/db.sql.gz" 2>/dev/null; then why "the database dump does not read back"; return 1; fi
+    last=$(gzip -dc "$part/db.sql.gz" | tail -n 1)
     case $last in
         '-- Dump completed'*) ;;
-        *) reason="the database dump has no end line, so it is cut short"; return 1 ;;
+        *) why "the database dump has no end line, so it is cut short"; return 1 ;;
     esac
-    creates=$(gzip -dc "$partial/db.sql.gz" | grep -c '^CREATE TABLE ')
+    creates=$(gzip -dc "$part/db.sql.gz" | grep -c '^CREATE TABLE ')
     tables=$(sc_base_table_count) || tables=''
     if [ -z "$tables" ] || [ "$tables" -lt 1 ] || [ "$creates" != "$tables" ]; then
-        reason="the database dump holds $creates tables and the database has ${tables:-an unknown number}"
+        why "the database dump holds $creates tables and the database has ${tables:-an unknown number}"
         return 1
     fi
     # What the database looks like now. A way back compares it with this before it leaves the database alone.
     if ! fingerprint=$(up_db_fingerprint) || [ -z "$fingerprint" ]; then
-        reason="the database's tables could not be read for the backup's stamp"
+        why "the database's tables could not be read for the backup's stamp"
         return 1
     fi
 
@@ -285,56 +335,64 @@ up_backup() {
             printf 'version_file=%s\ndatabase_version=%s\ntables=%s\n' "$(sc_read_version "$SC_ROOT/VERSION")" \
                 "$(sc_db_version)" "$tables"
             printf 'had_uploads=%s\nhad_public_media_upload=%s\nhad_media=%s\nhad_public_media=%s\n' \
-                "$([ -d uploads ] && echo yes || echo no)" "$([ -d public/media-upload ] && echo yes || echo no)" \
-                "$([ -d media ] && echo yes || echo no)" "$([ -d public/media ] && echo yes || echo no)"
+                "$([ -d "$SC_ROOT/uploads" ] && echo yes || echo no)" "$([ -d "$SC_ROOT/public/media-upload" ] && echo yes || echo no)" \
+                "$([ -d "$SC_ROOT/media" ] && echo yes || echo no)" "$([ -d "$SC_ROOT/public/media" ] && echo yes || echo no)"
             printf 'code_sha256=%s\ndatabase_sha256=%s\ndatabase_fingerprint=%s\n' \
-                "$(sha256sum < "$partial/code.tar.gz" | cut -d' ' -f1)" \
-                "$(sha256sum < "$partial/db.sql.gz" | cut -d' ' -f1)" "$fingerprint"
-        } > "$partial/complete"
+                "$(sha256sum < "$part/code.tar.gz" | cut -d' ' -f1)" \
+                "$(sha256sum < "$part/db.sql.gz" | cut -d' ' -f1)" "$fingerprint"
+        } > "$part/complete"
     )
-    if ! grep -q '^database_fingerprint=[0-9a-f]\{64\}$' "$partial/complete"; then
-        reason="the backup's stamp could not be written"
+    if ! grep -q '^database_fingerprint=[0-9a-f]\{64\}$' "$part/complete"; then
+        why "the backup's stamp could not be written"
         return 1
     fi
-    chmod 600 "$partial"/* && sync "$partial"/* 2>/dev/null
+    chmod 600 "$part"/* && sync "$part"/* 2>/dev/null
 
-    rm -rf -- "$backup.old"
-    if [ -e "$backup" ] && ! mv "$backup" "$backup.old"; then reason="could not move the earlier backup aside"; return 1; fi
-    if ! mv "$partial" "$backup"; then
-        if [ -e "$backup.old" ]; then mv "$backup.old" "$backup"; fi
-        reason="could not give the backup its name"
+    rm -rf -- "$name.old"
+    if [ -e "$name" ] && ! mv -- "$name" "$name.old"; then why "could not move the earlier backup aside"; return 1; fi
+    if ! mv -- "$part" "$name"; then
+        if [ -e "$name.old" ]; then mv -- "$name.old" "$name"; fi
+        why "could not give the backup its name"
         return 1
     fi
-    sync "$SC_STATE_DIR" 2> /dev/null || :
+    sync . 2> /dev/null || :
     # One backup is kept: with this one complete, the earlier ones go.
-    for other in "$SC_STATE_DIR"/*-to-*; do
-        if [ "$other" != "$backup" ] && [ -d "$other" ] && [ ! -L "$other" ]; then
-            up_log "$app $from -> $to: removing the earlier backup ${other##*/}"
+    for other in ./*-to-*; do
+        if [ "$other" != "./$name" ] && [ -d "$other" ] && [ ! -L "$other" ]; then
+            up_log "$app $from -> $to: removing the earlier backup ${other#./}"
             rm -rf -- "$other"
         fi
     done
-    up_log "$app $from -> $to: backup complete in ${backup#"$SC_ROOT"/} (code $(du -sh "$backup/code.tar.gz" | cut -f1), database $(du -sh "$backup/db.sql.gz" | cut -f1), $tables tables)"
+    up_log "$app $from -> $to: backup complete in ${backup#"$SC_ROOT"/} (code $(du -sh "$name/code.tar.gz" | cut -f1), database $(du -sh "$name/db.sql.gz" | cut -f1), $tables tables)"
 }
 
 # up_backup_good: succeeds when the backup is a stamped one of root's and both files still have the checksums
-# the stamp recorded. Sets $reason when not.
+# the stamp recorded. Sets $reason when not. The way back checks the dump and the archive again, in the same call
+# that uses them (up_load_dump, up_unpack_code).
 up_backup_good() {
-    local file
-    reason="there is no complete backup in ${backup#"$SC_ROOT"/}"
-    sc_state_dir_trusted || return 1
-    [ -d "$backup" ] && [ ! -L "$backup" ] && [ "$(stat -c %u -- "$backup")" = 0 ] &&
-        [ -z "$(find "$backup" -maxdepth 0 -perm /g=w,o=w 2> /dev/null)" ] || return 1
+    if reason=$(sc_in_state up_backup_good_here "${backup##*/}"); then
+        reason=''
+        return 0
+    fi
+    reason=${reason:-there is no complete backup in ${backup#"$SC_ROOT"/}}
+    return 1
+}
+# up_backup_good_here NAME: inside the state folder. Prints why NAME is not a good backup.
+up_backup_good_here() {
+    local name=$1 file
+    if ! sc_real_dir "$name" || [ "$(stat -c %u -- "$name")" != 0 ] || [ -n "$(find "$name" -maxdepth 0 -perm /g=w,o=w 2> /dev/null)" ]; then
+        echo "there is no complete backup in ${backup#"$SC_ROOT"/}"
+        return 1
+    fi
     for file in complete code.tar.gz db.sql.gz; do
-        [ -f "$backup/$file" ] && [ ! -L "$backup/$file" ] && [ "$(stat -c %u -- "$backup/$file")" = 0 ] || return 1
+        sc_root_file "$name/$file" || { echo "there is no complete backup in ${backup#"$SC_ROOT"/}"; return 1; }
     done
-    [ "$(stamp_get to)" = "$to" ] && [ "$(stamp_get from)" = "$from" ] || return 1
-    reason="the backup's code archive is damaged (its checksum changed)"
-    [ "$(sha256sum < "$backup/code.tar.gz" | cut -d' ' -f1)" = "$(stamp_get code_sha256)" ] &&
-        gzip -t "$backup/code.tar.gz" 2>/dev/null || return 1
-    reason="the backup's database dump is damaged (its checksum changed)"
-    [ "$(sha256sum < "$backup/db.sql.gz" | cut -d' ' -f1)" = "$(stamp_get database_sha256)" ] &&
-        gzip -t "$backup/db.sql.gz" 2>/dev/null || return 1
-    reason=''
+    if [ "$(stamp_value "$name" to)" != "$to" ] || [ "$(stamp_value "$name" from)" != "$from" ]; then
+        echo "there is no complete backup in ${backup#"$SC_ROOT"/}"
+        return 1
+    fi
+    backup_file_good "$name" code.tar.gz code_sha256 || { echo "the backup's code archive is damaged (its checksum changed)"; return 1; }
+    backup_file_good "$name" db.sql.gz database_sha256 || { echo "the backup's database dump is damaged (its checksum changed)"; return 1; }
 }
 
 # --- the customer's folders, out of SuiteCRM's reach and back ------------------------------------------------------
@@ -372,10 +430,18 @@ up_merge() {
 
 # up_own PATH: gives PATH and everything in it to www-data, when something in it is someone else's. The staff
 # step that puts an untrusted state folder back makes everything in it root's, the customer's folders included.
+# It runs inside the folder PATH is in, checked by sc_in_dir, and follows no link. www-data can move tmp/, with the
+# state folder and root's other folders in it, into PATH, so tmp/, the state folder and any folder of root's named
+# clouve-* are left out, by their inodes and names, wherever they are. Status 1, with nothing changed, when the
+# state folder or tmp/ is not at its place.
 up_own() {
-    if [ -n "$(find "$1" ! -user www-data -print -quit 2> /dev/null)" ]; then
-        chown -hR www-data:www-data -- "$1"
-    fi
+    local rel=${1#"$SC_ROOT"/} state tmp
+    [ -n "$(find "$1" ! -user www-data -print -quit 2> /dev/null)" ] || return 0
+    read -r state tmp <<< "$(sc_state_inos)"
+    [ -n "$state" ] && [ -n "$tmp" ] || return 1
+    sc_in_dir "$(parent_of "$rel")" find "${rel##*/}" -xdev \
+        \( -inum "$state" -o -inum "$tmp" -o \( -type d -name 'clouve-*' -user root \) \) -prune -o \
+        \( ! -user www-data -exec chown -h www-data:www-data -- {} + \)
 }
 
 # up_aside_take: copies the image's two marker files into root's state folder and renames the customer's upload
@@ -385,46 +451,53 @@ up_own() {
 # the seconds this takes. Only a plain file is copied, never what a link points at.
 up_aside_take() {
     local item name
-    if [ ! -d "$SC_ASIDE" ]; then
-        mkdir -- "$SC_ASIDE" && chmod 00700 -- "$SC_ASIDE" || return 1
-    fi
-    [ ! -L "$SC_ASIDE" ] && [ "$(stat -c %u -- "$SC_ASIDE")" = 0 ] || return 1
+    sc_in_state up_aside_dir_ready || return 1
     if [ -L public ] || { [ -e public ] && [ ! -d public ]; }; then return 1; fi
     for item in $aside_markers; do
         [ -f "$SC_ROOT/$item" ] && [ ! -L "$SC_ROOT/$item" ] || continue
-        rm -rf -- "${SC_ASIDE:?}/$item"
-        cp -pP -- "$SC_ROOT/$item" "$SC_ASIDE/$item" || return 1
+        sc_in_state up_copy_marker "$item" || return 1
     done
     for item in $aside_folders; do
         name=${item//\//__}
         [ -e "$SC_ROOT/$item" ] || [ -L "$SC_ROOT/$item" ] || continue
-        if [ -e "$SC_ASIDE/$name" ] || [ -L "$SC_ASIDE/$name" ]; then return 1; fi
-        mv -T -- "$SC_ROOT/$item" "$SC_ASIDE/$name" || return 1
+        if sc_in_state sc_present "aside/$name"; then return 1; fi
+        to_state "$item" "aside/$name" || return 1
     done
-    sync "$SC_ASIDE" 2> /dev/null || :
+    sc_in_state sync aside 2> /dev/null || :
 }
+# up_aside_dir_ready and up_copy_marker NAME: inside the state folder.
+up_aside_dir_ready() {
+    if [ ! -d aside ]; then
+        mkdir -- aside && chmod 00700 -- aside || return 1
+    fi
+    [ ! -L aside ] && [ "$(stat -c %u -- aside)" = 0 ]
+}
+up_copy_marker() { rm -rf -- "aside/$1" && cp -pP -- "$SC_ROOT/$1" "aside/$1"; }
 
 # up_aside_return: renames the folders back, and puts a marker back when SuiteCRM's command removed it. It can
 # run at any time and any number of times: what is not aside is left alone. When SuiteCRM's new code has made a
 # folder of the same name meanwhile, the customer's files are merged into it. Status 1 when something could not
 # be put back; it then stays where it is, in the state folder or next to its place as <name>.clouve-aside.
 up_aside_return() {
-    local item name src dst stage status=0
+    local item name dst stage has status=0
     sc_state_dir_trusted || return 0
     for item in $aside_folders; do
         name=${item//\//__}
-        src=$SC_ASIDE/$name
         dst=$SC_ROOT/$item
         stage=$dst.clouve-aside
-        if [ -e "$src" ] || [ -L "$src" ]; then
+        has=0
+        sc_in_state sc_present "aside/$name" || has=$?
+        # The state folder was there a moment ago, and now it isn't the one that was checked.
+        if [ "$has" = "$SC_NOT_PINNED" ]; then status=1; continue; fi
+        if [ "$has" = 0 ]; then
             if [ "${item%/*}" != "$item" ] && [ ! -d "${dst%/*}" ]; then
                 sc_as_www mkdir -p -- "${dst%/*}" || { status=1; continue; }
             fi
             if [ ! -e "$dst" ] && [ ! -L "$dst" ]; then
-                mv -T -- "$src" "$dst" || { status=1; continue; }
+                to_install "aside/$name" "$item" || { status=1; continue; }
                 up_own "$dst"
-            elif [ -d "$src" ] && [ ! -L "$src" ] && [ -d "$dst" ] && [ ! -L "$dst" ] && [ ! -e "$stage" ] && [ ! -L "$stage" ]; then
-                mv -T -- "$src" "$stage" || { status=1; continue; }
+            elif sc_in_state sc_real_dir "aside/$name" && [ -d "$dst" ] && [ ! -L "$dst" ] && [ ! -e "$stage" ] && [ ! -L "$stage" ]; then
+                to_install "aside/$name" "$item.clouve-aside" || { status=1; continue; }
             else
                 status=1
                 continue
@@ -442,18 +515,20 @@ up_aside_return() {
         fi
     done
     for item in $aside_markers; do
-        src=$SC_ASIDE/$item
         dst=$SC_ROOT/$item
-        [ -e "$src" ] || [ -L "$src" ] || continue
+        has=0
+        sc_in_state sc_present "aside/$item" || has=$?
+        if [ "$has" = "$SC_NOT_PINNED" ]; then status=1; continue; fi
+        [ "$has" = 0 ] || continue
         if [ -e "$dst" ] || [ -L "$dst" ]; then
-            rm -f -- "$src" || status=1
-        elif mv -T -- "$src" "$dst"; then
+            sc_state_rm "aside/$item" || status=1
+        elif to_install "aside/$item" "$item"; then
             up_own "$dst"
         else
             status=1
         fi
     done
-    if [ -d "$SC_ASIDE" ] && [ ! -L "$SC_ASIDE" ]; then rmdir -- "$SC_ASIDE" 2> /dev/null || :; fi
+    sc_in_state sh -c '[ -d aside ] && [ ! -L aside ] && rmdir -- aside' 2> /dev/null || :
     return "$status"
 }
 
@@ -466,15 +541,15 @@ up_aside_return() {
 up_console() {
     local status
     console_log_ready
-    printf '\n== %s %s (%s)\n' "$1" "$package" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$console_log"
-    sc_as_www php bin/console "$1" -n -t "$package" 2>&1 | tee -a "$console_log" |
+    printf '\n== %s %s (%s)\n' "$1" "$package" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" | console_append
+    sc_as_www php bin/console "$1" -n -t "$package" 2>&1 | sc_in_state tee -a upgrade-console.log |
         grep -v 'did not result in any SQL statements'
     status=${PIPESTATUS[0]}
     if [ "$status" -ne 0 ]; then
         reason="SuiteCRM's $1 ended with exit status $status"
         return 1
     fi
-    if sed -n "/^== $1 /,\$p" "$console_log" | tac | sed "/^== $1 /q" | grep -q 'status: failed'; then
+    if sc_in_state sed -n "/^== $1 /,\$p" upgrade-console.log | tac | sed "/^== $1 /q" | grep -q 'status: failed'; then
         reason="a step of SuiteCRM's $1 failed"
         return 1
     fi
@@ -490,8 +565,13 @@ up_succeeded() {
 # upgrade command will read, names every ENTRY (keep-list.php starts SuiteCRM's kernel and reads the list from
 # the compiled container, as the command does).
 up_keep_list_in_effect() {
+    local status
     console_log_ready
-    sc_as_www php "$SC_INSTALLER/keep-list.php" "$SC_ROOT" "$@" 2>> "$console_log"
+    sc_as_www php "$SC_INSTALLER/keep-list.php" "$SC_ROOT" "$@" 2> "$SC_RUN/keep-list.err"
+    status=$?
+    console_append < "$SC_RUN/keep-list.err"
+    rm -f -- "$SC_RUN/keep-list.err"
+    return "$status"
 }
 
 # up_will_delete: SuiteCRM's upgrade removes what it doesn't know at the top of the install, in public/ and in
@@ -511,7 +591,7 @@ up_will_delete() {
             if [ -e "$SC_PACKAGE/$rel" ] || grep -qxF -- "$rel" <<< "$kept"; then continue; fi
             case " $aside_folders $aside_markers " in *" $rel "*) continue ;; esac
             count=$((count + 1))
-            if [ "$count" -le 40 ]; then gone="$gone $rel"; fi
+            if [ "$count" -le 40 ]; then gone="$gone $(printf '%q' "$rel")"; fi
         done < <(ls -A -- "$level" 2> /dev/null)
     done
     if [ "$count" -gt 0 ]; then
@@ -595,7 +675,7 @@ up_finish() {
     sc_as_www bash -c 'date -u > "$1/.suitecrm_initialized"' _ "$SC_ROOT" 2> /dev/null
     began=$(sc_state_get started_epoch)
     case $began in '' | *[!0-9]*) elapsed='' ;; *) elapsed=$(($(date +%s) - began)) ;; esac
-    rm -f -- "$SC_SKIPPED"
+    sc_state_rm upgrade-skipped
     sc_state_clear
     if [ -d "$backup" ]; then
         kept="The backup stays in ${backup#"$SC_ROOT"/} until someone removes it."
@@ -616,31 +696,91 @@ up_drop_tables() {
     {
         echo 'SET FOREIGN_KEY_CHECKS = 0;'
         while read -r kind name; do echo "DROP $kind IF EXISTS $name;"; done <<< "$list"
-    } | mysql --defaults-extra-file="$SC_DB_CNF" "$DATABASE_NAME" || return 1
+    } | mysql --defaults-extra-file="$SC_DB_CNF" --sandbox "$DATABASE_NAME" || return 1
     [ "$(sc_table_count)" = 0 ]
 }
 
 # up_remove_code: removes the code the backup's archive brings back, and nothing else: the customer's files,
-# tmp/, cache/, logs/ and lost+found stay. Root does it, so that a file of root's or a closed folder that a
-# command run as root left in the tree can't stop the way back half-way, with the code gone. rm -rf never
-# follows a link, and the two folders it descends into by name are checked first. The image's two marker files
-# stay as well, and the archive then writes over them: the earlier image, started on a volume without
-# .suitecrm_initialized, installs anew and drops the database.
+# tmp/, cache/, logs/ and lost+found stay. Each folder is emptied from inside, once sc_in_dir checked that it is the
+# install's own folder and not a link that www-data put in its place, and by www-data (sc_clear): www-data can move
+# tmp/, with root's state folder in it, into the folder that is being emptied, and www-data can't remove that. What
+# a command run as root left in the tree is given to www-data first, so it can't stop the way back half-way. The
+# image's two marker files stay as well, and the archive then writes over them: the earlier image, started on a
+# volume without .suitecrm_initialized, installs anew and drops the database.
 up_remove_code() {
-    find . -mindepth 1 -maxdepth 1 ! -name tmp ! -name cache ! -name logs ! -name lost+found ! -name public \
-        ! -name uploads ! -name media ! -name '*.clouve-aside' ! -name .suitecrm_initialized ! -name .suitecrm_url \
-        -exec rm -rf -- {} + || return 1
+    sc_clear '' ! -name tmp ! -name cache ! -name logs ! -name lost+found ! -name public \
+        ! -name uploads ! -name media ! -name '*.clouve-aside' ! -name .suitecrm_initialized ! -name .suitecrm_url || return 1
     if [ -L public ] || [ ! -d public ]; then
-        rm -rf -- public
+        sc_clear '' -name public
         return
     fi
-    find public -mindepth 1 -maxdepth 1 ! -name legacy ! -name media-upload ! -name media ! -name '*.clouve-aside' \
-        -exec rm -rf -- {} + || return 1
+    sc_clear public ! -name legacy ! -name media-upload ! -name media ! -name '*.clouve-aside' || return 1
+    sc_pause remove-listed
     if [ -L public/legacy ] || [ ! -d public/legacy ]; then
-        rm -rf -- public/legacy
+        sc_clear public -name legacy
         return
     fi
-    find public/legacy -mindepth 1 -maxdepth 1 ! -name upload -exec rm -rf -- {} +
+    sc_clear public/legacy ! -name upload
+}
+
+# dump_whole NAME: inside the state folder. Succeeds when NAME/db.sql.gz is a whole dump from mysqldump, of as many
+# tables as the stamp records: its first line turns the client's sandbox on, its last line is mysqldump's end line,
+# and it makes one table per table. A dump this image wrote passes. A forged or foreign one that a person put back
+# usually doesn't, and the way back then drops no table.
+dump_whole() {
+    local first last creates
+    first=$(gzip -dc -- "$1/db.sql.gz" 2> /dev/null | head -n 1)
+    last=$(gzip -dc -- "$1/db.sql.gz" 2> /dev/null | tail -n 1)
+    creates=$(gzip -dc -- "$1/db.sql.gz" 2> /dev/null | grep -c '^CREATE TABLE ')
+    case $first in '/*M!999999\- enable the sandbox mode */'*) ;; *) return 1 ;; esac
+    case $last in '-- Dump completed'*) ;; *) return 1 ;; esac
+    [ "$creates" = "$(stamp_value "$1" tables)" ]
+}
+
+# up_load_dump NAME: inside the state folder (sc_in_state), with NAME the backup's folder. Checks the dump in this
+# very folder, drops every table and loads the dump. The folder stays the one that was checked from the check to
+# the load, whatever www-data does to its name in tmp/ meanwhile. The client runs as www-data, with SuiteCRM's own
+# database user, and with its sandbox on: a client command in the dump (system, source, tee) is refused, whoever
+# wrote the dump. The image's own dumps start with the line that turns the sandbox on anyway.
+up_load_dump() {
+    local name=$1 status
+    if ! backup_file_good "$name" db.sql.gz database_sha256; then
+        why "the backup's database dump is damaged (its checksum changed)"
+        return 1
+    fi
+    if ! dump_whole "$name"; then
+        why "the backup's database dump is not a whole dump of this site (its first line, its last line or its count of tables is not what mysqldump writes and the stamp records), so no table was dropped"
+        return 1
+    fi
+    if ! sc_db_cnf_www; then
+        sc_db_cnf_www_drop
+        why "the options file for the database client could not be written"
+        return 1
+    fi
+    if ! up_drop_tables; then
+        sc_db_cnf_www_drop
+        why "the database's tables could not be dropped"
+        return 1
+    fi
+    sc_pause restore
+    gzip -dc -- "$name/db.sql.gz" | sc_as_www mysql --defaults-extra-file="$SC_WWW_CNF" --sandbox "$DATABASE_NAME"
+    status=$((PIPESTATUS[0] + PIPESTATUS[1]))
+    sc_db_cnf_www_drop
+    if [ "$status" -ne 0 ]; then why "the database dump could not be loaded"; return 1; fi
+    if [ "$(sc_base_table_count)" != "$(stamp_value "$name" tables)" ]; then
+        why "the database has $(sc_base_table_count) tables after the dump was loaded, not $(stamp_value "$name" tables)"
+        return 1
+    fi
+}
+
+# up_unpack_code NAME: inside the state folder. Checks the code archive in this very folder and unpacks it into the
+# install, as www-data.
+up_unpack_code() {
+    if ! backup_file_good "$1" code.tar.gz code_sha256; then
+        why "the backup's code archive is damaged (its checksum changed)"
+        return 1
+    fi
+    sc_as_www tar -C "$SC_ROOT" -xzpf - < "$1/code.tar.gz" || { why "the code archive could not be unpacked"; return 1; }
 }
 
 # up_restore: puts the old version back from the backup: the customer's folders when they were aside, the
@@ -648,7 +788,7 @@ up_remove_code() {
 # back failed (it can run again), 2 when there is no good backup, in which case nothing was touched, 3 when
 # the old version is back but files of the customer's that the backup recorded are not on the volume.
 up_restore() {
-    local pair old new had status dir step recorded now lost=''
+    local pair old new had dir step recorded now lost=''
     up_phase restore
     # The backup is checked before anything is touched, the state file included.
     if ! up_backup_good; then
@@ -676,13 +816,9 @@ up_restore() {
         else
             up_log "$app $from -> $to: the database is not what the backup recorded, so the dump is loaded"
         fi
-        if ! up_drop_tables; then reason="the database's tables could not be dropped"; return 1; fi
-        sc_pause restore
-        gzip -dc "$backup/db.sql.gz" | mysql --defaults-extra-file="$SC_DB_CNF" "$DATABASE_NAME"
-        status=$((PIPESTATUS[0] + PIPESTATUS[1]))
-        if [ "$status" -ne 0 ]; then reason="the database dump could not be loaded"; return 1; fi
-        if [ "$(sc_base_table_count)" != "$(stamp_get tables)" ]; then
-            reason="the database has $(sc_base_table_count) tables after the dump was loaded, not $(stamp_get tables)"
+        rm -f -- "$reason_file"
+        if ! sc_in_state up_load_dump "${backup##*/}"; then
+            take_reason "the backup's dump could not be read from ${SC_STATE_DIR#"$SC_ROOT"/}"
             return 1
         fi
     fi
@@ -690,17 +826,19 @@ up_restore() {
     # The files. What the backup left in place stays in place. Everything else goes, as root, and comes back
     # from the archive, as www-data. The three folders the archive is unpacked into are www-data's again first.
     if ! up_remove_code; then
-        reason="the upgraded code could not be removed"
+        reason=$(state_or "the upgraded code could not be removed")
         return 1
     fi
     sc_pause removed
-    for dir in . public public/legacy; do
-        if [ -d "$dir" ] && [ ! -L "$dir" ] && [ "$(stat -c %U -- "$dir")" != www-data ]; then
-            chown -h www-data:www-data -- "$dir"
+    # Each of the three folders is given back to www-data from inside it, and only when it is the install's own.
+    for dir in '' public public/legacy; do
+        if [ -d "${dir:-.}" ] && [ ! -L "${dir:-.}" ] && [ "$(stat -c %U -- "${dir:-.}")" != www-data ]; then
+            sc_in_dir "$dir" chown -h www-data:www-data .
         fi
     done
-    if ! sc_as_www tar -C "$SC_ROOT" -xzpf - < "$backup/code.tar.gz"; then
-        reason="the code archive could not be unpacked"
+    rm -f -- "$reason_file"
+    if ! sc_in_state up_unpack_code "${backup##*/}"; then
+        take_reason "the code archive could not be unpacked"
         return 1
     fi
     # 8.10's migration renames uploads/ to media/ and public/media-upload/ to public/media/. The old version
@@ -720,16 +858,15 @@ up_restore() {
         if [ ! -d "$old" ]; then lost="$lost $old/"; fi
     done
     sc_as_www rm -rf "$SC_ROOT/tmp/package"
-    # The compiled cache is the newer version's. The old version compiles its own at its first use. Root
-    # removes it, for the same reason it removes the code, and the folder is www-data's afterwards.
-    if [ -L cache ] || { [ -e cache ] && [ ! -d cache ]; }; then rm -f -- cache; fi
+    # The compiled cache is the newer version's. The old version compiles its own at its first use. It is emptied
+    # the way the code is (sc_clear), and the folder is www-data's afterwards.
+    if [ -L cache ] || { [ -e cache ] && [ ! -d cache ]; }; then sc_clear '' -name cache; fi
     [ -d cache ] || sc_as_www mkdir cache
-    find cache -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2> /dev/null
-    if [ -n "$(find cache -mindepth 1 -print -quit 2> /dev/null)" ]; then
-        reason="SuiteCRM's compiled cache could not be removed, so the old code would run on the new version's cache"
+    if ! sc_clear cache; then
+        reason=$(state_or "SuiteCRM's compiled cache could not be removed, so the old code would run on the new version's cache")
         return 1
     fi
-    [ "$(stat -c %U -- cache)" = www-data ] || chown -h www-data:www-data -- cache
+    [ "$(stat -c %U -- cache)" = www-data ] || sc_in_dir cache chown -h www-data:www-data .
     # The archive has the database settings of the day the backup was made. The environment may have others by
     # now (a password that was rotated in between), and the next try's commands read them from the files.
     sc_as_www php "$SC_INSTALLER/settings.php" database "$SC_ROOT" > /dev/null ||
@@ -755,15 +892,30 @@ up_restore() {
     up_log "$app $from -> $to: ${from} is back, files and database, as the backup had them"
 }
 
+# state_or REASON: REASON, or, when the state folder is not at its place any more, that.
+state_or() {
+    if sc_state_ino > /dev/null; then
+        printf '%s' "$1"
+    else
+        printf '%s' "the state folder is not at tmp/clouve-backup any more (www-data can move tmp/ with it inside), so the way back stopped before it removed or changed anything more"
+    fi
+}
+
 # go_back: the way back, and what a failure of it means for this start.
 go_back() {
+    local kept
     counting=0
     up_restore
     case $? in
         0) return 0 ;;
         2 | 3) needs_staff ;;
         *)
-            up_failed "going back to $from failed: $reason. Apache is not started, because the old code would run on a half-changed database. The state is kept, so the next start goes back again (README.md, \"Staff runbook\")."
+            if sc_state_dir_trusted; then
+                kept="The state is kept, so the next start goes back again (README.md, \"Staff runbook\")."
+            else
+                kept="The state folder is not at tmp/clouve-backup any more, so the next start can't go back by itself: find it on the volume (tmp/ may have been moved with it inside), put it back in its place and restart (README.md, \"Staff runbook\")."
+            fi
+            up_failed "going back to $from failed: $reason. Apache is not started, because the old code would run on a half-changed database. $kept"
             exit 1
             ;;
     esac
@@ -772,17 +924,14 @@ go_back() {
 # give_up WHY: two tries failed. The old version is back and runs, and this build doesn't try again.
 give_up() {
     sc_state_set phase=failed "reason=$1" "failed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    (
-        umask 077
-        {
-            printf 'The upgrade of SuiteCRM from %s to %s failed %s times on %s (image build %s).\nLast reason: %s\n\n' \
-                "$from" "$to" "$max_attempts" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$build" "$1"
-            printf 'SuiteCRM %s was put back from the backup in tmp/clouve-backup/%s and runs.\n' "$from" "${backup##*/}"
-            printf 'This build of the image does not try again while this file exists. A newer build tries by itself.\n'
-            printf 'To try again with this build, remove this file and restart the container.\n'
-            printf 'The output of SuiteCRM'"'"'s commands is in tmp/clouve-backup/upgrade-console.log and logs/upgrade.log.\n'
-        } > "$SC_STATE_DIR/upgrade-failed"
-    )
+    {
+        printf 'The upgrade of SuiteCRM from %s to %s failed %s times on %s (image build %s).\nLast reason: %s\n\n' \
+            "$from" "$to" "$max_attempts" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$build" "$1"
+        printf 'SuiteCRM %s was put back from the backup in tmp/clouve-backup/%s and runs.\n' "$from" "${backup##*/}"
+        printf 'This build of the image does not try again while this file exists. A newer build tries by itself.\n'
+        printf 'To try again with this build, remove this file and restart the container.\n'
+        printf 'The output of SuiteCRM'"'"'s commands is in tmp/clouve-backup/upgrade-console.log and logs/upgrade.log.\n'
+    } | sc_state_write upgrade-failed
     up_failed "$1. $from was put back and runs. This build will not try again: remove ${SC_STATE_DIR#"$SC_ROOT"/}/upgrade-failed to let it, or start a newer build."
     exit 0
 }
@@ -846,7 +995,7 @@ if [ -n "$phase" ]; then
     if [ "$phase" = backup ]; then
         # Nothing in the site had changed, whichever image wrote the state.
         up_log "$app ${from:-?} -> $(sc_state_get to): the backup was cut off before it was complete. Nothing in the site had changed, so the unfinished backup goes and the upgrade starts over."
-        rm -rf -- "$SC_STATE_DIR"/*.partial
+        sc_state_rm_partials
         sc_state_clear
         phase=''
     elif [ "$(sc_state_get to)" != "$to" ] || ! sc_is_version "$from"; then
@@ -940,11 +1089,11 @@ if [ -z "$phase" ]; then
     sc_state_set phase=backup "from=$from" "to=$to" "build=$build" attempts=0 "started_epoch=$(date +%s)" || up_skip "the state file could not be written"
     up_phase backup
     if ! up_backup; then
-        rm -rf -- "$SC_STATE_DIR"/*.partial
+        sc_state_rm_partials
         sc_state_clear
         up_skip "the backup could not be made: $reason"
     fi
-    rm -f -- "$SC_SKIPPED"
+    sc_state_rm upgrade-skipped
 fi
 
 while :; do

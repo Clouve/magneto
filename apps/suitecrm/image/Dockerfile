@@ -92,8 +92,11 @@ RUN install-php-extensions \
     && php -m | grep -qx imap
 
 # PHP settings for SuiteCRM. No error_log: PHP then writes its errors to the container's log, for Apache and for
-# the console alike. The earlier image named a file that only root could write. The two session settings give
-# the session cookie that SuiteCRM's older pages set the flags its newer pages already set.
+# the console alike. The earlier image named a file that only root could write. The two cookie settings give
+# the session cookie that SuiteCRM's older pages set the flags its newer pages already set (Secure comes from the
+# Apache drop-in, behind the ingress's HTTPS). Strict mode makes PHP refuse a session id it didn't make, so a
+# cookie planted from a sibling host can't fix someone's session. PHP doesn't name its version in a header, and
+# a stack trace in the log carries no arguments, which can be passwords.
 RUN { \
     echo 'memory_limit = 512M'; \
     echo 'upload_max_filesize = 20M'; \
@@ -105,11 +108,18 @@ RUN { \
     echo 'log_errors = On'; \
     echo 'session.cookie_httponly = On'; \
     echo 'session.cookie_samesite = Lax'; \
+    echo 'session.use_strict_mode = 1'; \
+    echo 'expose_php = Off'; \
+    echo 'zend.exception_ignore_args = On'; \
 } > /usr/local/etc/php/conf.d/suitecrm.ini
 
-# Apache serves /var/www/html/public, SuiteCRM 8's web root, and reads its .htaccess. The greps fail the build
-# when an edit did not apply.
+# Apache serves /var/www/html/public, SuiteCRM 8's web root, and reads its .htaccess. It names no version in its
+# Server header and signs no error page: Debian's security.conf says otherwise, and it loads after the image's
+# own drop-in (clouve.conf), so the edit is made there. The greps fail the build when an edit did not apply.
 RUN a2enmod rewrite headers expires remoteip \
+    && sed -i 's/^ServerTokens .*/ServerTokens Prod/; s/^ServerSignature .*/ServerSignature Off/' /etc/apache2/conf-available/security.conf \
+    && grep -qx 'ServerTokens Prod' /etc/apache2/conf-available/security.conf \
+    && grep -qx 'ServerSignature Off' /etc/apache2/conf-available/security.conf \
     && sed -i 's|DocumentRoot /var/www/html|DocumentRoot /var/www/html/public|g' /etc/apache2/sites-available/000-default.conf \
     && sed -i 's|<Directory /var/www/>|<Directory /var/www/html/public/>|g' /etc/apache2/apache2.conf \
     && sed -i '/<Directory \/var\/www\/html\/public\/>/,/<\/Directory>/ s/AllowOverride None/AllowOverride All/' /etc/apache2/apache2.conf \
@@ -140,6 +150,46 @@ RUN mkdir -p /clouve/suitecrm /clouve/suitecrm/standin \
     && find /clouve/suitecrm/app -type f -exec chmod 0644 {} + \
     && chmod 0755 /clouve/suitecrm/app/bin/console \
     && chmod 0644 "/clouve/suitecrm/SuiteCRM-${SUITECRM_VERSION}.zip"
+
+# PHP libraries in the package that have published advisories with a fix in the same line. Each moves to the newest
+# release of its line that was at least 14 days old on 2026-11-16, in the unpacked package and in the kept zip, which
+# SuiteCRM's own upgrade command unpacks. The build has no Composer, so it takes each release as Composer installs
+# it: the archive GitHub makes of the release commit that Packagist names. Each archive is checked against its
+# SHA-256 here, and patch-vendor.php checks that GitHub's comment in it names that commit, that the release declares
+# the same classes in the same files (the package's class map is not rebuilt), and records the new versions where
+# Composer\InstalledVersions reads them. jmespath leaves its 2.8 line, as Moodle's did: 2.8 has no fixed release.
+# Left as SuiteCRM ships them, with no fix in their line: zbateson/mail-mime-parser 2.4.1 (fixed in 3.0.6),
+# tinymce/tinymce 8.5.1 (fixed in 8.9.3, and also built into SuiteCRM's front end), and the advisories that only
+# guzzlehttp/guzzle 7.14 and 7.15 fix. A SuiteCRM version bump checks each line here against its new package.
+#   mtdowling/jmespath.php 2.8.0 -> 2.9.2     GHSA-pcw8-m77r-2528 (CVE-2026-54133)
+#   symfony/http-foundation 6.4.41 -> 6.4.49  GHSA-r925-mgvr-h9cc (CVE-2026-108082)
+#   symfony/yaml 6.4.40 -> 6.4.49             GHSA-2v3c-qxhr-7vpv (CVE-2026-109413)
+#   smarty/smarty 4.5.6 -> 4.5.8              GHSA-cq55-c7wv-pxmq, GHSA-f6wf-28g6-769x
+#   guzzlehttp/guzzle 7.12.1 -> 7.12.3        GHSA-g446-98w2-8p5w (CVE-2026-59883)
+#   guzzlehttp/psr7 2.12.1 -> 2.12.5          GHSA-c2w2-prh8-qm98 (CVE-2026-59882)
+#   phpseclib/phpseclib 3.0.54 -> 3.0.58      GHSA-q97c-8qh3-fpc6 (CVE-2026-84308)
+COPY installer/patch-vendor.php /clouve/suitecrm/installer/patch-vendor.php
+RUN set -eu; mkdir /tmp/vendor-fix; cd /tmp/vendor-fix; specs=''; \
+    for p in \
+      "mtdowling/jmespath.php 2.9.2 jmespath/jmespath.php 2157c5e50e813ec6a96c1eed3be7f64a20fb32a8 b86091fecc7a19fa299692ce31ee3132c6c9abb265da4aa12b1b2d0e62fe6baa" \
+      "symfony/http-foundation v6.4.49 symfony/http-foundation aed9ac2fe4eefa1d1b7fba04604db3a62a5f150b 9bebccf73424da68d3c5a5133d1d8e9393adca78065b9a67a80330fdc244ec8d" \
+      "symfony/yaml v6.4.49 symfony/yaml bbefb7d9cd1bf804148bd1c306a9acc87f335196 7a0dbf80760cebb5b9542b9037d229d198b10713b27036d4145686696e8d4fc3" \
+      "smarty/smarty v4.5.8 smarty-php/smarty 042d310bdfbc67aa9138418d838d689b34f4c87e d003bdf3dda03ee09df177d02b859959b8b8d7b0cd5f41f57ad7ac675790ed4c" \
+      "guzzlehttp/guzzle 7.12.3 guzzle/guzzle 9aa17bcdd777ee31df9fc83c337ca4ca2340def3 d18b6d04dd409b67d5a7ec386e17d5f173517f9f78356babb5a7c5fe71c8b6a0" \
+      "guzzlehttp/psr7 2.12.5 guzzle/psr7 9365d578a9fd1552ad6ca9c3cb530708526feb09 8ab323f73334717cbc898b11829bec899e2e4418af2e08fdde8534241808ff19" \
+      "phpseclib/phpseclib 3.0.58 phpseclib/phpseclib 91f3a6436bb84040ac0cf49e761977f17d16a39b 6ad0e8055704ea1713ef316d095dc6a168a5cc5b92e32aa99e7ec9453e735f8a"; do \
+      set -- $p; \
+      curl -fsSL -o "$4.zip" "https://codeload.github.com/$3/zip/$4"; \
+      echo "$5  $4.zip" | sha256sum -c -; \
+      specs="$specs $1=$2@$4"; \
+    done; \
+    php /clouve/suitecrm/installer/patch-vendor.php /clouve/suitecrm/app "/clouve/suitecrm/SuiteCRM-${SUITECRM_VERSION}.zip" \
+      /tmp/vendor-fix $specs; \
+    cd /; rm -rf /tmp/vendor-fix; \
+    chown -hR root:root /clouve/suitecrm; \
+    find /clouve/suitecrm/app/vendor -type d -exec chmod 0755 {} +; \
+    find /clouve/suitecrm/app/vendor -type f -exec chmod 0644 {} +; \
+    chmod 0644 "/clouve/suitecrm/SuiteCRM-${SUITECRM_VERSION}.zip"
 
 # The installer: the entrypoint, its library, the install and upgrade scripts, the background jobs, the
 # stand-in for the health check, the clouve-ops sshd kit and the Apache drop-in. This Dockerfile goes in too:
@@ -176,6 +226,12 @@ RUN chmod -R u=rwX,go=rX /clouve/context
 # entrypoint gives to www-data. The base image leaves it open to everyone (mode 1777), and a Docker volume
 # copies that mode.
 RUN mkdir -p /var/www/html && chown www-data:www-data /var/www/html && chmod 755 /var/www/html
+
+# Programs with the set-user-ID or set-group-ID bit are where a local privilege bug pays off, for code that runs
+# as www-data. This image uses two: sudo, for clouve-ops, and unix_chkpwd, which PAM runs to check a password.
+# The others (su, mount, passwd and the like) lose the bit. The build fails when anything else keeps one.
+RUN find / -xdev -perm /6000 -type f ! -path /usr/bin/sudo ! -path /usr/sbin/unix_chkpwd -exec chmod ug-s {} + \
+    && test "$(find / -xdev -perm /6000 -type f | sort | xargs)" = "/usr/bin/sudo /usr/sbin/unix_chkpwd"
 
 WORKDIR /var/www/html
 ENTRYPOINT ["/clouve/suitecrm/installer/entrypoint.sh"]

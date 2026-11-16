@@ -15,7 +15,9 @@
 #   - The start: the plugin is registered and switched on; its settings come
 #     from the environment, with both passwords stored encrypted and debug
 #     mode off; no password is on a command line or in the log; the demo
-#     survey has exactly one survey_enabled setting, and it says on.
+#     survey has exactly one survey_enabled setting, and it says on; the
+#     plugin's own table of mappings holds the demo survey's mappings, the
+#     same ones its questions carry.
 #   - LimeSurvey 7's plugin manager accepts the plugin: switched off, an
 #     admin can switch it on again in the browser.
 #   - A start never changes whether the plugin is on: switched off, it stays
@@ -48,8 +50,22 @@
 #     when it is saved (LimeSurvey's own question save and actionSaveMappings)
 #     and again when a response is sent: the stand-in gets no request for it.
 #     Saving a mapping needs the right to change the survey's content.
+#   - A question saved in LimeSurvey's editor with two mappings, one with a
+#     rule, is saved and keeps them as they were sent. The plugin writes
+#     nothing to its table of mappings then: the table is a copy that may lag.
 #   - Saving a question while the survey's link is off keeps its mapping.
 #   - A redirect from SuiteCRM's address is not followed.
+#   - The status check signs in to SuiteCRM as a sync does. It reads ready
+#     when the stand-in takes the sign-in, and not ready when the stand-in
+#     refuses it, with the HTTP code and what to do. The stand-in answers as
+#     SuiteCRM 8.10 does: 500 to a wrong admin password, 401 to a client
+#     secret that doesn't match the client's, and the status's text for each
+#     is the one the READMEs and the skills quote. Neither the stand-in's
+#     answer, nor a password, nor the client secret, nor the token reaches
+#     the status's JSON or a log. A stand-in that doesn't answer the sign-in
+#     doesn't hold up the status for more than its timeout. The sign-in is
+#     skipped, and no token is asked for, when an earlier check failed or
+#     LimeSurvey has no OAuth2 client yet.
 #   - The settings page says that field mapping is done in the classic
 #     question editor and how to switch to it. It never holds a stored
 #     password or the OAuth2 client secret, an empty password field keeps
@@ -97,6 +113,10 @@ assert_eq "config.xml lists LimeSurvey 7.0 and 6.0" "2" "$(grep -cE '<version>(7
 # still there. They share one method, so the two can't come to disagree.
 assert_eq "one method asks whether SuiteCRM still has the OAuth2 client, and both callers use it" "1 2" \
   "$(grep -c 'FROM oauth2clients WHERE id = ? AND deleted = 0' "$PLUGIN_DIR/SuiteCRMIntegration.php") $(grep -c -- '->oauth2ClientIsGone(' "$PLUGIN_DIR/SuiteCRMIntegration.php")"
+# A write to the plugin's table of mappings while LimeSurvey saves a question ran inside LimeSurvey's own transaction,
+# and question saves were lost when several ran at once. The plugin runs nothing on a question save.
+assert_eq "the plugin subscribes to no question save (afterQuestionSave)" "0" \
+  "$(grep -c "subscribe('afterQuestionSave'" "$PLUGIN_DIR/SuiteCRMIntegration.php")"
 if ! ls_image limesurvey-mariadb || ! ls_image limesurvey; then
   fail "the images build or are on this machine"
   echo; printf '%sLimeSurvey plugin checks failed.%s\n' "$RED" "$RESET"; exit 1
@@ -279,7 +299,7 @@ const row = { status: 'error', message: HOSTILE };
 w.jQuery.ajax = function (s) {
   calls.push(s);
   if (/actionCheckStatus$/.test(s.url)) {
-    s.success({ suitecrm_http: row, suitecrm_database: row, oauth2_table: row, oauth2_client: row, overall: 'error' });
+    s.success({ suitecrm_http: row, suitecrm_database: row, oauth2_table: row, oauth2_client: row, suitecrm_signin: row, overall: 'error' });
   } else {
     s.success({ success: false, error: HOSTILE, message: HOSTILE });
   }
@@ -292,6 +312,9 @@ w.SuiteCRMStatus.testConnection();
 say(calls.length === 3 && w.document.querySelectorAll('img').length === before && !('__clv' in w),
   'the status panel shows what the server answers as text: no element is added');
 say(w.document.getElementById('status-database').textContent.indexOf(HOSTILE) !== -1, 'and the text is in the panel');
+const signin = w.document.getElementById('status-signin');
+say(signin !== null && signin.textContent.indexOf(HOSTILE) !== -1 && signin.textContent.indexOf('ERROR') !== -1,
+  'the panel has a row for the sign-in to SuiteCRM, which shows its status and its message');
 const token = /name="YII_CSRF_TOKEN"[^>]*value="([^"]+)"|value="([^"]+)"[^>]*name="YII_CSRF_TOKEN"/.exec(html);
 const tokenValue = token ? (token[1] || token[2]).replace(/&amp;/g, '&') : null;
 const changing = calls.filter(function (s) { return !/actionCheckStatus$/.test(s.url); });
@@ -316,12 +339,46 @@ $method = $_SERVER['REQUEST_METHOD'];
 $body = file_get_contents('php://input');
 $entry = ['method' => $method, 'path' => $path];
 header('Content-Type: application/json');
+// An address under /slow/ is SuiteCRM's own, with a sign-in that takes 15 seconds to answer.
+$slow = strpos($path, '/slow/') === 0;
+if ($slow) {
+    $path = substr($path, 5);
+    $entry['slow'] = true;
+}
 if ($method === 'POST' && $path === '/Api/access_token') {
     parse_str($body, $form);
     $entry += ['grant_type' => $form['grant_type'] ?? null, 'username' => $form['username'] ?? null,
         'password_ok' => hash_equals((string) getenv('STUB_PASSWORD'), (string) ($form['password'] ?? '')),
         'has_client' => !empty($form['client_id']) && !empty($form['client_secret'])];
-    $answer = ['token_type' => 'Bearer', 'expires_in' => 3600, 'access_token' => 'stub-token'];
+    if ($slow) {
+        sleep(15);
+    }
+    // SuiteCRM 8.10 checks the client first: the secret's SHA-256 against the one stored with the client, as the
+    // plugin wrote it into oauth2clients. A secret that doesn't match gets league/oauth2-server's invalid_client,
+    // 401. Then the admin: a wrong name or password is an InvalidArgumentException of SuiteCRM's own
+    // (Api/V8/OAuth2/Repository/UserRepository.php), which it answers with 500.
+    $entry['client_ok'] = false;
+    try {
+        $db = new PDO('mysql:host=' . getenv('STUB_DB_HOST') . ';dbname=suitecrm', 'suitecrm', (string) getenv('STUB_DB_PASSWORD'));
+        $stmt = $db->prepare('SELECT secret FROM oauth2clients WHERE id = ? AND deleted = 0');
+        $stmt->execute([(string) ($form['client_id'] ?? '')]);
+        $hash = $stmt->fetchColumn();
+        $entry['client_ok'] = is_string($hash) && hash_equals($hash, hash('sha256', (string) ($form['client_secret'] ?? '')));
+    } catch (Throwable $e) {
+        $entry['client_ok'] = false;
+    }
+    // A refusal also carries what the stand-in was sent, which the plugin must never pass on: the status check names
+    // the HTTP code alone.
+    $sent = 'sent: ' . ($form['password'] ?? '') . ' ' . ($form['client_secret'] ?? '');
+    if (!$entry['client_ok']) {
+        http_response_code(401);
+        $answer = ['error' => 'invalid_client', 'error_description' => 'STANDIN-REFUSAL-6c1f client authentication failed', 'hint' => $sent];
+    } elseif (!$entry['password_ok']) {
+        http_response_code(500);
+        $answer = ['message' => 'STANDIN-REFUSAL-6c1f Invalid username or password.', 'hint' => $sent];
+    } else {
+        $answer = ['token_type' => 'Bearer', 'expires_in' => 3600, 'access_token' => 'stub-token'];
+    }
 } elseif ($method === 'GET' && preg_match('#^/Api/V8/meta/fields/(Leads|Cases|Users)$#', $path, $m)) {
     // SuiteCRM lists the fields of every module, Users among them, to whoever holds the admin's token.
     $names = [
@@ -363,8 +420,10 @@ CRM="${PREFIX}crm"
 A="${PREFIX}app"
 ls_new_disk "${PREFIX}db-data" "${PREFIX}html" "${PREFIX}upload"
 ls_start_db "$DB" "${PREFIX}db-data"
+# Four workers, so that a slow sign-in (/slow/) doesn't hold up the requests after it.
 docker run -d --name "$CRM" --network "${PREFIX}net" --memory 512m --user www-data -e "STUB_PASSWORD=$CRM_PW" \
-  -v "$WORK/router.php:/stub/router.php:ro" --entrypoint php "$IMAGE" -S 0.0.0.0:8080 /stub/router.php >/dev/null
+  -e "STUB_DB_HOST=$DB" -e "STUB_DB_PASSWORD=$CRM_DB_PW" -e PHP_CLI_SERVER_WORKERS=4 -v "$WORK/router.php:/stub/router.php:ro" \
+  --entrypoint php "$IMAGE" -S 0.0.0.0:8080 /stub/router.php >/dev/null
 ls_wait_db "$DB" 120 || fail "the database starts"
 docker exec -i -e "MYSQL_PWD=$LS_DB_ROOT_PW" "$DB" mariadb -u root <<SQL
 CREATE DATABASE suitecrm;
@@ -420,6 +479,29 @@ SID="$(ls_sql "$DB" "SELECT sid FROM lime_surveys LIMIT 1")"
 assert_eq "the demo survey has one survey_enabled setting, and it says on" '"1"' \
   "$(ls_sql "$DB" "SELECT value FROM lime_plugin_settings WHERE \`key\` = 'survey_enabled' AND model = 'Survey' AND model_id = '$SID'")"
 assert_eq "the start made no call to SuiteCRM (LimeSurvey starts whether or not SuiteCRM is up)" "0" "$(stub_log | grep -c .)"
+# mapping_rows attributes|table: the demo survey's mappings, one "<question id> <module>.<field> <rule or ->" per
+# line, as its questions carry them (the attribute suitecrm_mappings_json, where a sync reads them) or as the
+# plugin's own table holds them.
+mapping_rows() {
+  if [ "$1" = attributes ]; then
+    ls_sql "$DB" "SELECT qa.qid, CONCAT(jt.module, '.', jt.field), IFNULL(NULLIF(jt.rule, ''), '-')
+      FROM lime_question_attributes qa JOIN lime_questions q ON q.qid = qa.qid,
+        JSON_TABLE(qa.value, '\$[*]' COLUMNS (module VARCHAR(100) PATH '\$.module', field VARCHAR(100) PATH '\$.field',
+          rule VARCHAR(100) PATH '\$.transformRule')) jt
+      WHERE q.sid = $SID AND q.parent_qid = 0 AND qa.attribute = 'suitecrm_mappings_json' ORDER BY 1, 2"
+  else
+    ls_sql "$DB" "SELECT question_id, CONCAT(crm_module, '.', crm_field_name), IFNULL(NULLIF(transform_rule, ''), '-')
+      FROM lime_survey_crm_mappings WHERE survey_id = $SID ORDER BY 1, 2"
+  fi | tr '\t' ' '
+}
+demo_rows="$(mapping_rows table)"
+if [ -n "$demo_rows" ] && [ "$demo_rows" = "$(mapping_rows attributes)" ]; then
+  pass "the plugin's own table holds the demo survey's $(grep -c . <<< "$demo_rows") mappings, the same ones its questions carry"
+else
+  fail "the plugin's own table holds the demo survey's mappings, the same ones its questions carry"
+  printf '       table:      %s\n       attributes: %s\n' "$(xargs <<< "$demo_rows")" "$(mapping_rows attributes | xargs)"
+fi
+assert_eq "the table holds no other rows" "$(grep -c . <<< "$demo_rows")" "$(ls_sql "$DB" "SELECT COUNT(*) FROM lime_survey_crm_mappings")"
 
 # --- signing in over HTTP -----------------------------------------------------------------------------------------
 cat > "$WORK/clv-web.sh" <<'SH'
@@ -532,6 +614,15 @@ class ClvtestCommand extends CConsoleCommand
         $secret = (string) $this->plugin()->getSetting('oauth_client_secret');
         $page = (string) file_get_contents('/tmp/clv-web.body');
         echo $secret === '' ? "no secret stored\n" : (strpos($page, $secret) !== false ? "in the page\n" : "not in the page\n");
+        return 0;
+    }
+
+    // Whether the text on stdin holds the plugin's OAuth2 client secret. Nothing of either is printed.
+    public function actionSecretin()
+    {
+        $secret = (string) $this->plugin()->getSetting('oauth_client_secret');
+        $text = (string) stream_get_contents(STDIN);
+        echo $secret === '' ? "no secret stored\n" : (strpos($text, $secret) !== false ? "in the text\n" : "not in the text\n");
         return 0;
     }
 
@@ -829,8 +920,24 @@ save_question /tmp/editor.jar "$QID" 'not a list of mappings' >/dev/null
 assert_eq "a value that is not a list of mappings is stored as no mapping" '[]' "$(mapping "$QID")"
 save_question /tmp/setter.jar "$QID" '[{"module":"Cases","field":"name"}]' >/dev/null
 assert_eq "an account without the right to change the survey's content changes no mapping there" '[]' "$(mapping "$QID")"
+# The question keeps its mappings, and a sync reads them there. The plugin writes nothing while LimeSurvey saves a
+# question (its table of mappings is a copy that may lag), and nothing it does then may fail the save or lose what
+# was sent.
+# mappings_table_sum: the plugin's whole table of mappings, as a row count, the highest id and MariaDB's checksum of
+# every row, so that any insert, delete or change shows.
+mappings_table_sum() {
+  printf '%s %s' "$(ls_sql "$DB" "SELECT CONCAT(COUNT(*), ' ', COALESCE(MAX(id), 0)) FROM lime_survey_crm_mappings")" \
+    "$(ls_sql "$DB" "CHECKSUM TABLE lime_survey_crm_mappings" | cut -f2)"
+}
+table_before="$(mappings_table_sum)"
+two='[{"module":"Leads","field":"first_name"},{"module":"Leads","field":"title","transformRule":"trim"}]'
+code="$(save_question /tmp/editor.jar "$QID" "$two")"
+assert_eq "a question saved in the editor with two mappings, one with a rule, is saved and keeps both as they were sent" \
+  "200 $two" "$code $(mapping "$QID")"
 code="$(save_question /tmp/editor.jar "$QID" "$first_mapping")"
 assert_eq "a mapping to Leads is saved as it is" "200 $first_mapping" "$code $(mapping "$QID")"
+assert_eq "neither save wrote to the plugin's table of mappings (count, highest id and checksum as before)" \
+  "$table_before" "$(mappings_table_sum)"
 
 # When a mapping is saved through the plugin's own endpoint.
 assert_eq "actionSaveMappings: an account that may change the survey's settings and not its content gets 403" "403" \
@@ -887,7 +994,9 @@ tokens="$(stub_count '"path":"\/Api\/access_token"')"
 heads="$(stub_count '"method":"HEAD","path":"\/"')"
 web post /tmp/admin.jar "$(direct actionTestConnection "$SID" "$QID")" >/dev/null
 web get /tmp/admin.jar "$(direct actionCheckStatus "$SID" "$QID")" >/dev/null
-assert_eq "the plugin asked the address it was given: once for a token, once to see that it answers" "1 1" \
+assert_contains "the status check says that SuiteCRM answered its sign-in with a redirect, which the plugin does not follow" \
+  "$(body)" '"suitecrm_signin":{"status":"error","message":"SuiteCRM answered the sign-in with a redirect (HTTP 307)'
+assert_eq "the plugin asked the address it was given: for a token from the connection test and from the status check, and once to see that it answers" "2 1" \
   "$(stub_count '"path":"\/redir\/Api\/access_token"') $(stub_count '"method":"HEAD","path":"\/redir\/"')"
 assert_eq "it followed neither redirect, so the admin's name and password went to no other address" "$tokens $heads" \
   "$(stub_count '"path":"\/Api\/access_token"') $(stub_count '"method":"HEAD","path":"\/"')"
@@ -896,14 +1005,25 @@ set_url "http://$CRM:8080"
 echo
 echo "The status says so when SuiteCRM no longer has the OAuth2 client"
 status_of() { web get /tmp/admin.jar "$(direct actionCheckStatus "$SID" "$QID")" >/dev/null; body; }
+tokens() { stub_count '"path":"\/Api\/access_token"'; }
 client_id="$(setting oauth_client_id | tr -d '"')"
+before="$(tokens)"
+status="$(status_of)"
 assert_eq "with the client in SuiteCRM, the status of the OAuth2 client is ok" "1" \
-  "$(status_of | grep -c '"oauth2_client":{"status":"ok"')"
+  "$(grep -c '"oauth2_client":{"status":"ok"' <<< "$status")"
+assert_eq "the status check signs in to SuiteCRM: one token request, its row says ok, and the link is ready" "$((before + 1)) 1 1" \
+  "$(tokens) $(grep -c '"suitecrm_signin":{"status":"ok"' <<< "$status") $(grep -c '"overall":"ready"' <<< "$status")"
+assert_contains "it signs in as a sync does: the admin's name and password, and the OAuth2 client" \
+  "$(stub_log | grep '"path":"\\/Api\\/access_token"' | tail -n 1)" '"grant_type":"password","username":"crm_admin","password_ok":true,"has_client":true'
+assert_eq "the status holds no token" "0" "$(grep -c 'stub-token' <<< "$status")"
 crm_sql "UPDATE oauth2clients SET deleted = 1 WHERE id = '$client_id'" >/dev/null
+before="$(tokens)"
 status="$(status_of)"
 assert_eq "with the client deleted in SuiteCRM, the status of the OAuth2 client is an error, and the link is not ready" "1 0" \
   "$(grep -c '"oauth2_client":{"status":"error"' <<< "$status") $(grep -c '"overall":"ready"' <<< "$status")"
 assert_contains "and it says to initialize OAuth2 again" "$status" 'Initialize OAuth2'
+assert_eq "the sign-in is not tried then: its row says skipped, and SuiteCRM gets no token request" "1 $before" \
+  "$(grep -c '"suitecrm_signin":{"status":"skipped"' <<< "$status") $(tokens)"
 crm_sql "UPDATE oauth2clients SET deleted = 0 WHERE id = '$client_id'" >/dev/null
 assert_eq "with the client back, the status is ok again" "1" "$(status_of | grep -c '"oauth2_client":{"status":"ok"')"
 
@@ -928,7 +1048,7 @@ assert_eq "and not the OAuth2 client secret" "not in the page" "$(clvtest secret
 body > "$WORK/js/settings-page.html"
 chmod 644 "$WORK/js/settings-page.html"
 if docker image inspect "$JS_IMAGE" >/dev/null 2>&1; then
-  report_js "$(run_js page-test.js /js/jquery.js /js/settings-page.html)" 3
+  report_js "$(run_js page-test.js /js/jquery.js /js/settings-page.html)" 4
 fi
 # An error text that the OAuth2 setup stored comes from a database or from SuiteCRM.
 oauth_state() {
@@ -1004,6 +1124,80 @@ assert_eq "the old password goes back the same way" "200 same" \
 assert_eq "the image's own command, which writes these settings at every start, finds them in step" "settings already in step" \
   "$(docker exec -u www-data "$A" sh -c 'cd /var/www/html && YII_CONSOLE_COMMANDS=/clouve/limesurvey/installer/commands php application/commands/console.php clouve suitecrm' 2>&1 | tail -n 1)"
 assert_eq "the container's log still holds no password" "0" "$(ls_secrets_in "$(docker logs "$A" 2>&1)")"
+
+echo
+echo "The status check signs in to SuiteCRM"
+# secret_in TEXT: whether TEXT holds the plugin's OAuth2 client secret ("in the text" or "not in the text").
+secret_in() {
+  docker exec -i -u www-data -e YII_CONSOLE_COMMANDS=/tmp/clv-cmd "$A" sh -c "cd /var/www/html && php application/commands/console.php clvtest secretin" \
+    <<< "$1" 2>&1 | tail -n 1
+}
+# all_logs: the container's log and the plugin's debug log (debug mode is still on).
+all_logs() { docker logs "$A" 2>&1; docker exec "$A" cat /var/www/html/tmp/runtime/suitecrm_integration.log 2>/dev/null; }
+# The plugin holds a password that SuiteCRM doesn't take: someone changed the admin's password in SuiteCRM, or a
+# wrong one was typed into the plugin's settings.
+assert_eq "the main admin saves a SuiteCRM admin password that the stand-in refuses" "200" "$(save_settings "suitecrm_admin_password=$NEW_PW")"
+before="$(tokens)"
+status="$(status_of)"
+assert_eq "the status check tries the sign-in once, its row is an error, and the link is not ready" "$((before + 1)) 1 0 1" \
+  "$(tokens) $(grep -c '"suitecrm_signin":{"status":"error"' <<< "$status") $(grep -c '"overall":"ready"' <<< "$status") $(grep -c '"overall":"error"' <<< "$status")"
+# SuiteCRM 8.10 answers a wrong admin name or password with an exception of its own, and so with HTTP 500
+# (Api/V8/OAuth2/Repository/UserRepository.php). The stand-in does the same. The row's text is the one the READMEs
+# and the skills quote.
+assert_contains "the row names HTTP 500, says what SuiteCRM means by it, and says to check the admin name and password" "$status" \
+  '"suitecrm_signin":{"status":"error","message":"SuiteCRM'"'"'s sign-in failed (HTTP 500), so every sync fails. SuiteCRM answers 500 when the admin name or password is wrong or the admin account is not active, and on an error of its own. Check the SuiteCRM admin name and password in the settings below, and that the account is active in SuiteCRM."}'
+assert_eq "the status holds no password and nothing of the stand-in's answer" "0 0" \
+  "$(ls_secrets_in "$status") $(grep -c 'STANDIN-REFUSAL' <<< "$status")"
+assert_eq "and not the OAuth2 client secret, which the stand-in's answer carried" "not in the text" "$(secret_in "$status")"
+logs="$(all_logs)"
+assert_eq "the container's log and the debug log hold no password, nothing of the stand-in's answer and no token" "0 0 0" \
+  "$(ls_secrets_in "$logs") $(grep -c 'STANDIN-REFUSAL' <<< "$logs") $(grep -c 'stub-token' <<< "$logs")"
+assert_eq "and not the OAuth2 client secret" "not in the text" "$(secret_in "$logs")"
+assert_eq "with the right password back, the status is ready again" "200 1 1" \
+  "$(save_settings "suitecrm_admin_password=$CRM_PW") $(status_of | grep -c '"suitecrm_signin":{"status":"ok"') $(body | grep -c '"overall":"ready"')"
+# SuiteCRM still has the client, but its secret no longer matches the one LimeSurvey holds: the client was changed
+# there. SuiteCRM checks the client before the admin's password, and answers a secret it doesn't take with 401
+# (league/oauth2-server's invalid_client). The stand-in does the same. Its stored hash is spoilt in place and put back.
+crm_sql "UPDATE oauth2clients SET secret = CONCAT(secret, 'x') WHERE id = '$client_id'" >/dev/null
+before="$(tokens)"
+status="$(status_of)"
+assert_eq "with the client's secret changed in SuiteCRM, the client check passes, the sign-in is tried once and fails, and the link is not ready" \
+  "1 $((before + 1)) 1 0" \
+  "$(grep -c '"oauth2_client":{"status":"ok"' <<< "$status") $(tokens) $(grep -c '"suitecrm_signin":{"status":"error"' <<< "$status") $(grep -c '"overall":"ready"' <<< "$status")"
+assert_contains "the row names HTTP 401 and says to check the settings, then to make a new client" "$status" \
+  '"suitecrm_signin":{"status":"error","message":"SuiteCRM refused the sign-in (HTTP 401), so every sync fails. Check the SuiteCRM admin name and password in the settings below. If they are right, delete the OAuth2 client \"LimeSurvey Integration\" in SuiteCRM, then click \"Initialize OAuth2\" to make a new one."}'
+assert_eq "it holds no password, nothing of the stand-in's answer and not the client secret" "0 0 not in the text" \
+  "$(ls_secrets_in "$status") $(grep -c 'STANDIN-REFUSAL' <<< "$status") $(secret_in "$status")"
+crm_sql "UPDATE oauth2clients SET secret = LEFT(secret, CHAR_LENGTH(secret) - 1) WHERE id = '$client_id'" >/dev/null
+assert_eq "with the secret back, the status is ready again" "1" "$(status_of | grep -c '"overall":"ready"')"
+
+# A SuiteCRM that doesn't answer the sign-in. The stand-in answers it after 15 seconds.
+set_url "http://$CRM:8080/slow"
+begun=$SECONDS
+status="$(status_of)"
+took=$((SECONDS - begun))
+if [ "$took" -le 13 ]; then pass "a sign-in that SuiteCRM doesn't answer holds up the status for at most its timeout (it answered after $took s)"; else
+  fail "a sign-in that SuiteCRM doesn't answer holds up the status for at most its timeout (it answered after $took s)"; fi
+assert_contains "the row is an error that says SuiteCRM did not answer in time" "$status" '"suitecrm_signin":{"status":"error","message":"SuiteCRM did not answer the sign-in within 10 seconds'
+assert_eq "and the link is not ready" "0" "$(grep -c '"overall":"ready"' <<< "$status")"
+
+# The sign-in is tried only when the checks before it passed.
+set_url "http://${PREFIX}nowhere:8080"
+before="$(tokens)"
+status="$(status_of)"
+assert_eq "with SuiteCRM's address answering nothing, the HTTP check fails and the sign-in is skipped, with no token request" "1 1 $before" \
+  "$(grep -c '"suitecrm_http":{"status":"error"' <<< "$status") $(grep -c '"suitecrm_signin":{"status":"skipped"' <<< "$status") $(tokens)"
+set_url "http://$CRM:8080"
+clients="$(crm_sql "SELECT COUNT(*) FROM oauth2clients")"
+oauth_state 0 ''
+before="$(tokens)"
+status="$(status_of)"
+assert_eq "with no OAuth2 client yet, the sign-in is skipped, with no token request, and the status check makes no client" \
+  "1 1 0 $before $clients \"0\"" \
+  "$(grep -c '"oauth2_client":{"status":"pending"' <<< "$status") $(grep -c '"suitecrm_signin":{"status":"skipped"' <<< "$status") $(grep -c '"overall":"ready"' <<< "$status") $(tokens) $(crm_sql "SELECT COUNT(*) FROM oauth2clients") $(setting oauth_initialized)"
+oauth_state 1 ''
+assert_eq "with the client back in the settings, the status is ready again" "1" "$(status_of | grep -c '"overall":"ready"')"
+assert_eq "the container's log holds no password at the end" "0" "$(ls_secrets_in "$(docker logs "$A" 2>&1)")"
 
 echo
 if [ "$FAILED" -eq 0 ]; then

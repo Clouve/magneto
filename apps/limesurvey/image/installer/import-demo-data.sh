@@ -15,7 +15,10 @@
 #
 # With the SuiteCRM plugin (ENABLE_SUITECRM_INTEGRATION=true), the survey's link to SuiteCRM is switched on: the
 # plugin keeps that in one survey_enabled setting, and this script leaves exactly one row of it, with the value 1.
-# Two rows used to switch the link off, because the plugin then read the first one.
+# Two rows used to switch the link off, because the plugin then read the first one. Then the plugin's own table of
+# mappings gets the demo survey's mappings, through the plugin's code (commands/ClouveCommand.php, actionMappings):
+# the import keeps them on the questions only. That runs only here, for the survey this script imported, so a site
+# whose demo survey an earlier image imported keeps its table as it is. A second run adds no row.
 #
 # No password is on a command line: the database client gets its password in MYSQL_PWD.
 
@@ -88,6 +91,17 @@ if [ "${ENABLE_SUITECRM_INTEGRATION:-}" = true ]; then
             log "the demo survey's link to SuiteCRM is switched on"
         else
             log "the demo survey's link to SuiteCRM could not be switched on"
+        fi
+        # The import stored each question's mappings on the question, where a sync reads them, and wrote nothing to
+        # the plugin's own table of mappings, which its actionGetMappings address reads. The plugin's code fills it.
+        rc=0
+        out="$(cd "$LS_ROOT" && YII_CONSOLE_COMMANDS="$installer/commands" php application/commands/console.php clouve mappings --sid="$survey_id" 2>&1)" || rc=$?
+        if [ "$rc" -eq 0 ]; then
+            log "$(printf '%s' "$out" | tail -n 1)"
+        else
+            # console.php prints a stack trace when it fails. Only its first line goes to the log, without quoted text.
+            log "the demo survey's mappings could not be written to the plugin's table (status $rc): $(printf '%s' "$out" | head -n 1 | cut -c1-200 | sed "s/'[^']*'/'...'/g")." \
+                "The questions keep them, and responses still reach SuiteCRM"
         fi
     else
         log "the SuiteCRM plugin is not registered, so the demo survey's link to it stays off"

@@ -16,7 +16,9 @@
 #           nothing new in it, Apache's worker limit follows the memory limit,
 #           the stand-in's environment holds no password, a stop request ends
 #           the wait within seconds with a clean status, and a start without
-#           DATABASE_PASSWORD stops and names the variable.
+#           DATABASE_PASSWORD stops and names the variable. sshd logs a failed
+#           and a good sign-in to the container's log. Without NET_BIND_SERVICE
+#           the stand-in runs as nobody, or not at all, never as root.
 # refuse    A new disk and a database that already has tables: the container
 #           stops, says why, and changes neither the database nor the volume.
 #           SuiteCRM's installer would drop that database.
@@ -37,7 +39,12 @@
 #           client's address from a private peer's X-Forwarded-For and ignores
 #           the header from any other peer, the access log has neither a query
 #           string nor a Referer, and no PHP file in an upload folder is run
-#           or served.
+#           or served. Files in the upload and media folders and in
+#           legacy/cache/images come in a sandbox, never sniffed, and active
+#           types as a download, while images, SuiteCRM's own pages and its
+#           theme still work. No version banner, an older page's session
+#           cookie is Secure behind forwarded HTTPS, and the installed site has
+#           the fixed PHP libraries.
 # restart   The same volumes with a new site address and a new database
 #           password: public/legacy/config.php and .env.local follow the
 #           environment, nothing is installed again, and SuiteCRM answers.
@@ -53,6 +60,11 @@
 # empty-db  SuiteCRM on the volume and a database without tables: Apache is
 #           not started, the log says that the database is empty, and the
 #           container waits with the stand-in and the sshd up.
+# odd-name  www-data makes folders in tmp/ named like the ones the image moves
+#           aside, one of them with a shell command in its name, and an older
+#           VERSION. The start waits, and the put-back line it logs names only
+#           the folder of the image's own shape: the other one is named, quoted,
+#           in a line with nothing to run.
 #
 # --image NAME=REF uses an image that is already built (suitecrm,
 # suitecrm-mariadb); otherwise the test builds it and removes it at the end.
@@ -62,8 +74,8 @@
 # Needs Docker. About 10 minutes.
 #
 # Usage: bash tests/suitecrm-entrypoint.test.sh [--image NAME=REF]... [--keep] [CASE...]
-#   CASE  wait, refuse, install, restart, cut-off, demo, password, address or empty-db
-#         (default: all; restart, address and empty-db need install)
+#   CASE  wait, refuse, install, restart, cut-off, demo, password, address, empty-db or odd-name
+#         (default: all; restart, address, empty-db and odd-name need install)
 # Exit status: 0 when every check passes, 1 when one fails, 2 without Docker.
 # ============================================================================
 
@@ -84,12 +96,12 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --image) sc_parse_image_option "${2:-}" || usage; shift ;;
     --keep) SC_KEEP=true ;;
-    wait|refuse|install|restart|cut-off|demo|password|address|empty-db) CASES+=("$1") ;;
+    wait|refuse|install|restart|cut-off|demo|password|address|empty-db|odd-name) CASES+=("$1") ;;
     *) usage ;;
   esac
   shift
 done
-[ "${#CASES[@]}" -gt 0 ] || CASES=(wait refuse install restart cut-off demo password address empty-db)
+[ "${#CASES[@]}" -gt 0 ] || CASES=(wait refuse install restart cut-off demo password address empty-db odd-name)
 wants() { local c; for c in "${CASES[@]}"; do [ "$c" = "$1" ] && return 0; done; return 1; }
 
 sc_need_docker
@@ -147,10 +159,11 @@ start_app() {
 }
 # in_app CONTAINER SCRIPT: runs a bash script in the container as root.
 in_app() { docker exec "$1" bash -c "$2" 2>&1; }
-# ops_signs_in CONTAINER: what `id -un` prints over SSH as clouve-ops, signed in with the password.
+# ops_signs_in CONTAINER [PASSWORD]: what `id -un` prints over SSH as clouve-ops, signed in with the password
+# (the right one unless another is given).
 ops_signs_in() {
   # shellcheck disable=SC2016  # the script is for the bash inside the container
-  docker exec -e "T_PW=$OPS_PW" "$1" bash -c '
+  docker exec -e "T_PW=${2:-$OPS_PW}" "$1" bash -c '
     d="$(mktemp -d)"; printf "#!/bin/sh\nprintf \"%%s\\n\" \"\$T_PW\"\n" > "$d/askpass"; chmod 700 "$d/askpass"
     SSH_ASKPASS="$d/askpass" SSH_ASKPASS_REQUIRE=force timeout 30 ssh -o StrictHostKeyChecking=no \
       -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o PubkeyAuthentication=no -o NumberOfPasswordPrompts=1 \
@@ -219,6 +232,14 @@ if wants wait; then
     fail "the clouve-ops sshd answers while the entrypoint still waits"
   fi
   assert_eq "clouve-ops signs in with the password" "clouve-ops" "$(ops_signs_in "$A")"
+  # sshd logs to the container's log, so staff can see sign-ins and guessing.
+  assert_eq "a wrong password is refused" "" "$(ops_signs_in "$A" "wrong-$OPS_PW")"
+  if sc_wait_for 10 sc_log_has "$A" "Failed password for clouve-ops"; then
+    pass "and the container's log has a line that says so"
+  else
+    fail "and the container's log has a line that says so"
+  fi
+  assert_contains "a sign-in that works is logged too" "$(docker logs "$A" 2>&1)" "Accepted password for clouve-ops"
   assert_eq "the stand-in answers the health check while the entrypoint waits" "200 200 503" \
     "$(sc_http "$A" /) $(sc_http "$A" / -I) $(sc_http "$A" /session-status)"
   assert_contains "and names itself in a header, so nothing takes it for SuiteCRM" \
@@ -250,6 +271,25 @@ if wants wait; then
   assert_eq "without CLOUVE_OPS_PASSWORD there is no sshd" "0" "$(in_app "$A" 'pgrep -c sshd')"
   docker rm -f -v "$A" >/dev/null 2>&1
 
+  # A cluster can take NET_BIND_SERVICE away. The stand-in then runs as nobody without it where unprivileged ports
+  # start at 0 (Docker's default), and not at all where they start at 1024. It never runs as root.
+  for ports in 0 1024; do
+    docker run -d --name "$A" --network "$NET" --memory 1g -v "${SC_PREFIX}wait-data:/var/www/html" \
+      --cap-drop NET_BIND_SERVICE --sysctl "net.ipv4.ip_unprivileged_port_start=$ports" \
+      -e "DATABASE_HOST=${SC_PREFIX}nodb" -e DATABASE_NAME=suitecrm -e DATABASE_USER=crmuser \
+      -e "DATABASE_PASSWORD=$DB_PW" -e SUITECRM_URL=https://crm.example.test "$APP_IMAGE" >/dev/null
+    sc_wait_log "$A" "waiting for the database at" 60
+    users="$(in_app "$A" 'ps -eo user:20,args | awk "/ -S 0\.0\.0\.0:80 / && !/awk/ {print \$1}" | sort -u | xargs')"
+    if [ "$ports" = 0 ]; then
+      assert_eq "without NET_BIND_SERVICE the stand-in runs as nobody" "nobody" "$users"
+      assert_eq "and answers the health check" "200" "$(sc_http "$A" /)"
+    else
+      assert_eq "without NET_BIND_SERVICE and with no low port open to others, no stand-in runs, as root least of all" "" "$users"
+      assert_contains "and the log says why" "$(docker logs "$A" 2>&1)" "it never runs as root"
+    fi
+    docker rm -f -v "$A" >/dev/null 2>&1
+  done
+
   docker run -d --name "$A" --network "$NET" --memory 1g -v "${SC_PREFIX}wait-data:/var/www/html" \
     -e "DATABASE_HOST=${SC_PREFIX}nodb" -e DATABASE_NAME=suitecrm -e DATABASE_USER=crmuser \
     -e SUITECRM_URL=https://crm.example.test -e "SUITECRM_ADMIN_PASSWORD=$ADMIN_PW" "$APP_IMAGE" >/dev/null
@@ -261,7 +301,7 @@ if wants wait; then
   docker rm -f -v "$A" >/dev/null 2>&1
 fi
 
-if wants refuse || wants install || wants restart || wants cut-off || wants demo || wants password || wants address || wants empty-db; then
+if wants refuse || wants install || wants restart || wants cut-off || wants demo || wants password || wants address || wants empty-db || wants odd-name; then
   echo
   if start_db; then pass "the database starts on a new disk"; else fail "the database starts on a new disk"; show_log "$DB"; fi
 fi
@@ -364,6 +404,12 @@ if wants install; then
   assert_eq "no password is in SuiteCRM's install logs on the volume" "0" \
     "$(sc_count_secrets_in "$A" /root/sc-logs.txt "${SECRETS[@]}")"
   assert_contains "the admin signs in with a password full of quotes" "$(admin_signs_in "$A" "$ADMIN_PW")" '"login_success"'
+  # The fixed PHP libraries reach the site: a new install copies the package (tests/suitecrm-image.test.sh has the rest).
+  # shellcheck disable=SC2016  # PHP code
+  assert_eq "the installed site has the fixed jmespath and http-foundation" "2.9.2 v6.4.49" \
+    "$(docker exec "$A" runuser -u www-data -- php -r 'require "/var/www/html/vendor/autoload.php";
+      echo Composer\InstalledVersions::getPrettyVersion("mtdowling/jmespath.php"), " ",
+        Composer\InstalledVersions::getPrettyVersion("symfony/http-foundation");' 2>&1)"
   assert_lacks "and a wrong password is refused" "$(admin_signs_in "$A" "wrong-$ADMIN_PW")" '"login_success"'
 
   # What runs once Apache is PID 1.
@@ -461,14 +507,61 @@ PHP
   assert_eq "a PHP file there is refused, and another file in the public media folder is still served" "403 403 200" \
     "$(sc_http "$A" /media/images/sct-probe.php) $(sc_http "$A" /media-upload/images/sct-probe.PhP) $(sc_http "$A" /media/images/sct-plain.txt)"
   docker exec "$A" bash -c 'cd /var/www/html/public && rm -rf media/images/sct-* media/images/.htaccess media-upload legacy/upload/sct-* legacy/upload/.htaccess'
-  # A page of SuiteCRM's older part, asked for without a cookie, sets the session cookie itself.
-  cookies="$(docker exec "$A" curl -s -o /dev/null -D - -H 'X-Forwarded-Proto: https' -H 'Host: crm.example.test' 'http://127.0.0.1/legacy/index.php?module=Users&action=Login' | tr -d '\r' | grep -i '^set-cookie:' | tr 'A-Z' 'a-z')"
-  if [ -z "$cookies" ] || { [[ "$cookies" == *"httponly"* ]] && [[ "$cookies" == *"samesite=lax"* ]]; }; then
-    pass "a session cookie that an older page sets is HttpOnly and SameSite=Lax"
+
+  # Files people upload, and the images inbound mail leaves in legacy/cache/images, come back as files and never as
+  # pages of the CRM's own address: a policy with sandbox and nosniff on every one, and active types (HTML, SVG,
+  # XML, scripts) as a download.
+  # shellcheck disable=SC2016  # the script is for the bash inside the container
+  docker exec -u www-data "$A" bash -c 'cd /var/www/html/public &&
+    for d in media/documents media-upload/documents legacy/cache/images; do
+      mkdir -p "$d" && echo "<html><script>document.title=1</script></html>" > "$d/sct-t.html" &&
+      echo "<svg xmlns=\"http://www.w3.org/2000/svg\"><script>1</script></svg>" > "$d/sct-t.svg" &&
+      echo "<x/>" > "$d/sct-t.xml" && echo "alert(1)" > "$d/sct-t.js" &&
+      echo iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg== | base64 -d > "$d/sct-t.png" || exit 1
+    done; echo "var sct = 1;" > legacy/cache/sct-own.js'
+  # served URL: "<status> <content type> sandbox:<0|1> nosniff:<0|1> attachment:<0|1>"
+  served() {
+    docker exec "$A" curl -s -o /dev/null -D - "http://127.0.0.1$1" 2>/dev/null | tr -d '\r' | tr 'A-Z' 'a-z' | awk '
+      /^http\// { status = $2 } /^content-type:/ { type = $2; sub(/;.*/, "", type) }
+      /^content-security-policy:/ && /sandbox/ { sandbox = 1 } /^x-content-type-options: *nosniff/ { nosniff = 1 }
+      /^content-disposition: *attachment/ { attachment = 1 }
+      END { printf "%s %s sandbox:%d nosniff:%d attachment:%d\n", status, type, sandbox, nosniff, attachment }'
+  }
+  for d in media/documents media-upload/documents legacy/cache/images; do
+    for f in html svg xml js; do
+      assert_eq "/$d/sct-t.$f is a download, in a sandbox, never sniffed" "sandbox:1 nosniff:1 attachment:1" \
+        "$(served "/$d/sct-t.$f" | cut -d' ' -f3-)"
+    done
+    assert_eq "/$d/sct-t.png is still an image that shows, in a sandbox" "200 image/png sandbox:1 nosniff:1 attachment:0" \
+      "$(served "/$d/sct-t.png")"
+  done
+  assert_eq "SuiteCRM's own files in legacy/cache are served as before" "200 sandbox:0 attachment:0" \
+    "$(served /legacy/cache/sct-own.js | awk '{print $1, $3, $5}')"
+  theme_image="$(in_app "$A" 'cd /var/www/html/public && ls legacy/themes/suite8/images/*.png 2>/dev/null | head -n 1')"
+  assert_eq "and so are the images of its theme" "200 image/png sandbox:0" "$(served "/$theme_image" | awk '{print $1, $2, $3}')"
+  assert_eq "and SuiteCRM's page and its older sign-in page" "200 200" \
+    "$(sc_http "$A" /) $(sc_http "$A" '/legacy/index.php?module=Users&action=Login')"
+  docker exec "$A" bash -c 'cd /var/www/html/public && rm -rf media/documents/sct-t.* media-upload legacy/cache/images/sct-t.* legacy/cache/sct-own.js'
+
+  # Apache and PHP don't name their versions to visitors.
+  headers="$(docker exec "$A" curl -s -o /dev/null -D - http://127.0.0.1/ | tr -d '\r')"
+  assert_eq "the Server header names no version, and no X-Powered-By header is sent" "Server: Apache 0" \
+    "$(grep -i '^server:' <<< "$headers") $(grep -ci '^x-powered-by:' <<< "$headers")"
+  # A PHP file in a media folder is refused by Apache itself, with its own error page.
+  assert_eq "an error page that Apache writes has no signature" "403 0" \
+    "$(sc_http "$A" /media/sct-none.php) $(docker exec "$A" curl -s http://127.0.0.1/media/sct-none.php | grep -c 'Apache/')"
+  # A page of SuiteCRM's older part, asked for without a cookie, sets the session cookie itself. Behind the
+  # ingress's HTTPS that cookie is Secure as well; over plain HTTP, as the health check and the Customer Kit's
+  # LimeSurvey ask, it is not.
+  cookies="$(docker exec "$A" curl -s -o /dev/null -D - -H 'X-Forwarded-Proto: https' -H 'Host: crm.example.test' 'http://127.0.0.1/legacy/index.php?module=Users&action=Login' | tr -d '\r' | grep -i '^set-cookie: *scrmsessid=' | tr 'A-Z' 'a-z')"
+  if [[ "$cookies" == *"httponly"* ]] && [[ "$cookies" == *"samesite=lax"* ]] && [[ "$cookies" == *"; secure"* ]]; then
+    pass "the session cookie that an older page sets is HttpOnly, SameSite=Lax and Secure behind forwarded HTTPS"
   else
-    fail "a session cookie that an older page sets is HttpOnly and SameSite=Lax"
-    printf '       %s\n' "$cookies"
+    fail "the session cookie that an older page sets is HttpOnly, SameSite=Lax and Secure behind forwarded HTTPS"
+    printf '       %s\n' "${cookies%%=*}=<value>${cookies#*;}"
   fi
+  cookies="$(docker exec "$A" curl -s -o /dev/null -D - -H 'Host: crm.example.test' 'http://127.0.0.1/legacy/index.php?module=Users&action=Login' | tr -d '\r' | grep -i '^set-cookie: *scrmsessid=' | tr 'A-Z' 'a-z')"
+  assert_lacks "and not Secure over plain HTTP" "$cookies" "; secure"
 
   echo "       PID 1 and what runs under it:"
   sed 's/^/       | /' <<< "$tree"
@@ -690,6 +783,36 @@ if wants empty-db; then
     # shellcheck disable=SC2016  # the script is for the sh inside the container
     docker exec "$DB" sh -c 'MYSQL_PWD="${MARIADB_ROOT_PASSWORD:-$MYSQL_ROOT_PASSWORD}"; export MYSQL_PWD; mariadb-dump -uroot suitecrm | mariadb -uroot crm_empty' >/dev/null 2>&1
     if wait_installed "$A" 180; then pass "once the tables are back, the waiting container goes on and SuiteCRM answers"; else fail "once the tables are back, the waiting container goes on and SuiteCRM answers"; show_log "$A" 30; fi
+    docker rm -f -v "$A" >/dev/null 2>&1
+  fi
+fi
+
+# --- odd-name --------------------------------------------------------------------
+if wants odd-name; then
+  echo
+  echo "odd-name: folders www-data named like moved-aside ones, one with a command in its name"
+  A="${SC_PREFIX}app"
+  if ! docker volume inspect "${SC_PREFIX}data" >/dev/null 2>&1; then
+    fail "the odd-name case needs the install case's volume (run both)"
+  else
+    docker rm -f -v "$A" >/dev/null 2>&1
+    # The name sorts before the other one, so a start that takes any such name takes this one first.
+    # shellcheck disable=SC2016  # the name is meant literally
+    bad='clouve-backup.untrusted-0;touch${IFS}$HOME.sct-pwned;#'
+    docker run --rm --network none -u 33:33 -e "T_BAD=$bad" -v "${SC_PREFIX}data:/v" "$SC_SHAPER" sh -c '
+      cd /v && echo 8.10.1 > VERSION && mkdir "tmp/$T_BAD" tmp/clouve-backup.untrusted-20260101T000000Z' >/dev/null
+    start_app "$A" "${SC_PREFIX}data" suitecrm
+    sc_wait_log "$A" "SuiteCRM is not started" 120 >/dev/null || { fail "$A waits for repair"; show_log "$A"; }
+    log="$(docker logs "$A" 2>&1)"
+    putback="$(grep -F 'To put it back' <<< "$log" | tail -n 1)"
+    assert_contains "the start waits and logs how to put the image's own folder back" "$putback" \
+      "cd -P -- clouve-backup.untrusted-20260101T000000Z &&"
+    assert_lacks "no line of the log has the other name's command in a form a shell would run" "$log" 'untrusted-0;touch${IFS}'
+    assert_contains "that folder is named quoted, with nothing to run, and the log says to look at it by hand" "$log" \
+      'untrusted-0\;touch\$\{IFS\}'
+    docker run --rm --network none -v "${SC_PREFIX}data:/v" -e "T_BAD=$bad" "$SC_SHAPER" sh -c '
+      cd /v && echo 8.10.2 > VERSION && chown 33:33 VERSION && rm -rf "tmp/$T_BAD" tmp/clouve-backup.untrusted-20260101T000000Z' >/dev/null
+    if wait_installed "$A" 180; then pass "with the folders gone and VERSION as it was, the start goes on"; else fail "with the folders gone and VERSION as it was, the start goes on"; show_log "$A" 30; fi
     docker rm -f -v "$A" >/dev/null 2>&1
   fi
 fi

@@ -19,7 +19,9 @@ The plugin automatically:
 - Fetches available CRM fields from SuiteCRM via the API
 - Caches field definitions for performance
 - Shows field labels and types in the dropdown
-- Stores mappings in the `lime_survey_crm_mappings` database table
+- Keeps the mapping on the question (its attribute `suitecrm_mappings_json`), which is what a sync reads
+
+The plugin's own table, `lime_survey_crm_mappings`, holds a copy of mappings. A new Customer Kit's install fills it with the demo survey's mappings, and the AI Assistant's `crm-link.sh map` writes it. A mapping you change in the question editor doesn't update the copy, and a sync never reads it.
 
 The plugin writes to Leads and Cases only, and only to fields that SuiteCRM lists for them. It refuses a mapping to anything else, when the mapping is saved and again when a response is sent.
 
@@ -215,7 +217,7 @@ Enable email validation on email questions to ensure valid addresses are sent to
 The plugin uses two database tables:
 
 ### `lime_survey_crm_mappings`
-Stores per-question field mappings:
+A copy of questions' mappings, filled at a new Customer Kit's install and by the AI Assistant's `crm-link.sh map`. A mapping changed in the question editor isn't copied here. A sync reads the question's own attribute, not this table:
 ```sql
 SELECT * FROM lime_survey_crm_mappings WHERE survey_id = YOUR_SURVEY_ID;
 ```
