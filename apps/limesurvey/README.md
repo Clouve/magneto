@@ -176,7 +176,10 @@ state once this way. No such volume exists outside tests.
 
 When the folder was moved aside and the code and the database agree, the start goes on. When they don't agree, it
 waits for repair, and the log line names the folder that was moved aside: if that folder holds an upgrade's backup,
-it is the way back, so keep it.
+it may be the way back, so keep it. But PHP code could have written all of it (its state, its stamp and its dump), so
+its backup is only as trustworthy as the site. Where the site may be compromised, restore from the platform's own
+backup instead. The image loads every dump as `www-data` with the client's `--sandbox` (`ls_load_dump` in `lib.sh`),
+so a dump runs no command in the container, but its SQL still becomes the database.
 
 ### A restore that the skill has under way
 
@@ -284,7 +287,16 @@ upgrade has been timed on a GKE network disk yet.
 
 `image/mariadb/` is MariaDB 11.8 with `MARIADB_AUTO_UPGRADE=1`, tini as PID 1, a rebuilt gosu and the `clouve-ops`
 sshd. Its wrapper refuses a data directory that a newer MariaDB line wrote (it reads `mariadb_upgrade_info`).
-MariaDB itself would start on such files without complaint, and going back to an older line isn't supported.
+MariaDB itself would start on such files without complaint, and going back to an older line isn't supported. A new
+data directory has `root` for `localhost` only (`MARIADB_ROOT_HOST`), because nothing signs in as root over the
+network. A data directory made before that keeps `root@'%'` until someone drops it once, in the database container:
+
+```bash
+MYSQL_PWD="${MARIADB_ROOT_PASSWORD:-$MYSQL_ROOT_PASSWORD}" mariadb -uroot -e "DROP USER IF EXISTS 'root'@'%'"
+```
+
+The build takes the base's own packages to their newest versions in the same Ubuntu release. MariaDB's own packages
+come from a list pinned to one release, so the server doesn't move.
 
 ## The SuiteCRM plugin
 
@@ -295,8 +307,12 @@ when LimeSurvey has no row for it and writes its connection settings from `SUITE
 `SUITECRM_ADMIN_PASSWORD` and `SUITECRM_DB_*`. Both passwords are stored encrypted. A start never changes whether
 the plugin is switched on. The script also has the plugin's own code make its two tables or bring an earlier
 install's table of mappings up to date, and it clears a mark that says the plugin is faulty, which the earlier
-image could leave and which keeps LimeSurvey from loading the plugin. See the plugin's own README for the rest,
-and `bundles/crm-kit/README.md` for the Customer Kit and `tests/crm-kit.test.sh` for the test of the real pair.
+image could leave and which keeps LimeSurvey from loading the plugin. With `INSTALL_DEMO_DATA=true` as well, the
+demo import writes the demo survey's mappings to the plugin's table of mappings, through the plugin's own code
+(`clouve mappings` in `installer/commands/ClouveCommand.php`). The import itself keeps them on the questions only,
+where a sync reads them. This runs only for a demo survey that this image imports, so a site whose demo survey an
+earlier image imported keeps its table as it is. See the plugin's own README for the rest, and
+`bundles/crm-kit/README.md` for the Customer Kit and `tests/crm-kit.test.sh` for the test of the real pair.
 
 ## Limits
 
@@ -317,7 +333,9 @@ In short (the plugin's own README has the rest):
   token only.
 - The settings page never shows a stored password or the OAuth2 client secret. An empty field means "keep".
 - Its status says so when SuiteCRM no longer has the OAuth2 client that LimeSurvey holds, and points to
-  "Initialize OAuth2".
+  "Initialize OAuth2". It also tries the sign-in that a sync makes, with a 10-second limit, once the checks before
+  it pass. When the sign-in fails, the status says so with SuiteCRM's HTTP code and what to do. It never shows a
+  password, the client secret, the token or SuiteCRM's answer.
 - It follows no redirect, so `SUITECRM_URL` has to be SuiteCRM's own address.
 - Its sync log keeps a response's content only for a sync that failed, and rows older than 90 days go at the next
   write.
@@ -443,7 +461,7 @@ container: the start goes on from the state file. What each stop leaves:
 | `.../code is not a folder of root's, so nothing is moved back from it` | State `restore`. The new code is removed. `code/` in the backup folder is a link or is not root's, so the image doesn't use it. | Find out what replaced `code/`. The restore goes on only when it is a real folder of root's that holds the old code. |
 | `... can't be written ... The upgrade itself is complete` | State `upgrade`, step `finishing` or `updating`. The site is whole on the new version. | Free space, then restart. The start records the upgrade as done and loads nothing. |
 | `gave up ..., but ... can't be written` | State `restore`. The old version is back, whole, with its data. | Free space, then restart. |
-| One of the rows of the table under "What a start does" (no code but tables, the package's code on an older database, a newer database, `DBUpdateIncomplete`, no `security.php`, ...) | Nothing was changed. | Put the volume and the database back together: restore the one that is wrong from a backup. If the log names a `clouve.untrusted-...` folder, look there for an upgrade's backup first. |
+| One of the rows of the table under "What a start does" (no code but tables, the package's code on an older database, a newer database, `DBUpdateIncomplete`, no `security.php`, ...) | Nothing was changed. | Put the volume and the database back together: restore the one that is wrong from a backup. If the log names a `clouve.untrusted-...` folder, look there for an upgrade's backup first, and read "The state folder" before you trust it. |
 
 If a site shows LimeSurvey's maintenance page after a cut-off upgrade was repaired by hand, switch it off as
 `www-data`: `php application/commands/console.php setmaintenancemode off` in `/var/www/html`.
@@ -461,19 +479,22 @@ cd /var/www/html/clouve
 export DB_HOST="${DB_HOST:-limesurvey-mariadb}" DB_PORT="${DB_PORT:-3306}" DB_NAME="${DB_NAME:-limesurvey}"
 export DB_USERNAME="${DB_USERNAME:-limesurvey}" DB_TABLE_PREFIX="${DB_TABLE_PREFIX:-lime_}"
 . /clouve/limesurvey/installer/lib.sh
-gzip -t /root/before-upgrade.sql.gz && ls_drop_all_tables && gzip -dc /root/before-upgrade.sql.gz | ls_mysql "$DB_NAME"
+ls_enter_clouve && gzip -t /root/before-upgrade.sql.gz && ls_drop_all_tables && ls_load_dump /root/before-upgrade.sql.gz
 ls_db_version
-rm upgrade-*-to-*/db-touched
+ls_enter_clouve && rm upgrade-*-to-*/db-touched
 ```
 
-`ls_db_version` has to print the old version's number (640 for LimeSurvey 6.16.1). Then restart the container. The
+`ls_enter_clouve` stops a line when the shell is not in the real state folder of root's, and `ls_load_dump` loads the
+dump as `www-data`, with the client's sandbox on. `ls_db_version` has to print the old version's number (640 for
+LimeSurvey 6.16.1). Then restart the container. The
 start checks that the database is at the old version, removes the new code, moves the old code back, throws the
 damaged backup away, makes a new one and upgrades again. To keep the old version running instead, fill the
 attempt counter before the restart. The start then puts the old version back, gives up, and writes
 `upgrade-failed` itself:
 
 ```bash
-printf 'build=%s\ncount=2\nreason=kept on the old version by hand\n' "$(cat /clouve/limesurvey/image-build)" > /var/www/html/clouve/upgrade-attempts
+. /clouve/limesurvey/installer/lib.sh && ls_enter_clouve &&
+    printf 'build=%s\ncount=2\nreason=kept on the old version by hand\n' "$(cat /clouve/limesurvey/image-build)" > upgrade-attempts
 ```
 
 ### When the container ends instead

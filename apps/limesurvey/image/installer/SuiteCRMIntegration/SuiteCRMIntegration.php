@@ -67,6 +67,9 @@ class SuiteCRMIntegration extends PluginBase
     /** @var bool Whether the plugin is handling a completed response */
     private $inSurveyCompletion = false;
 
+    /** Seconds the status check's sign-in to SuiteCRM may take. A sync waits up to 30. */
+    private const SIGN_IN_CHECK_TIMEOUT = 10;
+
     /**
      * Settings that LimeSurvey stores encrypted (with the keys in application/config/security.php)
      */
@@ -215,8 +218,10 @@ class SuiteCRMIntegration extends PluginBase
         // Subscribe to question attributes for field mapping UI
         $this->subscribe('newQuestionAttributes');
 
-        // Subscribe to question save to sync JSON mappings to database
-        $this->subscribe('afterQuestionSave', 'syncMappingsFromQuestionAttribute');
+        // Nothing runs when a question is saved. The mapping a sync reads is the question's own attribute, which
+        // LimeSurvey stores. The plugin's table of mappings is a copy, filled at a new kit's install
+        // (storeSurveyMappings()) and by the AI Assistant's crm-link.sh map. Writing it inside LimeSurvey's
+        // question-save transaction lost question saves to deadlocks, so an edit in the editor leaves the copy as it is.
 
         // Check a question's mappings before LimeSurvey stores them
         $this->subscribe('beforeQuestionAttributeSave', 'checkMappingsBeforeSave');
@@ -401,6 +406,10 @@ class SuiteCRMIntegration extends PluginBase
                         <td><strong>OAuth2 Client</strong></td>
                         <td id="status-oauth-client">-</td>
                     </tr>
+                    <tr>
+                        <td><strong>Sign-in to SuiteCRM</strong></td>
+                        <td id="status-signin">-</td>
+                    </tr>
                 </tbody>
             </table>
         </div>
@@ -484,6 +493,9 @@ var SuiteCRMStatus = {
                 self.updateDetailRow('status-database', data.suitecrm_database.status, data.suitecrm_database.message);
                 self.updateDetailRow('status-oauth-table', data.oauth2_table.status, data.oauth2_table.message);
                 self.updateDetailRow('status-oauth-client', data.oauth2_client.status, data.oauth2_client.message);
+                if (data.suitecrm_signin) {
+                    self.updateDetailRow('status-signin', data.suitecrm_signin.status, data.suitecrm_signin.message);
+                }
 
                 if (data.overall === 'ready') {
                     self.updateStatus('success', 'All checks passed - SuiteCRM integration is ready!');
@@ -861,8 +873,8 @@ HTML;
         $transformer = $this->getDataTransformer();
         $apiClient = $this->getApiClient();
 
-        // Get mappings directly from question attributes (source of truth)
-        // This ensures mappings work even after CLI import when afterQuestionSave wasn't triggered
+        // Get mappings directly from question attributes (source of truth). The plugin's table of mappings is a copy
+        // that a question saved in the editor doesn't update, so a sync never reads it.
         // A mapping to a module the plugin does not write to is left out there, and noted in $refused.
         $refused = [];
         $mappingsByModule = $schema->getMappingsFromQuestionAttributes($surveyId, $refused);
@@ -1458,53 +1470,78 @@ HTML;
     }
 
     /**
-     * Get OAuth2 access token from SuiteCRM
+     * Get OAuth2 access token from SuiteCRM. The API client is the one place that asks SuiteCRM for a token: a sync,
+     * the connection test and the status check all go through it.
      */
     protected function getAccessToken()
     {
-        $url = rtrim($this->get('suitecrm_url'), '/') . '/Api/access_token';
-        $clientId = $this->get('oauth_client_id');
-        $clientSecret = $this->get('oauth_client_secret');
-        $username = $this->get('suitecrm_admin_user');
-        $password = $this->get('suitecrm_admin_password');
+        return $this->getApiClient()->getAccessToken();
+    }
 
-        if (empty($clientId) || empty($clientSecret)) {
-            throw new Exception("OAuth2 client not initialized");
+    /**
+     * The status check's sign-in to SuiteCRM: a token request, made the way a sync makes it (SuiteCRMApiClient), with
+     * a short timeout so that the status page doesn't hang. It is tried only when every earlier check of the status
+     * passed. Before that it would only fail for a reason an earlier row already gives, and with no OAuth2 client
+     * yet it would make one (getApiClient()), which a status check never does. The row names SuiteCRM's HTTP code.
+     * The token, the client secret, the password and SuiteCRM's answer never reach it, or a log.
+     *
+     * @param array $status The rows of the status check so far
+     * @return array The sign-in's row: 'status' (ok, error or skipped) and 'message'
+     */
+    protected function checkSignIn(array $status): array
+    {
+        if (($status['oauth2_client']['status'] ?? '') === 'pending') {
+            return [
+                'status' => 'skipped',
+                'message' => 'Not tried: LimeSurvey has no OAuth2 client yet. The plugin makes one the first time it talks to SuiteCRM, or click "Initialize OAuth2".'
+            ];
+        }
+        foreach (['suitecrm_http', 'suitecrm_database', 'oauth2_table', 'oauth2_client'] as $check) {
+            if (($status[$check]['status'] ?? '') !== 'ok') {
+                return [
+                    'status' => 'skipped',
+                    'message' => 'Not tried, because a check above did not pass.'
+                ];
+            }
         }
 
-        $data = [
-            'grant_type' => 'password',
-            'client_id' => $clientId,
-            'client_secret' => $clientSecret,
-            'username' => $username,
-            'password' => $password
-        ];
-
-        $ch = curl_init($url);
-        curl_setopt($ch, CURLOPT_POST, true);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data));
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_HTTPHEADER, [
-            'Content-Type: application/x-www-form-urlencoded'
-        ]);
-
-        $response = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
-
-        if ($httpCode !== 200) {
-            $this->log("OAuth2 authentication failed: HTTP {$httpCode}", 'error');
-            throw new Exception("OAuth2 authentication failed");
+        $timeout = self::SIGN_IN_CHECK_TIMEOUT;
+        try {
+            // The OAuth2 client is there (the row above says ok), so getApiClient() makes no new one.
+            $result = $this->getApiClient()->trySignIn($timeout);
+        } catch (\Throwable $e) {
+            return ['status' => 'error', 'message' => 'The sign-in to SuiteCRM could not be tried.'];
         }
 
-        $result = json_decode($response, true);
-
-        if (!isset($result['access_token'])) {
-            $this->log("No access token in SuiteCRM's response", 'error');
-            throw new Exception("No access token received");
+        $code = (int) $result['http_code'];
+        if ($result['signed_in']) {
+            return ['status' => 'ok', 'message' => "SuiteCRM accepted the sign-in that a sync makes (HTTP {$code})"];
+        }
+        if ($result['timed_out']) {
+            $message = "SuiteCRM did not answer the sign-in within {$timeout} seconds, so syncs fail now. Check again in a few minutes. If it stays like this, look at SuiteCRM.";
+        } elseif ($code === 0) {
+            $message = "SuiteCRM's sign-in address (Api/access_token) could not be reached, so syncs fail now.";
+        } elseif ($code >= 300 && $code < 400) {
+            $message = "SuiteCRM answered the sign-in with a redirect (HTTP {$code}), which the plugin does not follow. Set SuiteCRM's own address in the settings below.";
+        } elseif ($code === 400 || $code === 401) {
+            // A client secret that SuiteCRM doesn't take gets 401.
+            $message = "SuiteCRM refused the sign-in (HTTP {$code}), so every sync fails. Check the SuiteCRM admin name and password in the settings below. "
+                . 'If they are right, delete the OAuth2 client "LimeSurvey Integration" in SuiteCRM, then click "Initialize OAuth2" to make a new one.';
+        } elseif ($code === 500) {
+            // SuiteCRM 8.10 answers a wrong admin name or password, or an admin account that is not active, with an
+            // exception of its own (Api/V8/OAuth2/Repository/UserRepository.php), and so with 500.
+            $message = "SuiteCRM's sign-in failed (HTTP 500), so every sync fails. SuiteCRM answers 500 when the admin name or password is wrong "
+                . 'or the admin account is not active, and on an error of its own. Check the SuiteCRM admin name and password in the settings below, '
+                . 'and that the account is active in SuiteCRM.';
+        } elseif ($code === 503) {
+            $message = 'SuiteCRM is not taking sign-ins (HTTP 503), so syncs fail now. It answers 503 while it installs or upgrades. Check again in a few minutes.';
+        } elseif ($code === 200) {
+            $message = 'SuiteCRM answered the sign-in without a token (HTTP 200), so syncs fail.';
+        } else {
+            $message = "SuiteCRM's sign-in failed (HTTP {$code}), so syncs fail now. Check again in a few minutes. If it stays like this, look at SuiteCRM.";
         }
 
-        return $result['access_token'];
+        return ['status' => 'error', 'message' => $message];
     }
 
     /**
@@ -1689,94 +1726,85 @@ HTML;
     }
 
     /**
-     * Sync field mappings from question attribute JSON to database
+     * Writes one question's mappings, as its attribute suitecrm_mappings_json holds them, to the plugin's table of
+     * mappings, in place of the rows the question had there. An empty value clears them. A mapping the plugin refuses
+     * (checkMappings()) is left out. A value that is not a list of mappings changes nothing.
      *
-     * This is called after a question is saved to extract the JSON mappings
-     * from the suitecrm_mappings_json attribute and save them to our mappings table.
+     * @param int $surveyId Survey ID
+     * @param int $questionId Question ID
+     * @param string $mappingsJson The attribute's value
+     * @return int|null How many rows the question has in the table now, or null when the value is not a list
+     * @throws Exception When the table can't be written
      */
-    public function syncMappingsFromQuestionAttribute()
+    protected function storeQuestionMappings(int $surveyId, int $questionId, string $mappingsJson): ?int
     {
-        $event = $this->getEvent();
-        $question = $event->get('question');
+        $schema = $this->getDbSchema();
 
-        if (!$question) {
-            return;
+        if ($mappingsJson === '' || $mappingsJson === '[]') {
+            $schema->deleteMapping($questionId);
+            return 0;
         }
 
-        $questionId = $question->qid ?? $question['qid'] ?? null;
-        $surveyId = $question->sid ?? $question['sid'] ?? null;
-
-        if (!$questionId || !$surveyId) {
-            return;
+        $mappings = json_decode($mappingsJson, true);
+        if (json_last_error() !== JSON_ERROR_NONE || !is_array($mappings)) {
+            return null;
         }
 
-        $this->debugLog("syncMappingsFromQuestionAttribute() for question {$questionId} in survey {$surveyId}");
-
-        try {
-            // Get the JSON mappings attribute value
-            $mappingsJson = '';
-
-            // Try to get from question attributes
-            if (is_object($question) && method_exists($question, 'getAttributes')) {
-                $attrs = $question->getAttributes();
-                $mappingsJson = $attrs['suitecrm_mappings_json'] ?? '';
-            } elseif (is_array($question)) {
-                $mappingsJson = $question['suitecrm_mappings_json'] ?? '';
+        // Convert to the format expected by saveMappings
+        $mappingsToSave = [];
+        foreach ($mappings as $mapping) {
+            if (!isset($mapping['module']) || !isset($mapping['field'])) {
+                continue;
             }
-
-            // Also try QuestionAttribute model
-            if (empty($mappingsJson)) {
-                $attr = QuestionAttribute::model()->findByAttributes([
-                    'qid' => $questionId,
-                    'attribute' => 'suitecrm_mappings_json'
-                ]);
-                if ($attr) {
-                    $mappingsJson = $attr->value ?? '';
-                }
-            }
-
-            if (empty($mappingsJson) || $mappingsJson === '[]') {
-                // No mappings, delete any existing
-                $schema = $this->getDbSchema();
-                $schema->deleteMapping($questionId);
-                $this->debugLog("Cleared mappings for question {$questionId}");
-                return;
-            }
-
-            // Parse the JSON
-            $mappings = json_decode($mappingsJson, true);
-            if (json_last_error() !== JSON_ERROR_NONE || !is_array($mappings)) {
-                $this->debugLog("Invalid JSON in mappings for question {$questionId}: " . json_last_error_msg());
-                return;
-            }
-
-            // Convert to the format expected by saveMappings
-            $mappingsToSave = [];
-            foreach ($mappings as $mapping) {
-                if (!isset($mapping['module']) || !isset($mapping['field'])) {
-                    continue;
-                }
-                $mappingsToSave[] = [
-                    'module' => $mapping['module'],
-                    'field' => $mapping['field'],
-                    'label' => $mapping['label'] ?? '',
-                    'type' => $mapping['type'] ?? 'varchar',
-                    'transformRule' => $mapping['transformRule'] ?? ''
-                ];
-            }
-
-            // The same check as when the attribute is stored. A survey import stores it without that check.
-            [$mappingsToSave] = $this->checkMappings($mappingsToSave);
-
-            // Save to database
-            $schema = $this->getDbSchema();
-            $result = $schema->saveMappings($surveyId, $questionId, $mappingsToSave);
-
-            $this->debugLog("Saved " . count($mappingsToSave) . " mappings for question {$questionId}: " . ($result ? 'success' : 'failed'));
-
-        } catch (Exception $e) {
-            $this->debugLog("Error syncing mappings for question {$questionId}: " . $e->getMessage());
+            $mappingsToSave[] = [
+                'module' => $mapping['module'],
+                'field' => $mapping['field'],
+                'label' => $mapping['label'] ?? '',
+                'type' => $mapping['type'] ?? 'varchar',
+                'transformRule' => $mapping['transformRule'] ?? ''
+            ];
         }
+
+        // The same check as when the attribute is stored. A survey import stores it without that check.
+        [$mappingsToSave] = $this->checkMappings($mappingsToSave);
+
+        if (!$schema->saveMappings($surveyId, $questionId, $mappingsToSave)) {
+            throw new Exception("The mappings of question {$questionId} could not be saved");
+        }
+        return count($mappingsToSave);
+    }
+
+    /**
+     * Fills the plugin's table of mappings for one survey from its questions: each question that has the attribute
+     * suitecrm_mappings_json gets the rows storeQuestionMappings() writes for it. A survey import stores the
+     * attributes and writes nothing to the table, so the image's demo import runs this for the demo survey it has
+     * just imported (installer/commands/ClouveCommand.php, "clouve mappings"). Each question's rows are replaced, so
+     * a second run adds no row. No HTTP request reaches this method: it is not in $allowedPublicMethods. Nothing runs
+     * it during a question save (see init()).
+     *
+     * @param int $surveyId Survey ID
+     * @return array [the number of questions that have rows now, the number of rows]
+     * @throws Exception When the table can't be written
+     */
+    public function storeSurveyMappings(int $surveyId): array
+    {
+        $questions = 0;
+        $rows = 0;
+        foreach (Question::model()->findAllByAttributes(['sid' => $surveyId, 'parent_qid' => 0], ['order' => 'qid']) as $question) {
+            $attribute = QuestionAttribute::model()->findByAttributes([
+                'qid' => $question->qid,
+                'attribute' => 'suitecrm_mappings_json'
+            ]);
+            if ($attribute === null) {
+                continue;
+            }
+            $saved = $this->storeQuestionMappings($surveyId, (int) $question->qid, (string) $attribute->value);
+            if ($saved > 0) {
+                $questions++;
+                $rows += $saved;
+            }
+        }
+        return [$questions, $rows];
     }
 
     /**
@@ -2137,6 +2165,7 @@ HTML;
      * - SuiteCRM database connectivity
      * - oauth2clients table existence (indicates SuiteCRM is fully initialized)
      * - OAuth2 client status in LimeSurvey
+     * - the sign-in to SuiteCRM's API with that client and the admin's name and password (checkSignIn())
      */
     public function actionCheckStatus()
     {
@@ -2146,6 +2175,7 @@ HTML;
             'suitecrm_database' => ['status' => 'unknown', 'message' => ''],
             'oauth2_table' => ['status' => 'unknown', 'message' => ''],
             'oauth2_client' => ['status' => 'unknown', 'message' => ''],
+            'suitecrm_signin' => ['status' => 'unknown', 'message' => ''],
             'overall' => 'unknown'
         ];
 
@@ -2271,10 +2301,14 @@ HTML;
             ];
         }
 
+        // Check 5: the sign-in to SuiteCRM, as a sync makes it. A changed admin password, or a client secret that no
+        // longer matches, passes every check above and shows only here.
+        $status['suitecrm_signin'] = $this->checkSignIn($status);
+
         // Determine overall status
         $hasErrors = false;
         $allOk = true;
-        foreach (['suitecrm_http', 'suitecrm_database', 'oauth2_table', 'oauth2_client'] as $check) {
+        foreach (['suitecrm_http', 'suitecrm_database', 'oauth2_table', 'oauth2_client', 'suitecrm_signin'] as $check) {
             if ($status[$check]['status'] === 'error') {
                 $hasErrors = true;
                 $allOk = false;

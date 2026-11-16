@@ -34,7 +34,12 @@ opens. Type a new value to change one. A field you leave empty keeps what is sto
 
 The plugin makes its OAuth2 client in SuiteCRM's database (`oauth2clients`, named "LimeSurvey Integration") the
 first time it talks to SuiteCRM, so LimeSurvey starts whether or not SuiteCRM is up. Changing SuiteCRM's admin
-password, that OAuth2 client or SuiteCRM's key pair breaks the link until the settings match again.
+password, that OAuth2 client or SuiteCRM's key pair breaks the link until the settings match again. "Check Status"
+on the settings page tries the sign-in that a sync makes, so a changed password or client shows there.
+
+With `INSTALL_DEMO_DATA=true` the image imports a demo survey whose questions are mapped already. A new install also
+writes those mappings to the plugin's table of mappings, `lime_survey_crm_mappings`. A sync reads the mappings
+on the questions, not the table.
 
 ## Installing it by hand
 
@@ -75,6 +80,10 @@ For each question that should reach SuiteCRM:
 A lead needs `last_name` and a case needs `name`. The plugin sends only the fields that are mapped. It sets no
 `lead_source` and no `status` itself.
 [FIELD_MAPPING_GUIDE.md](FIELD_MAPPING_GUIDE.md) lists every field.
+
+The question keeps the mapping, and a sync reads it there. The plugin's table of mappings,
+`lime_survey_crm_mappings`, is a copy: a new Customer Kit's install fills it with the demo survey's mappings, and
+the AI Assistant's `crm-link.sh map` writes it. A mapping changed in the question editor doesn't update the copy.
 
 The "SuiteCRM Integration" section shows only while the survey's link is switched on. A question keeps its mapping
 while the link is off, and saving the question doesn't remove it.
@@ -144,6 +153,8 @@ log holds counts and ids. It never holds answers or passwords. Switch debug mode
 |-------|----------|
 | "OAuth2 client not yet initialized" or "OAuth2 initialization failed" (Check Status) | SuiteCRM's database settings in the plugin's settings, then "Initialize OAuth2" |
 | "OAuth2 authentication failed" | SuiteCRM's address, admin name and password |
+| Check Status: "SuiteCRM refused the sign-in (HTTP 401)" or "SuiteCRM's sign-in failed (HTTP 500)" | SuiteCRM's admin name and password in the settings, and that the account is active in SuiteCRM. For a 400 or 401 with the right password: delete the client "LimeSurvey Integration" in SuiteCRM, then "Initialize OAuth2" |
+| Check Status: "SuiteCRM did not answer the sign-in within 10 seconds" | SuiteCRM itself. The status waits that long and no longer |
 | No record is created | The survey's link is switched on, and `last_name` (leads) or `name` (cases) is mapped |
 | A record has empty fields | The question's mapping, and that the question was answered |
 | A failed row with the module `Refused` | The question it names has a mapping to a module other than Leads or Cases, or to a field SuiteCRM doesn't list |

@@ -33,7 +33,10 @@ LimeSurvey is the kit's default app, so it answers on the deployment's own addre
 3. Each question says which CRM fields it fills, such as `Leads: first_name` or `Cases: description`. The mapping is
    kept on the question. An admin sets it in LimeSurvey's classic question editor, in the question's
    "SuiteCRM Integration" section. LimeSurvey 7 opens its new editor by default, which doesn't show that section. The
-   plugin's settings page says how to switch editors. The AI Assistant can set a mapping too.
+   plugin's settings page says how to switch editors. The AI Assistant can set a mapping too. A sync reads the
+   mapping on the question. The plugin's table `lime_survey_crm_mappings`, which its `actionGetMappings`
+   address reads, is a copy: a new kit's demo import fills it with the demo survey's mappings, and the AI
+   Assistant's `crm-link.sh map` writes it. A mapping changed in LimeSurvey's editor doesn't update the copy.
 4. When someone completes an active survey, the plugin builds one record for each CRM module that has an answered,
    mapped question. It signs in to SuiteCRM's API as the SuiteCRM admin and creates the record.
 5. The plugin signs in through an OAuth2 client named "LimeSurvey Integration". It makes that client itself, in
@@ -71,15 +74,25 @@ SuiteCRM's side:
 
 | What happened | What you see | The way back |
 | --- | --- | --- |
-| Someone changed the main admin's password in SuiteCRM, renamed the account, deactivated it or took away its admin rights | New responses are logged as failed | Put the account back as the deployment set it. The `suitecrm` skill has `restore-admin-password.sh` for the password |
+| Someone changed the main admin's password in SuiteCRM, renamed the account, deactivated it or took away its admin rights | New responses are logged as failed. After a changed password, a renamed account or a deactivated one, "Check Status" on the plugin's settings page says that the sign-in failed | Put the account back as the deployment set it. The `suitecrm` skill has `restore-admin-password.sh` for the password |
 | The OAuth2 client "LimeSurvey Integration" was deleted in SuiteCRM | New responses are logged as failed, and "Check Status" on the plugin's settings page says that SuiteCRM no longer has the client | "Initialize OAuth2" on the plugin's settings page makes a new client |
-| The client was changed in SuiteCRM and is still there | New responses are logged as failed | "Initialize OAuth2" changes nothing while SuiteCRM still has the client. Delete the client in SuiteCRM, then click "Initialize OAuth2" |
+| The client was changed in SuiteCRM and is still there | New responses are logged as failed, and "Check Status" says that the sign-in failed | "Initialize OAuth2" changes nothing while SuiteCRM still has the client. Delete the client in SuiteCRM, then click "Initialize OAuth2" |
 | SuiteCRM's key pair for API tokens is missing, or its two files no longer match | New responses are logged as failed | Put both files back from a backup of the deployment. "Initialize OAuth2" only makes a client, so it doesn't repair this |
 | A SuiteCRM restore brought back a database from before the plugin made its client | The same | The same |
 | The plugin, its "Enable SuiteCRM Integration" setting or the survey's link was switched off, or the survey isn't active | Nothing is sent, and nothing is logged | Switch it on again |
 | SuiteCRM is down, or is still installing or upgrading | The response is saved in LimeSurvey and logged as failed. It is not sent again | Wait for SuiteCRM. While it installs or upgrades, a stand-in answers its health check and answers every API call with 503, so the plugin never takes that for a lead |
 | A mapped question was deleted | The record no longer has that field | Map another question to the field |
 | One of the two database passwords changed on the platform | Nothing, after the next start of both apps: each start writes the passwords from the environment into both apps' settings | Restart the deployment |
+
+"Check Status" on the plugin's settings page runs five checks: SuiteCRM's address answers, its database answers, the
+table `oauth2clients` is there, SuiteCRM still has the client LimeSurvey holds, and the sign-in. The sign-in asks
+SuiteCRM for a token the way a sync does, and waits at most 10 seconds. It runs only when the four checks before it
+passed. When it fails, the row names SuiteCRM's HTTP code and says what to do. SuiteCRM 8.10 answers a wrong admin
+name or password, or an admin account that is not active, with 500, and a client secret it doesn't take with 401. The
+status shows no password, no client secret and no token. Each "Check Status" asks SuiteCRM for a sign-in token, as a
+sync does, and SuiteCRM keeps that token's row. The check sends no survey data and makes no lead or case, so a fault
+that only an API call meets still shows only in the sync log. A response that becomes a lead is still the test of the
+whole link.
 
 ## The AI Assistant
 
@@ -162,17 +175,21 @@ For the link, the upgrade does this:
 - SuiteCRM's scheduler is held until someone releases it, because scheduled jobs never ran on the earlier image.
   `apps/suitecrm/README.md` says how to look at what is queued and release it.
 
-One thing stays as the earlier kit had it, because it is the customer's data:
+Two things stay as the earlier kit had them, because they are the customer's data:
 
 - A demo survey that the earlier image imported keeps its mapping of the company question to `Cases: account_name`.
   With it, a sales inquiry that names a company also makes a case with no subject. Clear that one mapping in the
   question's "SuiteCRM Integration" section, or ask the AI Assistant to. A new install's demo survey doesn't have it.
+- The plugin's table of mappings keeps the rows it had. The earlier image's demo import wrote none there, so the
+  table has none for its demo survey. Syncs don't read the table, so the link works without them. A new install's
+  demo import fills the table.
 
 ## Tests
 
 ```bash
-# The bundle's files, then a new kit on new disks: the four probes, the plugin, the demo survey, a response
-# that becomes a lead, a support request that becomes a case, the plugin's endpoints, and the clouve-ops channel
+# The bundle's files, then a new kit on new disks: the four probes, the plugin, the demo survey and its mappings in
+# the plugin's table, a response that becomes a lead, a support request that becomes a case, the plugin's endpoints,
+# the status check's sign-in, and the clouve-ops channel
 bash tests/crm-kit.test.sh
 
 # An old kit first (LimeSurvey 6.16.1 and SuiteCRM 8.9.1 on MariaDB 11.8 and 12.1, with a lead made through the

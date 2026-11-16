@@ -31,6 +31,39 @@
 #                upgrades to 8.10.4, which also proves the second bump.
 # other-version  A backup is cut off, and an image with another version starts
 #                (a roll-back): nothing had changed, so the site just starts.
+# restore-swap   A way back that loads the dump, paused between dropping the
+#                tables and loading the dump. Meanwhile www-data renames the
+#                state folder and puts its own in its place, with a dump that
+#                holds a client command. The way back loads the real dump from
+#                the folder it checked, and the command never runs.
+# remove-swap    A way back paused between removing the upgraded code in public/
+#                and in public/legacy/. Meanwhile www-data swaps public/ for a
+#                link to the image's own package. Root deletes nothing there.
+# chown-swap     The same swap while the way back is paused before it gives the
+#                install's folders back to www-data: the package's folders stay
+#                root's.
+# forged         www-data makes a state folder of its own, with a forged backup
+#                whose dump holds a client command. A start moves it aside, and
+#                staff put it back with the README's commands. The way back then
+#                checks that dump before it drops a table: it is no whole dump of
+#                the site, so nothing is dropped, and nothing in it runs.
+# tmp-move       www-data moves tmp/, with root's state folder in it, into
+#                public/legacy/ while the way back removes the upgraded code
+#                there. The way back stops, the state folder and its backup are
+#                still whole where tmp/ went, so are the skill's backups, and the
+#                log doesn't say the state is kept. The next start says where
+#                the state folder is and what staff do.
+# tmp-race       The same move in the middle of emptying public/legacy/, after
+#                www-data's first pass and before root hands over what is left:
+#                root's folders in tmp/ (the state, the skill's backups) are
+#                never handed to www-data or removed.
+# locked-folder  www-data makes public/legacy/ a folder it can't write in (555)
+#                while the way back is paused: the way back still empties it and
+#                finishes, and the upgrade then runs.
+# load           A stop request while the way back is about to load the dump:
+#                no copy of the database password is left for www-data. The
+#                next start removes one that was left. While the dump loads,
+#                its client runs as www-data.
 #
 # --image NAME=REF uses an image that is already built (suitecrm,
 # suitecrm-mariadb); otherwise the test builds it and removes it at the end.
@@ -39,7 +72,7 @@
 # network with no way out and no published port, and is removed at the end
 # unless --keep is given. Every password is made up. The rehearsal packages
 # (about 500 MB each) are made in a temporary folder and removed. Needs Docker
-# and python3. About 15 minutes.
+# and python3. About 55 minutes.
 #
 # Usage: bash tests/suitecrm-self-upgrade.test.sh [--image NAME=REF]... [--keep] [CASE...]
 # Exit status: 0 when every check passes, 1 when one fails, 2 when it can't run.
@@ -54,7 +87,7 @@ SC_PREFIX="${SC_PREFIX}self-"
 BASE=8.10.2
 NEXT=8.10.3
 AFTER=8.10.4
-ALL_CASES=(plain kill migration other-version)
+ALL_CASES=(plain kill migration other-version restore-swap remove-swap chown-swap forged tmp-move load tmp-race locked-folder)
 
 usage() {
   sed -n 's/^# \{0,1\}//; /^Usage:/,/^Exit status/p' "${BASH_SOURCE[0]}" >&2
@@ -385,6 +418,244 @@ if wants other-version; then
   assert_eq "$c: no state and no unfinished backup are left" "" \
     "$(in_app $c 'cd /var/www/html/tmp/clouve-backup && cat state 2>/dev/null; ls -d *.partial 2>/dev/null')"
   site_is $c "$BASE"
+  drop_case $c
+fi
+
+# --- the way back, with www-data swapping folders under it ----------------------------
+# cut_upgrade CASE: the upgrade to $NEXT stops between SuiteCRM's two commands, as after a kill. The next start
+# goes back.
+cut_upgrade() {
+  clone "$1"
+  db_start "$1" || fail "$1: the database starts"
+  app_start "$1" "$(with_package "$NEXT")" -e CLOUVE_TEST_PAUSE=upgrade:300
+  sc_wait_log "$(app_of "$1")" "test pause at upgrade" 300 || { fail "$1: the upgrade reaches the test's pause"; show_log "$1"; }
+  docker kill "$(app_of "$1")" >/dev/null
+}
+# as_www CASE SCRIPT: runs a bash script as www-data in the case's app container.
+as_www() { docker exec -u www-data "$(app_of "$1")" bash -c "$2" 2>&1; }
+# on_volume CASE SCRIPT: runs a sh script on the case's volume (mounted at /v), as root, with no app container.
+on_volume() { docker run --rm --network none -v "$(data_of "$1"):/v" "$SC_SHAPER" sh -c "$2" 2>&1; }
+# wait_stopped CASE SECONDS: 0 once the case's app container has stopped.
+wait_stopped() { sc_wait_for "$2" bash -c "! [ \"\$(docker inspect --format '{{.State.Running}}' $(app_of "$1") 2>/dev/null)\" = true ]"; }
+# package_tree CONTAINER: the owner and the number of entries of the image's own public/legacy, in a container
+# that runs or has stopped.
+package_tree() {
+  local listing
+  listing="$(docker cp "$1:/clouve/suitecrm/app/public/legacy" - 2>/dev/null | tar -tv --numeric-owner 2>/dev/null)"
+  echo "$(head -n 1 <<< "$listing" | awk '{print $2}') $(grep -c . <<< "$listing")"
+}
+
+if wants restore-swap; then
+  echo
+  echo "restore-swap: www-data swaps the state folder while the way back is about to load the dump"
+  c=restore-swap
+  cut_upgrade $c
+  # A record that changed after the backup, so that the way back loads the dump.
+  sql $c "UPDATE accounts SET name = 'changed after the backup' WHERE id = 'sct-self-1'" >/dev/null
+  app_start $c "$(with_package "$NEXT")" -e CLOUVE_TEST_PAUSE=restore:60
+  if sc_wait_log "$(app_of $c)" "test pause at restore" 300; then
+    pass "$c: the way back dropped the tables and pauses before it loads the dump"
+  else
+    fail "$c: the way back dropped the tables and pauses before it loads the dump"; show_log $c
+  fi
+  # shellcheck disable=SC2016  # the script is for the bash inside the container
+  as_www $c 'cd /var/www/html/tmp && mv clouve-backup clouve-backup.real && mkdir -p clouve-backup/'"$BASE-to-$NEXT"' &&
+    printf "system touch /var/www/html/tmp/sct-swap-ran\nCREATE TABLE sct_forged (a INT);\n" | gzip > clouve-backup/'"$BASE-to-$NEXT"'/db.sql.gz &&
+    echo swapped' | tail -n 1 | grep -qx swapped && pass "$c: www-data could swap the state folder for one of its own" ||
+    fail "$c: www-data could swap the state folder for one of its own"
+  wait_up $c 240 >/dev/null
+  log="$(app_log $c)"
+  assert_eq "$c: the client command in www-data's dump never ran" "absent" \
+    "$(on_volume $c '[ -e /v/tmp/sct-swap-ran ] && echo present || echo absent')"
+  assert_eq "$c: and nothing of that dump reached the database" "0" \
+    "$(sql $c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'suitecrm' AND table_name = 'sct_forged'")"
+  assert_eq "$c: the way back loaded the real dump: the record is as the backup had it" "Self Upgrade Ltd" \
+    "$(sql $c "SELECT name FROM accounts WHERE id = 'sct-self-1'")"
+  assert_contains "$c: the log says the dump was loaded" "$log" "so the dump is loaded"
+  drop_case $c
+fi
+
+if wants remove-swap; then
+  echo
+  echo "remove-swap: www-data swaps public/ for a link while the way back removes the upgraded code"
+  c=remove-swap
+  cut_upgrade $c
+  fresh="$(docker create --name "${SC_PREFIX}fresh" "$APP_IMAGE" >/dev/null && package_tree "${SC_PREFIX}fresh"; docker rm -f "${SC_PREFIX}fresh" >/dev/null 2>&1)"
+  app_start $c "$(with_package "$NEXT")" -e CLOUVE_TEST_PAUSE=remove-listed:60
+  if sc_wait_log "$(app_of $c)" "test pause at remove-listed" 300; then
+    pass "$c: the way back pauses after the upgraded code in public/ is gone"
+  else
+    fail "$c: the way back pauses after the upgraded code in public/ is gone"; show_log $c
+  fi
+  as_www $c 'cd /var/www/html && mv public public.real && ln -s /clouve/suitecrm/app/public public' >/dev/null
+  wait_up $c 240 >/dev/null
+  assert_eq "$c: the image's own public/legacy is whole and root's" "$fresh" "$(package_tree "$(app_of $c)")"
+  drop_case $c
+fi
+
+if wants chown-swap; then
+  echo
+  echo "chown-swap: www-data swaps public/ for a link before the way back gives the install's folders back"
+  c=chown-swap
+  cut_upgrade $c
+  app_start $c "$(with_package "$NEXT")" -e CLOUVE_TEST_PAUSE=removed:60
+  if sc_wait_log "$(app_of $c)" "test pause at removed" 300; then
+    pass "$c: the way back pauses after the upgraded code is gone"
+  else
+    fail "$c: the way back pauses after the upgraded code is gone"; show_log $c
+  fi
+  as_www $c 'cd /var/www/html && mv public public.real && ln -s /clouve/suitecrm/app/public public' >/dev/null
+  wait_up $c 240 >/dev/null
+  assert_eq "$c: the image's own public/legacy is still root's" "0/0" "$(package_tree "$(app_of $c)" | cut -d' ' -f1)"
+  drop_case $c
+fi
+
+if wants forged; then
+  echo
+  echo "forged: a state folder www-data made, put back by staff with the README's commands"
+  c=forged
+  clone $c
+  db_start $c || fail "$c: the database starts"
+  # www-data's state folder: a state that asks for the way back, and a backup whose checksums www-data worked out.
+  # shellcheck disable=SC2016  # the script is for the sh in the shaper container
+  docker run --rm --network none -u 33:33 -v "$(data_of $c):/v" "$SC_SHAPER" sh -c '
+    B=/v/tmp/clouve-backup F=/v/tmp/clouve-backup/'"$BASE-to-$NEXT"' && mkdir -p "$F" /tmp/code && echo forged > /tmp/code/VERSION &&
+    printf "system touch /var/www/html/tmp/sct-forged-ran\nCREATE TABLE sct_forged (a INT);\n" | gzip > "$F/db.sql.gz" &&
+    tar -C /tmp/code -czf "$F/code.tar.gz" . &&
+    printf "app=suitecrm\nfrom='"$BASE"'\nto='"$NEXT"'\nbuild=0000000000000000\nversion_file='"$BASE"'\ndatabase_version='"$BASE"'\ntables=1\nhad_uploads=no\nhad_public_media_upload=no\nhad_media=yes\nhad_public_media=yes\ncode_sha256=%s\ndatabase_sha256=%s\ndatabase_fingerprint=%064d\n" \
+      "$(sha256sum < "$F/code.tar.gz" | cut -d" " -f1)" "$(sha256sum < "$F/db.sql.gz" | cut -d" " -f1)" 0 > "$F/complete" &&
+    printf "phase=restore\nfrom='"$BASE"'\nto='"$NEXT"'\nbuild=0000000000000000\nattempts=1\nstep=finalize\n" > "$B/state"' >/dev/null 2>&1 ||
+    fail "$c: www-data's state folder is on the volume"
+  app_start $c "$(with_package "$NEXT")"
+  sc_wait_log "$(app_of $c)" "SuiteCRM is not started" 240 >/dev/null || { fail "$c: the start waits for staff"; show_log $c; }
+  aside="$(in_app $c 'cd /var/www/html/tmp && ls -d clouve-backup.untrusted-* | head -n 1')"
+  # The README's commands, as written, with the folder's real name.
+  awk '/^#### The state folder was moved aside/ { found = 1 } found && /^```bash/ { inside = 1; next } inside && /^```/ { exit } inside' \
+    "$SC_REPO/apps/suitecrm/README.md" | sed "s/clouve-backup\.untrusted-<time>/$aside/g" > "$SC_WORK/put-back.sh"
+  if [ "$(grep -c . "$SC_WORK/put-back.sh")" -ge 3 ]; then pass "$c: the README has the commands"; else fail "$c: the README has the commands"; fi
+  docker exec -i "$(app_of $c)" bash -e < "$SC_WORK/put-back.sh" >/dev/null 2>&1
+  assert_eq "$c: they put the folder back, root's" "root" "$(in_app $c 'stat -c %U /var/www/html/tmp/clouve-backup')"
+  # The waiting start goes on by itself and runs the way back from that folder.
+  wait_stopped $c 300 || wait_up $c 60 >/dev/null
+  log="$(app_log $c)"
+  assert_contains "$c: the waiting start went on and went back from the folder" "$log" "phase restore"
+  assert_eq "$c: the client command in the forged dump never ran" "absent" \
+    "$(on_volume $c '[ -e /v/tmp/sct-forged-ran ] && echo present || echo absent')"
+  assert_eq "$c: and the dump's SQL after it never ran" "0" \
+    "$(sql $c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'suitecrm' AND table_name = 'sct_forged'")"
+  assert_contains "$c: the way back stopped at that dump, before it dropped a table" "$log" "so no table was dropped"
+  assert_eq "$c: the database was never emptied: the record is still there" "Self Upgrade Ltd" \
+    "$(sql $c "SELECT name FROM accounts WHERE id = 'sct-self-1'")"
+  drop_case $c
+fi
+
+if wants tmp-move; then
+  echo
+  echo "tmp-move: www-data moves tmp/, with root's state folder in it, into public/legacy/ during the way back"
+  c=tmp-move
+  cut_upgrade $c
+  app_start $c "$(with_package "$NEXT")" -e CLOUVE_TEST_PAUSE=remove-listed:60
+  if sc_wait_log "$(app_of $c)" "test pause at remove-listed" 300; then
+    pass "$c: the way back pauses before it empties public/legacy/"
+  else
+    fail "$c: the way back pauses before it empties public/legacy/"; show_log $c
+  fi
+  # The suitecrm skill's backups are root's too, in tmp/clouve-skill-backups/.
+  in_app $c 'b=/var/www/html/tmp/clouve-skill-backups/20261116-100000 && mkdir -p -m 700 "$b" && chmod 700 "${b%/*}" && echo dump > "$b/db.sql.gz"' >/dev/null
+  assert_eq "$c: www-data can move tmp/ into public/legacy/ and make a new tmp/" "moved" \
+    "$(as_www $c 'cd /var/www/html && mv tmp public/legacy/sct-moved && mkdir tmp && echo moved' | tail -n 1)"
+  wait_stopped $c 240 || wait_up $c 60 >/dev/null
+  log="$(app_log $c)"
+  assert_eq "$c: the state folder, its state and the backup are still whole where tmp/ went" "state $BASE-to-$NEXT code.tar.gz complete db.sql.gz" \
+    "$(on_volume $c 'cd /v/public/legacy/sct-moved/clouve-backup 2>/dev/null && ls state && ls -d *-to-* && ls '"$BASE-to-$NEXT"'' | xargs)"
+  assert_contains "$c: the way back stopped" "$log" "[clouve-upgrade] FAILED suitecrm $BASE -> $NEXT: going back to $BASE failed"
+  assert_lacks "$c: and doesn't say that the state is kept" "$(grep -F 'FAILED' <<< "$log")" "The state is kept"
+  assert_contains "$c: it says that the state folder is not in its place" "$(grep -F 'FAILED' <<< "$log")" "not at tmp/clouve-backup"
+  assert_eq "$c: the skill's backups are still root's and whole there too" "0 dump" \
+    "$(on_volume $c 'b=/v/public/legacy/sct-moved/clouve-skill-backups/20261116-100000; echo "$(stat -c "%u" "$b" 2>&1) $(cat "$b/db.sql.gz" 2>&1)"')"
+  # The next start finds no VERSION. It says where the state folder is, and what staff do.
+  app_start $c "$(with_package "$NEXT")"
+  wait_stopped $c 120 || wait_up $c 30 >/dev/null
+  log="$(app_log $c)"
+  assert_contains "$c: the next start names the state folder where tmp/ went" "$log" "public/legacy/sct-moved/clouve-backup"
+  assert_contains "$c: and says what staff do" "$log" "move the tmp/ that holds the state folder back"
+  drop_case $c
+fi
+
+if wants load; then
+  echo
+  echo "load: a stop while the way back is about to load the dump, and the dump's client"
+  c=load
+  cut_upgrade $c
+  sql $c "UPDATE accounts SET name = 'changed after the backup' WHERE id = 'sct-self-1'" >/dev/null
+  app_start $c "$(with_package "$NEXT")" -e CLOUVE_TEST_PAUSE=restore:60
+  sc_wait_log "$(app_of $c)" "test pause at restore" 300 || { fail "$c: the way back reaches the pause before the load"; show_log $c; }
+  assert_eq "$c: while it waits to load the dump, its client's options file is there, for www-data" "root www-data 640" \
+    "$(in_app $c 'stat -c "%U %G %a" /run/clouve-www/db.cnf')"
+  docker stop -t 60 "$(app_of $c)" >/dev/null
+  assert_eq "$c: a stop request ends the start" "false 0" "$(docker inspect --format '{{.State.Running}} {{.State.ExitCode}}' "$(app_of $c)")"
+  assert_eq "$c: and leaves no copy of the database password for www-data" "gone" \
+    "$(docker cp "$(app_of $c):/run/clouve-www/db.cnf" - >/dev/null 2>&1 && echo there || echo gone)"
+  # A copy that a kill left behind (planted here in the stopped container): the next start removes it before
+  # anything else.
+  mkdir -p "$SC_WORK/clouve-www" && echo left > "$SC_WORK/clouve-www/left-behind" && chmod 755 "$SC_WORK/clouve-www"
+  docker cp "$SC_WORK/clouve-www" "$(app_of $c):/run/" >/dev/null
+  docker start "$(app_of $c)" >/dev/null
+  sc_wait_for 300 bash -c "[ \"\$(docker logs $(app_of $c) 2>&1 | grep -c 'test pause at restore')\" -ge 2 ]" ||
+    { fail "$c: the next start reaches the pause before the load"; show_log $c; }
+  assert_eq "$c: the next start removed what was left in /run/clouve-www" "gone" \
+    "$(in_app $c '[ -e /run/clouve-www/left-behind ] && echo there || echo gone')"
+  # The dump's client runs as www-data. The dump in the backup gets a SLEEP after its first line, here, as root,
+  # after the way back checked it, so that the client is still there to be seen.
+  in_app $c 'cd /var/www/html/tmp/clouve-backup/'"$BASE-to-$NEXT"' && { gzip -dc db.sql.gz | head -n 1; echo "SELECT SLEEP(8);"; gzip -dc db.sql.gz | tail -n +2; } | gzip > db.sql.gz.new && mv db.sql.gz.new db.sql.gz' >/dev/null
+  users=''
+  for _ in $(seq 1 600); do
+    users="$(docker exec "$(app_of $c)" ps -o user= -C mysql,mariadb 2>/dev/null | sort -u | xargs)"
+    [ -n "$users" ] && break
+    sc_running "$(app_of $c)" || break
+    sleep 0.1
+  done
+  assert_eq "$c: the client that loads the dump runs as www-data" "www-data" "$users"
+  if wait_up $c 400; then pass "$c: the way back finishes, and the upgrade then runs"; else fail "$c: the way back finishes, and the upgrade then runs"; show_log $c 30; fi
+  assert_eq "$c: nothing is left in /run/clouve-www" "gone" "$(in_app $c '[ -e /run/clouve-www ] && echo there || echo gone')"
+  drop_case $c
+fi
+
+if wants tmp-race; then
+  echo
+  echo "tmp-race: www-data moves tmp/ into public/legacy/ while root hands over what www-data couldn't remove there"
+  c=tmp-race
+  cut_upgrade $c
+  # A folder of root's with a file in it in public/legacy/, which www-data can't remove, so that the way back hands
+  # something over there. And the skill's backups.
+  on_volume $c 'mkdir /v/public/legacy/sct-root-dir && echo root > /v/public/legacy/sct-root-dir/f && b=/v/tmp/clouve-skill-backups/20261116-100000 &&
+    mkdir -p "$b" && chmod 700 "$b" "${b%/*}" && echo dump > "$b/db.sql.gz"' >/dev/null
+  app_start $c "$(with_package "$NEXT")" -e CLOUVE_TEST_PAUSE=clear-handover:60
+  if sc_wait_log "$(app_of $c)" "test pause at clear-handover" 300; then
+    pass "$c: the way back pauses before it hands over what www-data couldn't remove"
+  else
+    fail "$c: the way back pauses before it hands over what www-data couldn't remove"; show_log $c
+  fi
+  as_www $c 'cd /var/www/html && mv tmp public/legacy/sct-moved && mkdir tmp' >/dev/null
+  wait_stopped $c 240 || wait_up $c 60 >/dev/null
+  assert_eq "$c: the state folder and the skill's backups are root's and whole where tmp/ went" "0 700 state | 0 dump" \
+    "$(on_volume $c 'm=/v/public/legacy/sct-moved; echo "$(stat -c "%u %a" "$m/clouve-backup" 2>&1) $(ls "$m/clouve-backup" 2>&1 | grep -x state) | $(stat -c "%u" "$m/clouve-skill-backups/20261116-100000" 2>&1) $(cat "$m/clouve-skill-backups/20261116-100000/db.sql.gz" 2>&1)"')"
+  assert_contains "$c: the way back stopped and says that the state folder is not in its place" "$(app_log $c | grep -F FAILED)" "not at tmp/clouve-backup"
+  drop_case $c
+fi
+
+if wants locked-folder; then
+  echo
+  echo "locked-folder: www-data makes public/legacy/ a folder it can't write in while the way back is paused"
+  c=locked-folder
+  cut_upgrade $c
+  app_start $c "$(with_package "$NEXT")" -e CLOUVE_TEST_PAUSE=remove-listed:60
+  sc_wait_log "$(app_of $c)" "test pause at remove-listed" 300 || { fail "$c: the way back reaches the pause"; show_log $c; }
+  as_www $c 'chmod 555 /var/www/html/public/legacy' >/dev/null
+  if wait_up $c 400; then pass "$c: the way back empties it all the same, and the upgrade then runs"; else fail "$c: the way back empties it all the same, and the upgrade then runs"; show_log $c 30; fi
+  log="$(app_log $c)"
+  assert_eq "$c: it went back once, then upgraded" "1 1" \
+    "$(grep -c "^\[clouve-upgrade\] suitecrm $BASE -> $NEXT: phase restore" <<< "$log") $(grep -c "^\[clouve-upgrade\] DONE suitecrm $BASE -> $NEXT" <<< "$log")"
   drop_case $c
 fi
 

@@ -37,6 +37,15 @@ class SuiteCRMApiClient
     /** @var string Log file path */
     private $logFile = null;
 
+    /** @var int Seconds a request to SuiteCRM may take */
+    private $timeout = 30;
+
+    /** @var int The HTTP code of SuiteCRM's last answer, 0 when it did not answer */
+    private $lastHttpCode = 0;
+
+    /** @var int curl's error number for the last request, 0 when there was none */
+    private $lastCurlErrno = 0;
+
     /**
      * The SuiteCRM modules this plugin reads field lists of and creates records in. The list is the code's own:
      * no setting and no mapping adds to it. A mapping is written by whoever may edit a survey, and every call to
@@ -148,6 +157,41 @@ class SuiteCRMApiClient
         $this->log("Access token obtained, expires in {$response['expires_in']} seconds");
 
         return $this->accessToken;
+    }
+
+    /**
+     * Signs in to SuiteCRM the way a sync does (getAccessToken()), for the plugin's status check. It always asks for
+     * a new token, and the request may take at most $timeout seconds. It drops the token. The answer holds only the
+     * HTTP code and whether the request ran out of time, never the token or anything else SuiteCRM sent.
+     *
+     * @param int $timeout Seconds the request may take
+     * @return array ['signed_in' => bool, 'http_code' => int (0 when SuiteCRM did not answer), 'timed_out' => bool]
+     */
+    public function trySignIn(int $timeout): array
+    {
+        $savedTimeout = $this->timeout;
+        $this->timeout = $timeout;
+        $this->accessToken = null;
+        $this->tokenExpires = 0;
+        $this->lastHttpCode = 0;
+        $this->lastCurlErrno = 0;
+        try {
+            $this->getAccessToken();
+            $signedIn = true;
+        } catch (\Throwable $e) {
+            // The message can hold SuiteCRM's own words. The caller gets the HTTP code instead.
+            $signedIn = false;
+        } finally {
+            $this->timeout = $savedTimeout;
+            $this->accessToken = null;
+            $this->tokenExpires = 0;
+        }
+
+        return [
+            'signed_in' => $signedIn,
+            'http_code' => $this->lastHttpCode,
+            'timed_out' => $this->lastCurlErrno === CURLE_OPERATION_TIMEDOUT
+        ];
     }
 
     /**
@@ -366,7 +410,7 @@ class SuiteCRMApiClient
         curl_setopt_array($ch, [
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_HTTPHEADER => $headers,
-            CURLOPT_TIMEOUT => 30,
+            CURLOPT_TIMEOUT => $this->timeout,
             CURLOPT_FOLLOWLOCATION => false
         ]);
 
@@ -386,6 +430,8 @@ class SuiteCRMApiClient
         $response = curl_exec($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $error = curl_error($ch);
+        $this->lastHttpCode = (int) $httpCode;
+        $this->lastCurlErrno = curl_errno($ch);
         curl_close($ch);
 
         if ($error) {

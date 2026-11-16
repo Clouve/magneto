@@ -7,6 +7,9 @@
 # both images (or takes --image ones) and looks inside them. Nothing here
 # needs a database or the network once the images are built.
 #
+# The checkout: no installer script and no README block pipes a dump into the
+# database client itself; ls_load_dump does it, as www-data with --sandbox.
+#
 # The LimeSurvey image:
 #   - the runtime base, the version, the build number and the checksum are
 #     the Dockerfile's, and the build checks the zip against the checksum;
@@ -28,15 +31,23 @@
 #   - Apache denies /clouve/, /node_modules/ and /installer/ over HTTP while
 #     it serves the rest (a container runs Apache on a copy of the package),
 #     also when a .htaccess in one of those folders grants access, and for
-#     other spellings of the path;
+#     other spellings of the path, and neither Apache nor PHP names its
+#     version (Server: Apache, no X-Powered-By, no signature on error pages);
 #   - the clouve-ops channel: sshd, sudo, the account with no password set,
-#     the sshd drop-in, and no SSH host key;
+#     the sshd drop-in (no forwarding, sign-ins at INFO in the container's
+#     log), and no SSH host key;
+#   - only sudo and unix_chkpwd keep a set-user-ID or set-group-ID bit;
 #   - the database client, wget, this checkout's persona and its installer
 #     folder;
 #   - no password in the image's environment.
 # The database image:
-#   - MariaDB 11.8 with MARIADB_AUTO_UPGRADE=1, tini as PID 1's command, the
-#     clouve-ops account and no SSH host key;
+#   - MariaDB 11.8 with MARIADB_AUTO_UPGRADE=1 and MARIADB_ROOT_HOST=localhost
+#     (a new data directory has root for localhost only), tini as PID 1's
+#     command, the clouve-ops account, the same sshd drop-in, no SSH host key,
+#     and only sudo and unix_chkpwd with a set-user-ID or set-group-ID bit;
+#   - the client's sandbox loads a mariadb-dump with a trigger and a routine
+#     and refuses a client command; a wrong clouve-ops password is refused
+#     and shows in the container's log;
 #   - its wrapper refuses a data directory that a newer MariaDB line wrote
 #     (MariaDB itself would start on it without complaint), and starts on one
 #     from its own line or an older one.
@@ -91,6 +102,18 @@ PERSONA="$LS_APP_DIR/image/context/limesurvey/CONTEXT.md.tpl"
 # shellcheck disable=SC2016  # the persona's own variable names, for grep
 assert_eq "the image folder has the persona, which names both hosts" "2" \
   "$(grep -c -e '^- `${LIMESURVEY_HOST}`' -e '^- `${LIMESURVEY_DB_HOST}`' "$PERSONA" 2>/dev/null)"
+# A dump can hold client commands as well as SQL (system, source, tee), and root's client would run them. So every
+# dump that the installer or the runbook loads goes through ls_load_dump, which runs the client as www-data with
+# --sandbox: a dump that someone else wrote can then do no more than www-data could. mariadb-dump's own dumps
+# start with the line that turns the sandbox on, and still load (the database image's checks below).
+assert_eq "no installer script and no README block pipes a dump into the database client itself" "" \
+  "$(grep -nE '(gzip -dc|zcat)[^|]*\| *(ls_mysql|mariadb|mysql)( |$)' "$LS_APP_DIR"/image/installer/*.sh "$LS_APP_DIR/README.md" \
+    | sed "s#^$LS_APP_DIR/##" | cut -c1-120)"
+load_fn="$(sed -n '/^ls_load_dump() {$/,/^}$/p' "$LS_APP_DIR/image/installer/lib.sh")"
+assert_eq "ls_load_dump runs the client as www-data, with --sandbox" "1 1" \
+  "$(grep -c 'ls_www .*mariadb' <<< "$load_fn") $(grep -c -- '--sandbox' <<< "$load_fn")"
+assert_eq "the restore in upgrade.sh and the README's damaged-dump block load with it" "1 1" \
+  "$(grep -c 'ls_load_dump ' "$LS_APP_DIR/image/installer/upgrade.sh") $(grep -c '&& ls_load_dump /root/before-upgrade.sql.gz' "$LS_APP_DIR/README.md")"
 
 echo
 echo "The LimeSurvey image"
@@ -171,7 +194,37 @@ else
 fi
 assert_eq "the sshd drop-in lets only clouve-ops in" "AllowUsers clouve-ops" \
   "$(run grep -x 'AllowUsers clouve-ops' /etc/ssh/sshd_config.d/clouve-ops.conf)"
+# The AI Assistant runs plain commands over SSH, so sshd forwards nothing: the pod is no relay. Each sign-in, and
+# each failed one, goes to the container's log (sshd -e: the container has no syslog daemon).
+assert_eq "sshd forwards nothing and logs sign-ins at INFO" "disableforwarding yes loglevel INFO" \
+  "$(run sh -c 'ssh-keygen -A >/dev/null 2>&1; /usr/sbin/sshd -T 2>/dev/null' | grep -E '^(disableforwarding|loglevel) ' | sort | xargs)"
+assert_eq "and the sshd start ends with sshd -D -e, so its log is the container's" "exec /usr/sbin/sshd -D -e" \
+  "$(run tail -n 1 /clouve/limesurvey/installer/start-clouve-ops-sshd.sh)"
+# Code that runs as www-data finds no set-user-ID or set-group-ID program to try a local bug on, but sudo, which
+# clouve-ops uses, and unix_chkpwd, which PAM uses.
+assert_eq "only sudo and unix_chkpwd keep a set-user-ID or set-group-ID bit" "/usr/bin/sudo /usr/sbin/unix_chkpwd" \
+  "$(run sh -c 'find / -xdev -perm /6000 -type f 2>/dev/null | sort | xargs')"
 assert_eq "clouve-ops has passwordless sudo" "clouve-ops ALL=(ALL) NOPASSWD: ALL" "$(run cat /etc/sudoers.d/clouve-ops)"
+# A restore checks that a dump is a whole one from mariadb-dump before it drops a table: the first line turns the
+# client's sandbox on, the last line is the end line, and it makes as many tables as its stamp says.
+# shellcheck disable=SC2016  # the script is for the bash inside the container
+assert_eq "a dump that isn't a whole one from mariadb-dump is refused before anything is dropped" "whole first last count" \
+  "$(run bash -c '. /clouve/limesurvey/installer/lib.sh; cd /tmp
+    mk() { printf "%s\n" "$@" | gzip > d.gz; }
+    first="/*M!999999\\- enable the sandbox mode */"
+    mk "$first" "CREATE TABLE a (i INT);" "-- Dump completed on x"; ls_dump_whole d.gz 1 && printf "whole "
+    mk "system id" "CREATE TABLE a (i INT);" "-- Dump completed on x"; ls_dump_whole d.gz 1 || printf "first "
+    mk "$first" "CREATE TABLE a (i INT);"; ls_dump_whole d.gz 1 || printf "last "
+    mk "$first" "CREATE TABLE a (i INT);" "-- Dump completed on x"; ls_dump_whole d.gz 2 || printf "count"' | tail -n 1)"
+# The FAILED line names moved-aside folders. www-data can make any folder in the web root, so only names of the shape
+# the image gives one (clouve.untrusted-<UTC time>) are named there, and quoted.
+# shellcheck disable=SC2016  # the script is for the bash inside the container
+assert_eq "the FAILED line names only folders of the image's own shape, never a name that runs" "named-own no-raw" \
+  "$(run bash -c '. /clouve/limesurvey/installer/lib.sh; mkdir -p /var/www/html /tmp/n && cd /tmp/n
+    mkdir /var/www/html/clouve.untrusted-20260101T000000Z "/var/www/html/clouve.untrusted-0;touch\${IFS}\$HOME.pwned;#"
+    out="$(ls_attention 1 2 why 2>&1)"
+    case "$out" in *clouve.untrusted-20260101T000000Z*) printf "named-own " ;; esac
+    case "$out" in *"untrusted-0;touch"*) echo raw ;; *) echo no-raw ;; esac' | tail -n 1)"
 shadow="$(run sh -c "grep '^clouve-ops:' /etc/shadow | cut -d: -f2")"
 case "$shadow" in
   '!'* | '*'*) pass "clouve-ops has no password in the image" ;;
@@ -270,10 +323,18 @@ docker run -d --name "$WEB" --network none --user root --entrypoint bash "$IMAGE
   echo state > /var/www/html/clouve/install-in-progress &&
   echo js > /var/www/html/node_modules/probe/index.js &&
   echo served > /var/www/html/upload/probe.txt &&
+  echo "<?php echo \"php ran\";" > /var/www/html/clv-probe.php &&
   sed -i "s/Listen 80\$/Listen 8080/" /etc/apache2/ports.conf /etc/apache2/sites-available/000-default.conf &&
   exec apache2-foreground' >/dev/null
 for _ in $(seq 1 60); do [ "$(ls_http "$WEB" /upload/probe.txt)" = 200 ] && break; sleep 1; done
 assert_eq "a file in upload/ is served (Apache works)" "200" "$(ls_http "$WEB" /upload/probe.txt)"
+# Neither Apache nor PHP says which version it is: a visitor learns nothing to pick known bugs by.
+headers="$(docker exec "$WEB" curl -s -m 20 -D - -o /dev/null http://127.0.0.1:8080/clv-probe.php 2>/dev/null | tr -d '\r')"
+assert_eq "PHP runs, and the Server header says Apache and nothing more" "php ran / Server: Apache" \
+  "$(docker exec "$WEB" curl -s -m 20 http://127.0.0.1:8080/clv-probe.php 2>/dev/null) / $(grep -i '^Server:' <<< "$headers")"
+assert_eq "PHP adds no X-Powered-By header" "0" "$(grep -ci '^X-Powered-By:' <<< "$headers")"
+assert_eq "Apache's own error page names no version" "403 0" \
+  "$(ls_http "$WEB" /clouve/) $(docker exec "$WEB" curl -s -m 20 http://127.0.0.1:8080/clouve/ 2>/dev/null | grep -ciE 'Apache/[0-9]|Server at ')"
 assert_eq "the upgrade's database dump is denied" "403" "$(ls_http "$WEB" /clouve/upgrade-6.16.1-to-7.10.0/db.sql.gz)"
 assert_eq "a state file in clouve/ is denied" "403" "$(ls_http "$WEB" /clouve/install-in-progress)"
 assert_eq "the clouve/ folder itself is denied" "403" "$(ls_http "$WEB" /clouve/)"
@@ -343,15 +404,31 @@ case "$db_shadow" in
   '!'* | '*'*) pass "clouve-ops has no password in the image" ;;
   *) fail "clouve-ops has no password in the image" ;;
 esac
+assert_eq "sshd forwards nothing and logs sign-ins at INFO" "disableforwarding yes loglevel INFO" \
+  "$(dbrun sh -c 'mkdir -p /run/sshd; ssh-keygen -A >/dev/null 2>&1; /usr/sbin/sshd -T 2>/dev/null' | grep -E '^(disableforwarding|loglevel) ' | sort | xargs)"
+assert_eq "and the sshd start ends with sshd -D -e, so its log is the container's" "exec /usr/sbin/sshd -D -e" \
+  "$(dbrun tail -n 1 /usr/local/bin/start-clouve-ops-sshd.sh)"
+assert_eq "only sudo and unix_chkpwd keep a set-user-ID or set-group-ID bit" "/usr/bin/sudo /usr/sbin/unix_chkpwd" \
+  "$(dbrun sh -c 'find / -xdev -perm /6000 -type f 2>/dev/null | sort | xargs')"
+# Nothing signs in as root over the network: the app, the AI Assistant and the password rotation sign in as the
+# app's user, and staff work in the container. A new data directory then has root for localhost only.
+assert_eq "MARIADB_ROOT_HOST is localhost" "1" "$(grep -cx 'MARIADB_ROOT_HOST=localhost' <<< "$db_env")"
+# The base's own packages are at their newest versions in the same Ubuntu release (USN-9065-1 fixed glibc in
+# 2.39-0ubuntu8.12). MariaDB's own come from a list pinned to one release, so the server doesn't move.
+assert_eq "the database image takes its base's security updates: glibc has them" "yes" \
+  "$(dbrun sh -c 'dpkg --compare-versions "$(dpkg-query -W -f "\${Version}" libc6)" ge 2.39-0ubuntu8.12 && echo yes || dpkg-query -W -f "\${Version}" libc6')"
 
-# start_on_data NAME INFO: a database container on a data directory whose mariadb_upgrade_info holds INFO.
+# start_on_data NAME INFO [docker run options...]: a database container on a data directory whose
+# mariadb_upgrade_info holds INFO.
 start_on_data() {
-  docker volume create "${PREFIX}$1" >/dev/null
-  docker run --rm --network none --user root -v "${PREFIX}$1:/var/lib/mysql" --entrypoint sh "$DB_IMAGE" -c \
-    "printf '%s\n' '$2' > /var/lib/mysql/mariadb_upgrade_info && chown -R mysql:mysql /var/lib/mysql" >/dev/null 2>&1
-  docker run -d --name "${PREFIX}$1" --network none --memory "$LS_MEMORY" -v "${PREFIX}$1:/var/lib/mysql" \
+  local name="$1" info="$2"
+  shift 2
+  docker volume create "${PREFIX}$name" >/dev/null
+  docker run --rm --network none --user root -v "${PREFIX}$name:/var/lib/mysql" --entrypoint sh "$DB_IMAGE" -c \
+    "printf '%s\n' '$info' > /var/lib/mysql/mariadb_upgrade_info && chown -R mysql:mysql /var/lib/mysql" >/dev/null 2>&1
+  docker run -d --name "${PREFIX}$name" --network none --memory "$LS_MEMORY" -v "${PREFIX}$name:/var/lib/mysql" \
     -e MYSQL_DATABASE=limesurvey -e MYSQL_USER=limesurvey -e "MYSQL_PASSWORD=$LS_DB_PW" \
-    -e "MYSQL_ROOT_PASSWORD=$LS_DB_ROOT_PW" "$DB_IMAGE" >/dev/null
+    -e "MYSQL_ROOT_PASSWORD=$LS_DB_ROOT_PW" "$@" "$DB_IMAGE" >/dev/null
 }
 start_on_data newer "12.3.2-MariaDB"
 code="$(ls_wait_exit "${PREFIX}newer" 60)"
@@ -366,13 +443,42 @@ info_after="$(docker run --rm --network none --user root -v "${PREFIX}newer:/var
 assert_eq "and the data directory is as it was" "12.3.2-MariaDB" "$info_after"
 # A data directory with nothing but an older line's marker: the wrapper lets it through, and the official entrypoint
 # initializes the empty directory as usual.
-start_on_data older "10.11.6-MariaDB"
+start_on_data older "10.11.6-MariaDB" -e "CLOUVE_OPS_PASSWORD=$LS_OPS_PW"
 if ls_wait_log "${PREFIX}older" "ready for connections" 120; then
   pass "a data directory from an older line (10.11) starts"
 else
   fail "a data directory from an older line (10.11) starts"
   docker logs --tail 10 "${PREFIX}older" 2>&1 | sed 's/^/       | /'
 fi
+# root_sql SQL: SQL as root on the server's own socket, with the password from the container's environment.
+# shellcheck disable=SC2016  # the script is for the sh in the container
+root_sql() { docker exec -e "T_SQL=$1" "${PREFIX}older" sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mariadb -u root -N -B -e "$T_SQL"' 2>&1; }
+# The official entrypoint sets the new data directory up on a server of its own, then starts the real one.
+ls_wait_log "${PREFIX}older" "init process done" 120 >/dev/null
+for _ in $(seq 1 30); do [ -n "$(root_sql 'SELECT 1' | grep -x 1)" ] && break; sleep 1; done
+assert_eq "on the new data directory root is for localhost only" "localhost" \
+  "$(root_sql "SELECT host FROM mysql.global_priv WHERE user = 'root' ORDER BY host" | xargs)"
+# What a restore relies on: the client's sandbox loads mariadb-dump's own dumps, with a trigger and a routine (both
+# written between DELIMITER lines), and refuses a client command.
+# shellcheck disable=SC2016  # the script is for the sh in the container
+assert_eq "a dump with a trigger and a routine loads with --sandbox, and a client command is refused" "1 1 refused" \
+  "$(docker exec "${PREFIX}older" sh -c 'export MYSQL_PWD="$MYSQL_ROOT_PASSWORD"
+    mariadb -u root -e "CREATE DATABASE clv_from; CREATE DATABASE clv_to; USE clv_from; CREATE TABLE t (id INT);
+      CREATE TRIGGER tr BEFORE INSERT ON t FOR EACH ROW SET NEW.id = NEW.id + 1; CREATE PROCEDURE p() SELECT 1;" &&
+    mariadb-dump -u root --routines --triggers clv_from | mariadb -u root --sandbox clv_to &&
+    mariadb -u root -N -B -e "SELECT COUNT(*) FROM information_schema.triggers WHERE trigger_schema = \"clv_to\";
+      SELECT COUNT(*) FROM information_schema.routines WHERE routine_schema = \"clv_to\"" | xargs
+    printf "system touch /tmp/clv-sandbox-ran\n" | mariadb -u root --sandbox 2>/dev/null
+    [ -e /tmp/clv-sandbox-ran ] && echo ran || echo refused' 2>&1 | xargs)"
+# The clouve-ops sshd: a wrong password is refused and the container's log says so; the right one signs in.
+whoami=""
+for _ in $(seq 1 30); do whoami="$(ls_ssh_whoami "${PREFIX}older" "$LS_OPS_PW")"; [ -n "$whoami" ] && break; sleep 1; done
+assert_eq "clouve-ops signs in with the password" "clouve-ops" "$whoami"
+assert_eq "a wrong password signs nobody in" "" "$(ls_ssh_whoami "${PREFIX}older" "wrong-$LS_OPS_PW")"
+sleep 1
+assert_eq "and the container's log has the failed sign-in" "yes" \
+  "$([ "$(docker logs "${PREFIX}older" 2>&1 | grep -c 'Failed password for clouve-ops')" -ge 1 ] && echo yes || echo no)"
+assert_eq "the log holds no password" "0" "$(ls_secrets_in "$(docker logs "${PREFIX}older" 2>&1)")"
 docker rm -f -v "${PREFIX}newer" "${PREFIX}older" >/dev/null 2>&1
 
 echo

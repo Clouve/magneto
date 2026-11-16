@@ -576,17 +576,23 @@ restore() {
                 "nothing is loaded over the database. The state is kept."
             return 1
         fi
+        if ! ls_dump_whole "$DIR/db.sql.gz" "$(sed -n 's/^tables=//p' "$DIR/backup-complete" | head -n 1)"; then
+            restore_failed "$(here "$DIR/db.sql.gz") is not a whole dump from mariadb-dump (its first line, its last" \
+                "line or its count of tables is not what mariadb-dump writes and the stamp records), so nothing is" \
+                "loaded over the database and no table is dropped. The state is kept."
+            return 1
+        fi
         # Emptied first, because the update made tables that the dump doesn't know. The emptying and the load run in
         # a session of their own, and what the client says goes into a variable, not into a file on a volume that
-        # may be full.
+        # may be full. The session starts in this folder, so the dump is the one checked above, whatever www-data
+        # does to the name clouve. The client runs as www-data with its sandbox on (lib.sh, ls_load_dump).
         shield_on
         rc=0
         # shellcheck disable=SC2016  # the script is for the bash that setsid starts
         err="$(setsid -w bash -c '
             . "$1" || exit 4
             ls_drop_all_tables || exit 3
-            set -o pipefail
-            gzip -dc "$2" | ls_mysql "$DB_NAME"' _ "$LS_INSTALLER/lib.sh" "$DIR/db.sql.gz" 2>&1)" || rc=$?
+            ls_load_dump "$2"' _ "$LS_INSTALLER/lib.sh" "$DIR/db.sql.gz" 2>&1)" || rc=$?
         if [ "$rc" -eq 3 ]; then
             restore_failed "the restore could not empty the database: $(redact "$err")"
             return 1

@@ -7,7 +7,7 @@
 #   1. makes the SSH host keys when they are missing (the image ships none, so each container has its own);
 #   2. gives the clouve-ops user the password in CLOUVE_OPS_PASSWORD (the platform sets the same value on this
 #      service, on limesurvey and on the magneto-agent container);
-#   3. becomes sshd -D, so sshd is the only process of this background tree.
+#   3. becomes sshd -D -e, so sshd is the only process of this background tree, and it logs to the container's log.
 # Without CLOUVE_OPS_PASSWORD it says so and exits: a deployment without the AI Assistant has no sshd.
 # It never prints the password.
 
@@ -28,4 +28,5 @@ echo "clouve-ops:$CLOUVE_OPS_PASSWORD" | chpasswd
 
 mkdir -p /run/sshd
 echo "$PREFIX Starting sshd"
-exec /usr/sbin/sshd -D
+# -e: sshd logs to stderr, which is the container's log, so sign-ins and failed ones show there.
+exec /usr/sbin/sshd -D -e

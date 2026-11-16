@@ -190,15 +190,17 @@ bash tests/new-disk-standin.test.sh
 ```bash
 # bundles/crm-kit with the manifest's own settings, on new disks: the four probes, Clouve's SuiteCRM plugin for
 # LimeSurvey, the demo survey, a response over HTTP that becomes a lead (and a support request a case) in a real
-# SuiteCRM, the plugin's endpoints, the way back when its OAuth2 client is deleted, and the clouve-ops channel on all
-# four containers. It also compares the manifest with the one before LimeSurvey 7: only the versions, the
-# descriptions, x-clouve-agent and the databases' x-clouve-database-password (4.5.6) may differ. About a minute with
-# the four images built (--image NAME=REF)
+# SuiteCRM, the plugin's endpoints, the way back when its OAuth2 client is deleted, the status check's sign-in (not
+# ready after a changed admin password, a deactivated admin or a changed client secret), the demo survey's mappings
+# in the plugin's table, and the clouve-ops channel on all four containers. It also compares the manifest with the
+# one before LimeSurvey 7: only the versions, the descriptions, x-clouve-agent and the databases'
+# x-clouve-database-password (4.5.6) may differ. About two minutes with the four images built (--image NAME=REF)
 bash tests/crm-kit.test.sh
 # An old kit first (LimeSurvey 6.16.1 and SuiteCRM 8.9.1 from this repo's earlier Dockerfiles, MariaDB 11.8 and 12.1,
 # a lead made through the plugin), then the new images on copies of its volumes: both apps upgrade in one start,
-# nothing the customer had is lost, the link works, a response sent while SuiteCRM upgrades is logged as failed,
-# and a plugin the old image marked as faulty is loaded again. About ten minutes
+# nothing the customer had is lost (the plugin's table of mappings gains no row), the link works, a response sent
+# while SuiteCRM upgrades is logged as failed, and a plugin the old image marked as faulty is loaded again. About ten
+# minutes
 bash tests/crm-kit.test.sh --upgrade-from
 ```
 
@@ -328,8 +330,10 @@ bash tests/nextcloud-manifest.test.sh
 # Every test here builds the two images, or takes --image limesurvey=<ref> --image limesurvey-mariadb=<ref>.
 # What the two images hold: LimeSurvey 7.10.0 from upstream's zip with its checksum, upstream's fix 6487164b in
 # Update_700.php, the in-app updater off, /clouve root's, the folders the Apache drop-in denies, the build id, no SSH
-# host key, this checkout's persona and installer; and the MariaDB 11.8 image, whose wrapper refuses a data directory
-# that a newer MariaDB wrote. Needs Docker
+# host key, this checkout's persona and installer, every dump loaded as www-data with the client's --sandbox, no
+# version banners, sshd with no forwarding, only sudo and unix_chkpwd with a set-ID bit; and the MariaDB 11.8 image,
+# whose wrapper refuses a data directory that a newer MariaDB wrote, which has its base's updates and makes root for
+# localhost only. Needs Docker
 bash tests/limesurvey-image.test.sh
 # A new install on new cluster disks, and what every start does: PID 1's environment for the AI Assistant, the
 # stand-in on the health check's port, no password on a command line or in the log, config.php following PUBLIC_URL
@@ -354,9 +358,13 @@ bash tests/limesurvey-upgrade.test.sh [--old-image <version>=<ref>]... [--snapsh
 # Clouve's SuiteCRM plugin on LimeSurvey 7, against a stand-in for SuiteCRM: registered and on, its settings from the
 # environment with both passwords stored encrypted, the eleven AJAX endpoints closed to callers without rights, the
 # question editor's script (run in jsdom, and kept off respondents' pages), a response over HTTP that becomes a lead, Leads and Cases as the only
-# targets, no answer in any log, and a sync log that keeps what was sent only for a sync that failed. The Customer
-# Kit's test covers the real pair. Needs Docker, and the npm registry once for a small Node image
-# (LS_PLUGIN_JS_IMAGE names one that is already built)
+# targets, no answer in any log, and a sync log that keeps what was sent only for a sync that failed. The status
+# check signs in as a sync does: ready when the stand-in takes the sign-in, not ready with the HTTP code when it
+# refuses it, skipped when an earlier check failed, never longer than its 10 s limit, and no password, client secret
+# or token in its answer or a log. The demo import fills the plugin's table of mappings (a copy; a sync reads the
+# question), and a question saved in LimeSurvey's editor keeps its mappings as sent. The Customer Kit's test covers
+# the real pair. Needs Docker, and the npm registry once for a small Node image (LS_PLUGIN_JS_IMAGE names one that is
+# already built)
 bash tests/limesurvey-plugin.test.sh
 # ./test.sh apps/limesurvey passes too: the image's stand-in doesn't count as the app, and the log says
 # "PUBLIC_URL has changed"
@@ -368,14 +376,19 @@ bash tests/limesurvey-plugin.test.sh
 # What the two images hold: SuiteCRM 8.10.2 from the release zip with its checksum, on php:8.3-apache, nothing
 # fetched over plain HTTP, /clouve root's, no compiler left, the image's own entries on SuiteCRM's keep-list, the
 # Apache drop-in (HTTPS behind the ingress, the client's address, no query string in the log), no SSH host key, this
-# checkout's persona and installer; and the MariaDB 12.3 image, whose wrapper refuses a data directory that a newer
-# MariaDB wrote. Needs Docker and python3
+# checkout's persona and installer, the PHP libraries moved to fixed releases in the package and the zip, root using
+# the state folder only from inside it, every dump loaded as www-data with --sandbox, no version banners, sshd with no
+# forwarding, only sudo and unix_chkpwd with a set-ID bit; and the MariaDB 12.3 image, whose wrapper refuses a data
+# directory that a newer MariaDB wrote, and which has its base's updates and makes root for localhost only. Needs
+# Docker and python3
 bash tests/suitecrm-image.test.sh
 # A new install on a new cluster disk at the Customer Kit's 1 GB, and what every start does: PID 1's environment for
 # the AI Assistant, the stand-in (X-Clouve-Standin: suitecrm), no password on a command line or in any log, the
-# scheduler and the Messenger worker running as www-data, a Secure session cookie behind forwarded HTTPS, settings
+# scheduler and the Messenger worker running as www-data, Secure cookies behind forwarded HTTPS, uploads served as
+# sandboxed files, a stand-in that never runs as root, sshd sign-ins in the log, settings
 # that follow a new address and a rotated database password, a cut-off install done again, and the starts that stop
-# or wait for repair. Cases: wait, refuse, install, restart, cut-off, demo, password, address, empty-db. It makes a
+# or wait for repair, and a folder named with a command in its name. Cases: wait, refuse, install, restart, cut-off,
+# demo, password, address, empty-db, odd-name. It makes a
 # network on 198.51.100.0/24, so run one copy at a time. Needs Docker. About 5 minutes
 bash tests/suitecrm-entrypoint.test.sh [<case>...]
 # A real 8.9.1 site (this repo's earlier image, on MariaDB 12.1) with records, a second user with a role, a custom
@@ -390,8 +403,11 @@ bash tests/suitecrm-entrypoint.test.sh [<case>...]
 bash tests/suitecrm-upgrade.test.sh [<case>...]
 # A site that this image installed, upgraded by a later one: the same image with a rehearsal package (the release
 # zip with another VERSION in it) upgrades it. Cases: plain, kill (between SuiteCRM's two commands), migration (the
-# first command changes the database, and the way back loads the dump), other-version (a roll-back). Needs Docker
-# and python3. About 5 minutes
+# first command changes the database, and the way back loads the dump), other-version (a roll-back), and www-data
+# swapping folders under the way back: restore-swap, remove-swap, chown-swap, tmp-move and tmp-race (tmp/ moved, with
+# root's folders in it), locked-folder (a folder www-data can't write in), load (the www-data client and its options
+# file), and forged (a forged state folder put back with the README's commands: no table dropped). Needs Docker and
+# python3. About 55 minutes
 bash tests/suitecrm-self-upgrade.test.sh [<case>...]
 # ./test.sh apps/suitecrm passes too: the image's stand-in doesn't count as the app, and the log says "the site
 # address in SuiteCRM's settings is now <url>"

@@ -41,6 +41,12 @@ LABEL version="12.3"
 # newer manifest to a running deployment. Only a new image reaches it.
 ENV MARIADB_AUTO_UPGRADE=1
 
+# root is an account for localhost only: nothing signs in as root over the network. The app signs in as its own
+# user, the database password rotation's Job too, and staff use the socket in this container. The official
+# entrypoint reads this when it makes a new data directory. An existing one keeps its root@'%' until someone
+# drops it (README.md, "The database image").
+ENV MARIADB_ROOT_HOST=localhost
+
 # clouve-ops shell channel (mirrors the same setup in apps/suitecrm/image/
 # Dockerfile). openssh-server lets the magneto-agent container's Claude Code
 # agent `ssh clouve-ops@${SUITECRM_DB_HOST}` for OS-level operations on the
@@ -50,8 +56,10 @@ ENV MARIADB_AUTO_UPGRADE=1
 # openssh-server's install makes SSH host keys, and they go again at the end:
 # kept, they would ship in the pushed image and every tenant would share one
 # host key. Each container makes its own at start instead (ssh-keygen -A in
-# start-clouve-ops-sshd.sh). tini is PID 1 (see ENTRYPOINT).
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# start-clouve-ops-sshd.sh). tini is PID 1 (see ENTRYPOINT). The upgrade takes the base's own packages to their
+# newest versions in the same Ubuntu release, as the app image does: the base can lag behind its release's security
+# fixes (glibc, for one). MariaDB's own packages come from a list pinned to one release, so the server doesn't move.
+RUN apt-get update && apt-get -y upgrade && apt-get install -y --no-install-recommends \
         openssh-server sudo less vim-tiny diffutils tini \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --shell /bin/bash --comment "Clouve operator (Claude Code)" clouve-ops \
@@ -67,6 +75,13 @@ COPY --chmod=644 clouve-ops-sshd.conf /etc/ssh/sshd_config.d/clouve-ops.conf
 COPY start-clouve-ops-sshd.sh /usr/local/bin/start-clouve-ops-sshd.sh
 COPY entrypoint.sh /usr/local/bin/clouve-entrypoint.sh
 RUN chmod +x /usr/local/bin/start-clouve-ops-sshd.sh /usr/local/bin/clouve-entrypoint.sh
+
+# Programs with the set-user-ID or set-group-ID bit are where a local privilege bug pays off, for code that runs as
+# mysql. This image uses two: sudo, for clouve-ops, and unix_chkpwd, which PAM runs to check a password. The others
+# (su, mount, passwd, MariaDB's PAM tool for an auth plugin no account here uses, and the like) lose the bit. The
+# build fails when anything else keeps one.
+RUN find / -xdev -perm /6000 -type f ! -path /usr/bin/sudo ! -path /usr/sbin/unix_chkpwd -exec chmod ug-s {} + \
+    && test "$(find / -xdev -perm /6000 -type f | sort | xargs)" = "/usr/bin/sudo /usr/sbin/unix_chkpwd"
 
 # Wrap the upstream docker-entrypoint.sh so we get the data directory check
 # and sshd alongside mariadbd. tini is PID 1: mariadbd doesn't reap processes

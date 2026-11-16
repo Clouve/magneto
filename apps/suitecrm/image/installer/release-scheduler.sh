@@ -31,8 +31,8 @@ if sc_state_has restore-in-progress; then
     sc_err "a restore is under way ($SC_RESTORE_MARKER), so the scheduler is not released now"
     exit 1
 fi
-if [ -e "$SC_SCHEDULER_HELD" ] || [ -L "$SC_SCHEDULER_HELD" ]; then
-    rm -f -- "$SC_SCHEDULER_HELD" || { sc_err "could not remove $SC_SCHEDULER_HELD"; exit 1; }
+if sc_in_state sc_present scheduler-held; then
+    sc_state_rm scheduler-held || { sc_err "could not remove $SC_SCHEDULER_HELD"; exit 1; }
 fi
 if ! sc_as_www php "$SC_INSTALLER/scheduler-setting.php" on "$SC_ROOT"; then
     sc_err "the scheduler setting could not be written to SuiteCRM's settings, so the scheduler is not released"

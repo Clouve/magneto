@@ -59,8 +59,9 @@ ls_secure_clouve() {
                 return 1
             fi
             ls_warn "$LS_CLOUVE was not a folder of root's, so nothing in it was read or used. It is now $aside," \
-                "and the image keeps its state in a new folder. If $aside holds an upgrade's backup, keep it: it is" \
-                "the way back to the old version."
+                "and the image keeps its state in a new folder. If $aside holds an upgrade's backup, keep it: it may" \
+                "be the way back to the old version. PHP code could have written all of it, so trust it only as far as" \
+                "you trust the site (apps/limesurvey/README.md, \"The state folder\")."
         fi
     fi
     if [ ! -e "$LS_CLOUVE" ] && [ ! -L "$LS_CLOUVE" ]; then
@@ -174,8 +175,37 @@ ls_drop_all_tables() {
         if [ "$kind" = VIEW ]; then sql="$sql DROP VIEW IF EXISTS \`$name\`;"; else sql="$sql DROP TABLE IF EXISTS \`$name\`;"; fi
     done < <(ls_sql "SELECT table_name, table_type FROM information_schema.tables WHERE table_schema = DATABASE()") || return 1
     # On stdin: an install with thousands of response tables makes a statement list longer than one argument can be.
-    printf '%s\n' "$sql" | ls_mysql "${DB_NAME:-}" || return 1
+    # The client's sandbox is on here too: the list is SQL and nothing else.
+    printf '%s\n' "$sql" | ls_mysql --sandbox "${DB_NAME:-}" || return 1
     [ "$(ls_db_tables)" = 0 ]
+}
+
+# ls_dump_whole FILE TABLES: whether the gzip'd dump FILE is a whole one from mariadb-dump, of TABLES tables: its
+# first line turns the client's sandbox on, its last line is mariadb-dump's end line, and it makes one table per
+# table. A restore checks this before it drops a table, so a dump that isn't one (a forged folder that a person put
+# back, for one) never empties the database.
+ls_dump_whole() {
+    local first last creates
+    first="$(gzip -dc -- "$1" 2>/dev/null | head -n 1)"
+    last="$(gzip -dc -- "$1" 2>/dev/null | tail -n 1)"
+    creates="$(gzip -dc -- "$1" 2>/dev/null | grep -c '^CREATE TABLE ')"
+    case "$first" in '/*M!999999\- enable the sandbox mode */'*) ;; *) return 1 ;; esac
+    case "$last" in '-- Dump completed'*) ;; *) return 1 ;; esac
+    [ -n "${2:-}" ] && [ "$creates" = "$2" ]
+}
+
+# ls_load_dump FILE: loads the gzip'd dump FILE into the site's database. Root reads FILE, named from inside the
+# state folder or in a folder of root's, and only its SQL reaches the client. A dump can hold client commands as
+# well (system, source, tee), and the client would run them. So the client runs as www-data, which knows the
+# database password anyway, and with --sandbox, which refuses those commands. A dump that someone else wrote can then
+# do no more than www-data could. mariadb-dump's own dumps begin with the line that turns the sandbox on, and load as
+# before. Status 1 when gzip or the client fails.
+ls_load_dump() {
+    local rc
+    gzip -dc -- "$1" | MYSQL_PWD="${DB_PASSWORD:-}" MYSQL_TCP_PORT="${DB_PORT:-3306}" \
+        ls_www mariadb --sandbox -h "${DB_HOST:-}" -u "${DB_USERNAME:-}" "${DB_NAME:-}"
+    rc=("${PIPESTATUS[@]}")
+    [ "${rc[0]}" -eq 0 ] && [ "${rc[1]}" -eq 0 ]
 }
 
 # ls_version DIR: "<versionnumber> <dbversionnumber> <buildnumber>" of the LimeSurvey code in DIR, nothing when
@@ -294,11 +324,16 @@ ls_attention_note() {
 # stopping it: a container that stops and starts in a loop leaves nobody a way in. Call it from inside the state
 # folder.
 ls_attention() {
-    local from="$1" to="$2" aside note="" IFS=' '
+    local from="$1" to="$2" aside="" dir note="" IFS=' '
     shift 2
-    aside="$(find "$LS_ROOT" -maxdepth 1 -name 'clouve.untrusted-*' -printf '%p ' 2>/dev/null)"
+    # Only folders of the shape ls_secure_clouve gives one (clouve.untrusted-<UTC time>), and quoted: www-data can
+    # make a folder of any name in the web root.
+    for dir in "$LS_ROOT"/clouve.untrusted-*; do
+        [[ ${dir##*/} =~ ^clouve\.untrusted-[0-9]{8}T[0-9]{6}Z$ ]] || continue
+        aside="$aside$(printf '%q' "$dir") "
+    done
     if [ -n "$aside" ]; then
-        note=" A state folder that was not root's was moved aside at a start (${aside% }). If it holds an upgrade's backup, that backup is the way back, so keep it."
+        note=" A state folder that was not root's was moved aside at a start (${aside% }). If it holds an upgrade's backup, keep it: it may be the way back. PHP code could have written all of it, so trust it only as far as you trust the site."
     fi
     ls_up_log "FAILED limesurvey $from -> $to: $*" \
         "LimeSurvey is not started, and the container stays up so that the site can be repaired: see \"When a start" \
