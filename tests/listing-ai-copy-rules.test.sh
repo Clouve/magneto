@@ -12,7 +12,10 @@
 #   - a text that mentions the price, usage, an allowance or buying more also
 #     has one sentence that names the free trial, free services and the
 #     customer's own Claude subscription;
-#   - no AI company or tool is named, except in "Claude subscription".
+#   - no AI company or tool is named, except in "Claude subscription";
+#   - the text uses the customer's words: "AI Assistant", never "Magneto
+#     Agent", "AI agent", "DevOps agent" or "AI operator", and no "tenant" or
+#     "MUC".
 # This test runs it on texts that each break a rule in words a listing could
 # use, and checks that the right rule catches each one. It runs it on texts
 # that keep every rule too: the sentences the manifests ship, and a school's
@@ -48,6 +51,7 @@ fi
 PAID_RULE="only of a paid plan"
 OWN_RULE="own Claude subscription"
 VENDOR_RULE="no AI company or tool is named"
+WORDS_RULE="internal words"
 
 # The sentence that names the free trial, free services and the customer's own Claude subscription.
 OWN="On a free trial, or with free services, you use it with your own Claude subscription."
@@ -109,6 +113,18 @@ caught "a paid plan's allowance with nothing for a free trial" "$OWN_RULE" \
   "On a paid plan, the AI Assistant's price includes an AI usage allowance, and you can buy more."
 caught "another AI company named" "$VENDOR_RULE" \
   "The AI Assistant runs on OpenAI models. $OWN"
+caught "the agent's own name" "$WORDS_RULE" \
+  "The AI Assistant workspace (Magneto Agent) is loaded with a Gibbon skill."
+caught "an AI agent" "$WORDS_RULE" \
+  "You get a live Moodle and an AI agent that can run upgrades."
+caught "a DevOps agent" "$WORDS_RULE" \
+  "A browser-based DevOps agent operates your Odoo."
+caught "an AI operator" "$WORDS_RULE" \
+  "The built-in AI operator takes backups."
+caught "the tenant" "$WORDS_RULE" \
+  "The tenant owns the WordPress data; Clouve hosts the containers."
+caught "MUC purges" "$WORDS_RULE" \
+  "It runs upgrades, plugin installs and MUC purges."
 
 echo
 echo "Texts that keep every rule"
@@ -120,6 +136,10 @@ kept "a school's course credits, which aren't AI usage" \
   "Students earn course credits for each module they finish."
 kept "a text that says nothing about the AI Assistant" \
   "A hosted wiki for small teams."
+kept "the same jobs in the customer's words" \
+  "You tell the AI Assistant what you need in plain English. It upgrades Moodle when you choose, installs plugins and clears caches. Your data stays yours."
+kept "an agency or a travel agent, which aren't the AI Assistant" \
+  "A website for a travel agent or a small agency."
 
 echo
 echo "What --text prints"
