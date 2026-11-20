@@ -145,7 +145,8 @@ bash tests/check-manifests.test.sh
 # The AI Assistant's listing copy: each agent-enabled container's title is the app's own name. A sentence that offers
 # more usage, names an allowance, says what the price includes or says no API key is needed says it of a paid plan,
 # and a description that mentions any of these also says that a free trial or free services use the customer's own
-# Claude subscription. Needs python3 with PyYAML
+# Claude subscription. No description uses Clouve's internal words (Magneto Agent, AI agent, DevOps agent, AI
+# operator, tenant, MUC). Needs python3 with PyYAML
 bash tests/listing-ai-copy.test.sh
 # The same rules on one text, such as a listing's own description from the publish wizard (the SEO page's About
 # text, which no manifest holds). It prints which rules pass, never the text. Save the text in a file first, so that

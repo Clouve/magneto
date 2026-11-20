@@ -29,6 +29,10 @@
 #     AI usage allowance named in the paid plan's;
 #   - "Claude" appears only in "Claude subscription", and no other AI company
 #     or tool is named;
+#   - the text uses the customer's words: "AI Assistant", never "Magneto
+#     Agent", "AI agent", "DevOps agent" or "AI operator", and no "tenant" or
+#     "MUC" (a Moodle cache), which mean nothing to a school office or a small
+#     team;
 #   - appDescription is at most 1000 characters, counted the way the publish
 #     wizard counts them (UTF-16 units, after JavaScript's trim());
 #   - AI Studio's container has the title "AI Studio" and a description of one
@@ -38,11 +42,12 @@
 #     and SEO pages show just before it.
 #
 # --text TEXT runs the description rules (paid plan, own Claude subscription,
-# no AI company named) on one text instead, such as a listing's own
-# description from the publish wizard, which the SEO page shows as its About
-# text and no manifest holds. It prints which rules pass, never the text.
-# Save the text in a file first and pass --text "$(cat description.txt)", so
-# that quotes and $ in it reach the test unchanged.
+# no AI company named, no internal words) on one text instead, such as a
+# listing's own description from the publish wizard, which the SEO page shows
+# as its About text and no manifest holds. It prints which rules pass, never
+# the text. Save the text in a file first and pass
+# --text "$(cat description.txt)", so that quotes and $ in it reach the test
+# unchanged.
 # tests/listing-ai-copy-rules.test.sh checks the rules on texts written for
 # each case.
 #
@@ -126,6 +131,9 @@ PAID_FACT = re.compile(r"\bpaid plan\b.*\bAI usage allowance\b|\bAI usage allowa
 OWN_FACTS = (re.compile(r"\bfree trial\b", re.I), re.compile(r"\bfree services\b", re.I),
              re.compile(r"\bown Claude subscription\b"))
 VENDORS = re.compile(r"\b(Claude|Anthropic|OpenAI|ChatGPT|GPT|Gemini|Codex|Copilot|LiteLLM)\b", re.I)
+# Words from inside Clouve that a listing never shows a customer. "MUC" is case-sensitive: it's Moodle's cache.
+INTERNAL_WORDS = re.compile(r"\b(?:Magneto[- ]Agent|AI agents?|DevOps agents?|AI operators?|tenants?)\b", re.I)
+INTERNAL_CASED = re.compile(r"\bMUC\b")
 # A sentence ends at . ! or ? followed by white space: "Node.js" and "5.2" stay inside one sentence.
 SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 # The characters JavaScript's String.prototype.trim() removes.
@@ -183,6 +191,10 @@ def check_text(label, text, quote=False):
     vendors = sorted(set(m.group(0) for m in VENDORS.finditer(text.replace("Claude subscription", ""))))
     check("%s: no AI company or tool is named, except in \"Claude subscription\"" % label, not vendors,
           "named: %s" % vendors)
+    words = sorted(set(m.group(0) for m in INTERNAL_WORDS.finditer(text))
+                   | set(m.group(0) for m in INTERNAL_CASED.finditer(text)))
+    check("%s: no internal words (Magneto Agent, AI agent, DevOps agent, AI operator, tenant, MUC)" % label,
+          not words, "found: %s" % words)
 
 
 if TEXT_MODE:

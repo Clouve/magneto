@@ -257,7 +257,7 @@ DESCRIPTION_PHRASES = [
     "On a paid plan, the price of the AI Assistant includes an AI usage allowance, and you can buy more.",
     "On a free trial, or with free services, you use it with your own Claude subscription.",
     "You can turn it on or off.",
-    "The tenant owns the Nextcloud data; Clouve hosts the containers.",
+    "You own your Nextcloud data; Clouve hosts the containers.",
 ]
 
 AGENT_BLOCK = {"enabled": True,
