@@ -20,6 +20,7 @@ Moodle is a free and open-source learning management system written in PHP and d
 - [Scheduled Tasks](#scheduled-tasks)
 - [Common Configuration Scenarios](#common-configuration-scenarios)
 - [Gibbon Integration](#gibbon-integration)
+- [Security notes: what the start runs as root](#security-notes-what-the-start-runs-as-root)
 - [Features](#features)
 - [Verification](#verification)
 - [Troubleshooting](#troubleshooting)
@@ -212,6 +213,19 @@ Container Start → Wait for MySQL → Install/Upgrade (if needed)
 
 The `update-config.sh` script runs automatically on every startup and updates `config.php` with current database credentials and `wwwroot`. SSL-proxy mode is then conditionally added based on whether `MOODLE_URL` starts with `https://`.
 
+The entrypoint runs as root, and `config.php` is on the site's volume, which `www-data` owns, so PHP code of the site
+can put a link, a folder or a pipe there. `update-config.sh` reads `config.php` only when it is a regular file: it opens
+it without following a link and checks, on the open file, that it is the regular file it looked at a moment before.
+Each change goes into a new file in the same folder, created only if nothing is at its name and given `config.php`'s
+owner, group and mode, which is then renamed over `config.php`. The SSL proxy step and the upgrade's Classic theme step
+change `config.php` the same way, through `update-config.sh --read` and `update-config.sh --edit`.
+
+When `config.php` is a link or not a regular file, it is left as it is. The log says
+`⚠ Warning: /var/www/html/config.php is a link or not a regular file, so it is left as it is` and shows nothing of it
+or of what it points to. Its database settings and `wwwroot` aren't updated (the database's `wwwroot` still is), and
+the start goes on. Stopping the start instead would restart the container again and again with its sshd down, so the
+AI Assistant couldn't get in to put a regular `config.php` back. `tests/moodle-root-paths.test.sh` checks all of this.
+
 ### Verification
 
 **Check container logs**:
@@ -294,7 +308,7 @@ Moodle's scheduler (`tool_task`) runs every minute to dispatch Moodle's queued s
 
 - The container installs `cron` and renders `/etc/cron.d/moodle-cron` at startup, invoking `/clouve/moodle/installer/moodle-cron.sh` on the `MOODLE_CRON_INTERVAL` schedule (default: `*/5 * * * *`).
 - The wrapper guards on Moodle's install sentinel — no CLI script runs until installation finishes.
-- Each tick, the wrapper exec's `php admin/cli/cron.php` as `www-data`. Adhoc tasks fire with low overhead between scheduled cadences.
+- Each tick, the wrapper runs `php admin/cli/cron.php` as `www-data` (`runuser`), never as root. `cron.php` loads `config.php` and the plugins' code, which the site's PHP can change, so as root it would run whatever was put there with root's rights. The wrapper itself is root's, so it can write the log in `/var/log`, and it takes `CLOUVE_OPS_PASSWORD` out of the environment before `runuser` (cron's own environment doesn't have it either). Adhoc tasks fire with low overhead between scheduled cadences.
 - Output (including timestamped `Started`/`Completed`/`Failed` banners) is appended to `/var/log/moodle-cron.log` inside the container.
 
 ### Configuration
@@ -419,6 +433,8 @@ The Moodle image supports integration with Gibbon through multi-part environment
    - **External Database Enrollment (enrol_database)** - Synchronizes course enrollments from Gibbon's `moodleEnrolment` view
 
 5. **Verification**: After configuration, the script tests the connection to the Gibbon database and logs the results.
+
+6. **Cache purge**: Then `purge_caches.php` runs, so Moodle uses the new settings at once. It runs as `www-data`, as all of the site's PHP does, without `CLOUVE_OPS_PASSWORD`.
 
 ### Example Configuration
 
@@ -567,6 +583,60 @@ site's `vendor/` is still the one a Clouve image put there:
 
 A site Moodle's upgrade moves to a newer Moodle gets the new image's whole code tree, libraries included, the usual
 way. Don't edit files in `vendor/` in place: the next image with newer libraries leaves such a site on the old ones.
+
+The script runs as root, and the site's folder and `clouve/installed/` are `www-data`'s. So it makes every write,
+rename and removal from inside the folder it concerns, after checking with `/bin/pwd -P` that the folder it is in has
+that folder's own path, and it names files there by their plain names: a folder swapped for a link afterwards moves the
+folder, not the work. New files are created only when nothing is at their name, then renamed into place, and the image's
+`vendor/` is copied into a folder the script has just made. Gibbon's image has the same script.
+
+## Security notes: what the start runs as root
+
+The entrypoint starts as root, and the site's volumes (`/var/www/html` and `/var/moodledata`) are `www-data`'s, so
+PHP code of the site (a plugin an admin added, a line in `config.php`) can change anything on them. The start keeps
+root apart from that code:
+
+- The site's PHP runs only as `www-data`, never as root, and never with `CLOUVE_OPS_PASSWORD` in its environment:
+  Moodle's install (`install.php`), cron (`cron.php`), the steps of `upgrade.sh` (`added-plugins.php`, which loads
+  every added plugin's `version.php`, then maintenance mode, the upgrade and the cache purge), and the Education Kit's
+  cache purge and Gibbon password step.
+- After each of those steps, and before root moves, writes or removes files again, `reap_www_data`
+  (`image/installer/www-data.sh`) ends every process of `www-data`'s. It sends SIGKILL to all of them at once with
+  `kill -1`, which no process can fork past, and which also reaches a process whose main thread has ended while
+  another thread runs. The sender is a process that `www-data`'s processes can't signal, trace or read: perl, started
+  by root with an empty environment, sets its real user id to 65533 (unused here, which the reap checks first) and
+  then its effective user id to `www-data`'s, with its saved user id still root's. So a process of `www-data`'s can't
+  end or stop it, and can't read `CLOUVE_OPS_PASSWORD` in its environment. Then the reap checks `/proc` by user id,
+  never by name, and waits up to 5 seconds. The log then says
+  `[clouve-www-data] <step>: stopped N process(es) of www-data's that were still running`. No process of
+  `www-data`'s has any business running before Apache and cron start, so nothing legitimate is stopped. A process
+  that plugin code leaves behind (with `setsid`, a double fork or a chain of forks) therefore can't swap a folder for a
+  link while root works there.
+- A link that the site's code made before its step ended is still there, so root checks the folders it works in
+  after each step. `clouve/` and `clouve/installed/` are checked at the start and again after the install, the
+  Education Kit's cache purge and the upgrade: a link there is removed, not followed. `upgrade.sh` takes the plugin
+  folders it copies, moves and removes from `added-plugins.php`'s plan, which the site's code decides
+  (`added-plugins.php` loads the old code's `version.php`). So root uses a folder from the plan only when the folder
+  and every folder on the way to it are real folders and not links: in the old code (`clouve/upgrade-previous/`), in
+  the new code, and in the stash. A kept plugin's files go into a folder made for them, and a link inside a plugin is
+  copied as a link. A refusal is a `[clouve-upgrade] WARNING` line. A plugin whose folder in the old code fails the
+  check is held back and isn't saved in the stash. One whose place in the new code has a link on the way is held back,
+  and its old copy is saved in the stash like any held-back plugin. A kept plugin that has to be held back later (when
+  Moodle's upgrade fails), with a link on the way to it in the new code, can't be taken out and stays in place.
+  `moodledata`'s cache folders are emptied from inside each folder; one that is a link, or has a link on the way, is
+  left as it is, with a warning. These checks come after the reap, when no process of `www-data`'s is left that could
+  change what they saw.
+- When the reap can't make sure that no process of `www-data`'s is left (`/proc` can't be read, one still runs after
+  the 5 seconds, its kill couldn't be sent, or user id 65533 is in use), the start stops there with
+  `[clouve-www-data] <step>: <why>, so the start stops here: root changes no file while a process of www-data's may run`.
+  Every call is a statement of its own, `reap_www_data <step> || exit 1`, never inside a command substitution, a
+  pipeline or an `if`, so no later step of root's runs. The next start tries again.
+- Where root itself reads or changes a file on the volumes, it doesn't follow a link at that file or wait on a pipe
+  there: the version stamp and the markers (see [Upgrading to a newer image](#upgrading-to-a-newer-image)),
+  `config.php` (see [How It Works](#how-it-works)), `vendor/` with its records (see
+  [The PHP libraries on an installed site](#the-php-libraries-on-an-installed-site)), and `version.php` and an added
+  theme's `config.php`, which are read with `dd`'s `nofollow` and `nonblock` and give only digits or a yes or a no.
+- `tests/moodle-root-paths.test.sh` and `tests/moodle-version-stamp.test.sh` check all of this, on a real site too.
 
 ## Features
 
@@ -820,6 +890,44 @@ entrypoint compares that `$version` with the one recorded in `/var/www/html/clou
 is higher, it upgrades the site once, in maintenance mode, with `image/installer/upgrade.sh`. A site from the 5.2 image
 moves to 5.3 at its first start on this one. Take a database dump and a copy of both volumes first.
 
+The entrypoint runs as root, and the stamp is on the site's volume, where www-data can change anything. So
+`image/installer/stamp.sh` reads the stamp only from a regular file that holds nothing but digits (at most 18, so the
+comparison can't overflow), with one newline at the end allowed. Anything else at that path, a link included, is
+ignored, and the entrypoint records the version from the site's code again. The log then says
+`⚠ Warning: /var/www/html/clouve/installed/version is not a plain version number, so it is ignored` and never shows
+what the file held.
+
+Every read, write and removal there happens from inside the folder it concerns. The entrypoint first moves into the
+folder and checks that its real path is the expected one, with no link on the way, and then names files by their
+plain names. A process of www-data's that swaps the folder, or one above it, for a link after that moves the folder,
+not the entrypoint's work, which stays in the folder that was checked. The stamp, the release's timestamp and the
+Education Kit's integration marker are each written to a new file with a random name. That file is created only if
+nothing is at its name yet, so a link put there makes the write fail. The new file is then renamed over the old name,
+which replaces a link there without following it. So the entrypoint's text only ever goes into a file it has just
+made, in the checked folder, and nothing outside the volume is written, removed or has its mode changed through a
+link. Something that swaps the new file before the rename takes its place: anything but a regular file makes the
+write fail and the start stop, and the next start records the stamp again; a regular file of its own becomes the
+stamp, which www-data could write anyway, and the next start reads it with the same checks.
+
+A link at `clouve/` or `clouve/installed/` is removed without being followed (the log names it), and an installed site
+gets both folders back, empty: its stamp comes from its code, and in the Education Kit the Gibbon integration runs
+once more. The entrypoint checks both folders at the start and again after each step that runs the site's PHP before
+it writes there: the install, the Education Kit's cache purge and the upgrade. `tests/moodle-version-stamp.test.sh`
+checks all of this.
+
+An installed site (anything at `config.php`) whose `clouve/installed/` is gone isn't installed again: `install.php`
+loads `config.php` when there is one. The entrypoint makes the folder again and logs
+`⚠ Warning: /var/www/html/clouve/installed is missing but the site has a config.php, so the folder is made again and
+the site is not installed again`. The stamp then comes from the site's code, as for a linked folder.
+
+`upgrade.sh` runs `added-plugins.php` and Moodle's CLI (maintenance mode, the upgrade, the cache purge) as `www-data`
+with `su -p`, which keeps the start's environment, but takes `CLOUVE_OPS_PASSWORD` out first, so an added plugin's
+`version.php` and upgrade code never see it. After each of these steps, every process the step left running is ended
+before `upgrade.sh` moves anything in `clouve/` again, and every plugin folder that `upgrade.sh` takes from the plan is
+checked for links first (see
+[Security notes: what the start runs as root](#security-notes-what-the-start-runs-as-root)).
+`tests/moodle-root-paths.test.sh` checks all three.
+
 What changes for a site that moves from 5.2 to 5.3:
 
 - Moodle 5.3 removed the Classic theme. When the site's theme is Classic, set in the admin pages or forced in
@@ -917,11 +1025,12 @@ The `clv-docker-compose.yml` file contains Clouve-specific extensions for market
 
 - `image/Dockerfile` - Custom Moodle Docker image definition. Now also installs `openssh-server` + `sudo` and creates the `clouve-ops` operator account. It deletes the SSH host keys that installing openssh-server makes, so each container makes its own (`tests/moodle-ssh-host-keys.test.sh`).
 - `image/installer/entrypoint.sh` - Container entrypoint (install/upgrade/config-update + cron + clouve-ops sshd bring-up).
-- `image/installer/install.sh` - Initial installation logic (non-interactive `admin/cli/install.php`).
+- `image/installer/install.sh` - Initial installation logic (non-interactive `admin/cli/install.php`, run as `www-data`).
+- `image/installer/www-data.sh` - `reap_www_data`, which ends every process of `www-data`'s after each step of the start that runs the site's PHP (see [Security notes: what the start runs as root](#security-notes-what-the-start-runs-as-root)).
 - `image/installer/upgrade.sh` - Upgrade flow: moves the old code tree aside, copies the image's Moodle, copies back the plugins that admins added through Moodle's UI, then runs `admin/cli/upgrade.php --non-interactive`. If that fails twice with added plugins in place, it holds them back and runs it once more without them. The old tree stays in `clouve/upgrade-previous/` until the upgrade succeeds, so a start that is cut off can run the upgrade again; that start first clears the upgrade lock Moodle leaves in its config table when its upgrade is cut off, which would otherwise stop every upgrade for 5 minutes. If an added plugin's upgrade step fails twice, that plugin alone is held back when Moodle names it. Afterwards, a line that only sets `$CFG->theme = 'classic';` in `config.php` becomes a comment when the new Moodle has no Classic theme. A site with an added plugin newer than the new Moodle's own copy isn't upgraded at all: `upgrade.sh` exits with status 3 before it changes anything, and the entrypoint keeps the old code running (see [Upgrading to a newer image](#upgrading-to-a-newer-image)).
 - `image/installer/added-plugins.php` - Lists those added plugins for `upgrade.sh`, and holds back the ones that the new Moodle ships itself or whose `version.php` says they won't work with it: marked incompatible, a `$plugin->supported` range that covered the old branch but leaves out the new one, or a dependency the new site won't have. Its "stop" line marks an added plugin that the new Moodle ships in an older version. Held-back plugins stay in `clouve/upgrade-stash/` on the code volume, and the container log says why.
-- `image/installer/update-config.sh` - Configuration update script (DB credentials + `wwwroot` + SSL proxy).
-- `image/installer/moodle-cron.sh` - Wrapper around `admin/cli/cron.php` invoked by cron.
+- `image/installer/update-config.sh` - Configuration update script (DB credentials + `wwwroot`). It reads and changes `config.php` only as a regular file, never through a link, and changes it by renaming a new file over it; the entrypoint's SSL proxy step and `upgrade.sh` use it for that too (`--read`, `--edit`). See [How It Works](#how-it-works).
+- `image/installer/moodle-cron.sh` - Wrapper around `admin/cli/cron.php` invoked by cron. It runs `cron.php` as `www-data`.
 - `image/installer/start-clouve-ops-sshd.sh` - Applies the per-pod `CLOUVE_OPS_PASSWORD` to the `clouve-ops` user via `chpasswd`, then `exec`s `sshd -D`.
 - `image/installer/clouve-ops-sshd.conf` - sshd_config drop-in (password-only auth, no root login, only `clouve-ops` allowed).
 - `image/context/moodle/CONTEXT.md.tpl` - Moodle DevOps persona, baked into the image and pulled by Magneto Agent at init via `clouve-ops` SSH.

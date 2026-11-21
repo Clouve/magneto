@@ -17,11 +17,17 @@
 #   refresh-vendor.sh --sums VENDOR_DIR         prints the sha256 list of VENDOR_DIR's package files
 #   refresh-vendor.sh APP PACKAGE SITE STATE    APP is gibbon or moodle
 #
-# The entrypoint runs it as root before Apache, cron and the sshd start, so none of the tenant's code runs meanwhile.
-# It never writes, deletes or hashes through a link on the site, and reads the site's version file only when no part
-# of its path inside the site is a link. Its log lines name no path. A failure before the swap keeps the old
-# vendor/ and exits 0, so the site starts as it was. A failure between the two renames exits 1, and the next start
-# finishes the swap. Gibbon's and Moodle's copies of this file are the same (tests/vendor-refresh.test.sh).
+# The entrypoint runs it as root before Apache, cron and the sshd start. A process of www-data's can still be running
+# then (one that the site's own code left during an install or an upgrade), and the site and its state folder are
+# www-data's, so it can swap a folder there for a link at any moment. So every write, rename and removal runs from
+# inside the folder it concerns (in_folder: cd -P, then /bin/pwd -P, the kernel's getcwd, must give that folder's own
+# path), by plain names: a folder swapped for a link afterwards moves the folder, not the work. New files are made with
+# O_EXCL (dd conv=excl, which a link of any kind makes fail) and renamed into place, and the image's vendor/ is copied
+# into a folder this script has just made. It never writes, deletes or hashes through a link on the site, and reads
+# the site's version file only when no part of its path inside the site is a link. Its log lines name no path. A
+# failure before the swap keeps the old vendor/ and exits 0, so the site starts as it was. A failure between the two
+# renames exits 1, and the next start finishes the swap. Gibbon's and Moodle's copies of this file are the same
+# (tests/vendor-refresh.test.sh).
 set -u
 
 log() { echo "[clouve-vendor] $*"; }
@@ -34,6 +40,23 @@ usage() {
 # regular FILE: a file and not a link. The site's files are the tenant's, and reading a pipe or a device that a
 # link points at could hang the start.
 regular() { [ -f "$1" ] && [ ! -L "$1" ]; }
+
+# in_folder DIR COMMAND...: runs COMMAND in a subshell whose working folder is DIR, once cd -P has moved there and
+# /bin/pwd -P has shown that the folder the subshell is in has DIR's own path: a folder, with no link on the way.
+# /bin/pwd asks the kernel (getcwd); bash's builtin pwd -P only resolves the path that cd stored once more, which a name
+# swapped to a link and back between the two can pass. COMMAND names things in DIR by plain names. Status 125 when DIR
+# fails the check, COMMAND's status otherwise.
+in_folder() {
+  local dir="$1" want
+  shift
+  want="$(realpath -sm -- "$dir" 2>/dev/null)" || return 125
+  (
+    if ! cd -P -- "$dir" 2>/dev/null || [[ "$(/bin/pwd -P 2>/dev/null)" != "$want" ]]; then
+      exit 125
+    fi
+    "$@"
+  )
+}
 
 # vendor_id DIR: the sha256 of the sorted "name version" lines in DIR/composer/installed.json. It hashes the
 # packages, not the file, so two Composer versions that installed the same packages give the same id. Nothing,
@@ -151,53 +174,76 @@ fi
 V="$SITE/vendor"
 NEW="$SITE/vendor.clouve-new"
 OLD="$SITE/vendor.clouve-old"
-MARKER="$STATE/vendor-id"
 SUMS="$STATE/vendor-sums"
 UPSTREAM_ID_FILE="$(dirname -- "$PKG")/vendor-upstream.id"
 UPSTREAM_SUMS="$(dirname -- "$PKG")/vendor-upstream.sums"
 
-# remove PATH: a link goes as a link, never followed.
-remove() { if [ -L "$1" ]; then rm -f -- "$1" 2>/dev/null; elif [ -e "$1" ]; then rm -rf -- "$1" 2>/dev/null; fi; }
+# remove PATH: removes what is at PATH, a name in the site's folder, from inside that folder; a link goes as a link,
+# never followed.
+remove() { in_folder "$SITE" rm -rf -- "${1##*/}" 2>/dev/null; }
+
+# in_site_mv FROM TO: renames FROM to TO, two names in the site's folder, from inside it. rename(2) follows no link.
+in_site_mv() { in_folder "$SITE" mv -T -- "${1##*/}" "${2##*/}" 2>/dev/null; }
 
 copy_composer_files() {
   local f
   for f in composer.json composer.lock; do
     regular "$PKG/$f" || continue
-    cp -T --remove-destination -- "$PKG/$f" "$SITE/$f" 2>/dev/null && chown -h www-data:www-data -- "$SITE/$f" 2>/dev/null
+    in_folder "$SITE" _copy_composer_file_here "$PKG/$f" "$f"
   done
 }
+# _copy_composer_file_here SOURCE NAME: cp removes what is at NAME first (a link as a link) and makes the file anew
+# with O_EXCL; chown -h never follows a link.
+_copy_composer_file_here() {
+  cp -T --remove-destination -- "$1" "$2" 2>/dev/null && chown -h www-data:www-data -- "$2" 2>/dev/null
+}
 
-# put_file DEST: writes stdin to a new file in the state folder and renames it to DEST, so a link at DEST is
-# replaced, not followed.
-put_file() {
-  local tmp
-  tmp="$(mktemp -- "$STATE/.vendor.XXXXXX" 2>/dev/null)" || return 1
-  if cat > "$tmp" 2>/dev/null && chmod 644 -- "$tmp" 2>/dev/null && mv -fT -- "$tmp" "$1" 2>/dev/null; then
+# put_file NAME: writes stdin to a new file in the state folder and renames it to NAME, from inside that folder. The
+# new file has a name with 64 random bits, dd makes it only when nothing is at that name (conv=excl), with mode 644
+# from the umask, and mv -fT replaces what is at NAME, a link included, without following it.
+put_file() { in_folder "$STATE" _put_file_here "$1"; }
+_put_file_here() {
+  local rand tmp
+  rand="$(od -An -N8 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')"
+  [[ "$rand" =~ ^[0-9a-f]{16}$ ]] || return 1
+  tmp=".vendor.$rand"
+  if (umask 022 && dd of="$tmp" conv=excl oflag=nofollow status=none 2>/dev/null) && mv -fT -- "$tmp" "$1" 2>/dev/null
+  then
     return 0
   fi
-  rm -f -- "$tmp" 2>/dev/null
+  rm -rf -- "$tmp" 2>/dev/null
   return 1
 }
 
 # record: the marker says which version's and which libraries Clouve's image put on the site, and the file list
 # beside it lets a later image check that tree. The list goes first, so a marker never names a tree without one.
 record() {
-  vendor_sums "$PKG/vendor" | put_file "$SUMS" && printf '%s %s\n' "$image_version" "$image_id" | put_file "$MARKER"
+  vendor_sums "$PKG/vendor" | put_file vendor-sums && printf '%s %s\n' "$image_version" "$image_id" | put_file vendor-id
 }
 
-recorded=""
-regular "$MARKER" && recorded="$(head -c 256 -- "$MARKER" 2>/dev/null | head -n 1)"
+# _read_marker_here: the marker's first line, from inside the state folder: a regular file only, at most 256 bytes,
+# read with O_NOFOLLOW and O_NONBLOCK, so a link or a pipe put there after the test is neither followed nor waited on.
+_read_marker_here() {
+  regular vendor-id || return 0
+  dd if=vendor-id iflag=nofollow,nonblock bs=256 count=1 status=none 2>/dev/null | head -n 1
+}
+recorded="$(in_folder "$STATE" _read_marker_here)"
 
-# A temp file put_file left when a start was cut off between mktemp and the rename.
-for f in "$STATE"/.vendor.??????; do
-  [ -e "$f" ] || [ -L "$f" ] || continue
-  rm -f -- "$f" 2>/dev/null
-done
+# Temp files put_file left when a start was cut off between making one and the rename: this script's names, and the
+# shorter ones that mktemp gave in images before it.
+_clear_temp_files_here() {
+  local f
+  for f in .vendor.?????? .vendor.????????????????; do
+    [ -e "$f" ] || [ -L "$f" ] || continue
+    rm -f -- "$f" 2>/dev/null
+  done
+}
+in_folder "$STATE" _clear_temp_files_here
 
 # A swap that was cut off between its two renames. vendor.clouve-new is whole then: the old vendor/ moves aside
 # only after the copy is done.
 if [ ! -e "$V" ] && [ ! -L "$V" ] && [ -d "$NEW" ] && [ ! -L "$NEW" ]; then
-  if ! mv -T -- "$NEW" "$V" 2>/dev/null; then
+  if ! in_site_mv "$NEW" "$V"; then
     log "FAILED to finish the swap an earlier start began"
     exit 1
   fi
@@ -238,17 +284,20 @@ if [ "$ours" != 1 ]; then
   exit 0
 fi
 
-if ! cp -a -- "$PKG/vendor" "$NEW" 2>/dev/null || ! chown -hR www-data:www-data -- "$NEW" 2>/dev/null; then
+# The copy goes into a folder made here (mkdir fails when anything, a link included, is at that name), from inside it:
+# root's until the copy is done, so nothing else can add or move anything in it meanwhile.
+if ! in_folder "$SITE" mkdir -- "${NEW##*/}" 2>/dev/null || ! in_folder "$NEW" cp -a -- "$PKG/vendor/." . 2>/dev/null ||
+    ! in_folder "$NEW" chown -hR www-data:www-data -- . 2>/dev/null; then
   remove "$NEW"
   log "FAILED to copy the image's vendor/, so the site keeps its old one"
   exit 0
 fi
-if ! mv -T -- "$V" "$OLD" 2>/dev/null; then
+if ! in_site_mv "$V" "$OLD"; then
   remove "$NEW"
   log "FAILED to move the old vendor/ aside, so the site keeps it"
   exit 0
 fi
-if ! mv -T -- "$NEW" "$V" 2>/dev/null; then
+if ! in_site_mv "$NEW" "$V"; then
   log "FAILED between the two renames; the next start finishes the swap"
   exit 1
 fi

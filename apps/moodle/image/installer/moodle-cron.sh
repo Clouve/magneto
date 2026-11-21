@@ -16,9 +16,13 @@ echo "Moodle Cron Started: $(date)" >> "$LOG_FILE"
 echo "========================================" >> "$LOG_FILE"
 
 # Run Moodle cron and capture output
-# The cron.php script should be run as the web server user (www-data)
+# cron.php runs as www-data, as Apache does, never as root: it loads config.php and the plugins' code, which www-data
+# can change, so as root it would run whatever www-data put there with root's rights. This script stays root's (the
+# cron line's user), so it can write the log in root's /var/log. runuser by its full path: cron's PATH has no
+# /usr/sbin. cron gives its jobs a small environment of their own, without CLOUVE_OPS_PASSWORD; env -u makes sure
+# (tests/moodle-root-paths.test.sh).
 if [ -f "$MOODLE_PATH/admin/cli/cron.php" ]; then
-    /usr/local/bin/php "$MOODLE_PATH/admin/cli/cron.php" >> "$LOG_FILE" 2>&1
+    env -u CLOUVE_OPS_PASSWORD /usr/sbin/runuser -u www-data -- /usr/local/bin/php "$MOODLE_PATH/admin/cli/cron.php" >> "$LOG_FILE" 2>&1
     EXIT_CODE=$?
     
     if [ $EXIT_CODE -eq 0 ]; then

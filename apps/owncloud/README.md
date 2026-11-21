@@ -77,7 +77,12 @@ owncloud/
     ├── db/
     │   └── Dockerfile                 # MariaDB Dockerfile
     └── installer/
-        └── entrypoint.sh              # Custom entrypoint wrapper
+        ├── 20-config.sh               # Clouve's copy of ownCloud's config step (writes overwrite.config.php safely)
+        ├── 25-chown.sh                # Clouve's copy of ownCloud's chown step (never follows a link)
+        ├── 45-php.sh                  # Clouve's copy of ownCloud's PHP step (writes objectstore.config.php safely)
+        ├── entrypoint.sh              # Custom entrypoint wrapper
+        ├── root-paths.sh              # Checks for root's reads and writes on the data volume
+        └── www-data.sh                # Ends what occ, run as www-data, left running (the Gibbon and Moodle images' functions)
 ```
 
 ## Building Images
@@ -133,6 +138,56 @@ The `clv-docker-compose.yml` file contains the production configuration with all
 4. Calls original ownCloud entrypoint for setup
 5. ownCloud automatically installs if needed
 6. Server starts and is ready for use
+
+## The domain marker
+
+The wrapper keeps the last domain it saw in `/mnt/data/.owncloud_domain`. When `OWNCLOUD_DOMAIN` differs from it, the
+start sets `overwrite.cli.url` and the trusted domains with `occ`, which runs as www-data. The wrapper runs as root,
+and the data volume belongs to www-data, so it reads the marker only when it is a regular file, never through a link,
+and at most 300 bytes. The old domain goes to the log only when it looks like a host name. A link, a folder or a pipe
+at the marker, or text that isn't a host name, is named in the log and ignored, and the marker is written again into
+a new file that replaces whatever was there without following it (`installer/root-paths.sh`, the same file as the
+Gibbon image's; `tests/owncloud-domain-marker.test.sh`).
+
+## Who owns the data volume
+
+At every start, ownCloud's own `/etc/owncloud.d/25-chown.sh` gives the code tree and the data volume to
+`www-data:root`. Upstream's version did it with `find | xargs chown` without `-h`, so a link that www-data put on the
+volume gave its target, any file of root's in the container, to www-data. The image replaces that script with
+`installer/25-chown.sh`, which does the same work with `find -P ... -execdir chown -h` and never follows a link. Real
+files and folders end with the same owner, group and mode as before. The build checks upstream's script against a
+checksum (`UPSTREAM_CHOWN_SHA256` in the Dockerfile) and stops when a new base image changes it: compare the new
+script with `installer/25-chown.sh`, carry its changes over, then update the checksum. Upstream's file stays in the
+image at `/clouve/app/upstream/25-chown.sh`, never run, and `tests/owncloud-domain-marker.test.sh` runs both on the
+same made-up volume.
+
+## The config files ownCloud's start writes
+
+At every start, ownCloud's own `20-config.sh` and `45-php.sh` render `overwrite.config.php` and
+`objectstore.config.php` into the volume's config folder (`/mnt/data/config`) as root. Upstream's versions did it with
+`gomplate -o`, which writes through a link that www-data put at either name: a file of root's anywhere in the
+container then held the rendered config. The image runs Clouve's copies (`installer/20-config.sh`,
+`installer/45-php.sh`): gomplate renders to its output, and `safe_put` (`installer/root-paths.sh`) writes that into a
+new file it makes in the config folder, from inside the folder once the kernel has shown it to be `/mnt/data/config`,
+then renames it over the old name. A link, a dangling link or a pipe at either name is replaced and never followed; a
+regular file keeps its owner, group and read and write bits, as the write in place kept them. Because ownCloud's own
+`occ` steps read every file of the config folder (as www-data) before `45-php.sh` writes `objectstore.config.php`,
+Clouve's `20-config.sh` also removes anything at that name that isn't a regular file, without following it: a pipe
+there would hold the start. The same checksum gate
+as for `25-chown.sh` (`UPSTREAM_CONFIG_SHA256` and `UPSTREAM_PHP_SHA256`) stops the build when a new base image
+changes either script, and upstream's files stay at `/clouve/app/upstream/`, never run.
+
+When the config folder itself is a link (or has one on the way), nothing is written and the start stops with
+`✗ Error: can't write /mnt/data/config/overwrite.config.php: its folder is missing or there is a link on the way to
+it`. The folder holds the site's `config.php`, so the start doesn't replace the link with an empty folder: the
+site's settings would be gone. To repair, stop the container, put the real folder back at
+`/mnt/data/config` (from a throwaway container on the same volume), and start it again.
+
+A start cut off between making one of these files and renaming it leaves `.<name>.<16 hex digits>` in the config
+folder (or beside the domain marker); the next start removes such regular files. When the domain changes, the
+wrapper runs `occ` as www-data without `CLOUVE_OPS_PASSWORD`, and then ends every process of www-data's that is still
+running (`installer/www-data.sh`), before ownCloud's own start. When it can't make sure that none is left, the start
+stops with a `[clouve-www-data]` line that says so.
 
 ## Volumes
 

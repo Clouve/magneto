@@ -569,7 +569,12 @@ RC=$?
 assert_eq "exits 0" "0" "$RC"
 assert_dir "clouve/ is a real folder" "$H/clouve"
 assert_eq "nothing is moved through the link" "installed" "$(ls -A "$WORK/clouve-elsewhere")"
-assert_file "the version stamp is copied into the new folder, for entrypoint.sh" "$H/clouve/installed/version"
+assert_file "nothing in the link's target is changed or taken" "$WORK/clouve-elsewhere/installed/version"
+assert_contains "the link is removed without being followed, and the log says so" "$OUT" \
+  "$H/clouve is a link or not a folder, so it is removed without being followed"
+assert_dir "clouve/installed/ is made again, empty: the entrypoint records the stamp from the site's code" \
+  "$H/clouve/installed"
+assert_absent "nothing is copied from where the link pointed" "$H/clouve/installed/version"
 assert_file "the added plugin is back" "$H/public/local/academictranscript/version.php"
 
 echo "upgrade.sh: little free space on the code volume"

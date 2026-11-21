@@ -202,7 +202,8 @@ Container Start → Wait for MySQL → Install/Upgrade (if needed)
 ```
 
 The `update-config.sh` script runs automatically on every startup:
-1. Updates `config.php` with database credentials from environment variables
+1. Updates `config.php` with database credentials from environment variables (only when `config.php` is a regular
+   file; see "What the start does on the site's volume")
 2. Waits for database to be ready
 3. Updates `absoluteURL` in the database with current `GIBBON_URL` value
 4. Verifies all updates were successful
@@ -556,6 +557,60 @@ on a site that runs the image's Gibbon version, when the site's `vendor/` is sti
 
 Don't edit files in `vendor/` in place: the next image with newer libraries leaves such a site on the old ones.
 
+## What the start does on the site's volume
+
+The entrypoint runs as root, and the site's volume (`/var/www/html`) belongs to www-data, the user that Apache and
+cron run Gibbon's PHP as. Code that runs as www-data can put a link, a folder or a pipe at any name there. So the start
+never reads or writes through such a link (`installer/root-paths.sh`, `tests/gibbon-root-paths.test.sh`):
+
+- `clouve/` and `clouve/installed/` must be real folders. A link or a file at either is removed without being
+  followed, and the log says `⚠ Warning: <folder> is a link or not a folder, so it is removed without being
+  followed`. A site with `config.php` gets both folders back, empty, so the start copies this version's code again
+  and records it, as after an upgrade.
+- The install markers (`clouve/installed/<version>` and `.moodle-integration-setup`) count only when they are regular
+  files. Anything else at those names is named in the log and ignored. Each marker is written into a new file that
+  then replaces whatever is at its name, a link included, without following it.
+- `update-config.sh` edits `config.php` only when it is a regular file. It writes the result into a new file and
+  renames that over `config.php`, which keeps its owner, group and mode (a root-owned `config.php` keeps only its read
+  and write bits). A link, a folder or a pipe at `config.php` is left as it is, and the log says `⚠ Warning:
+  /var/www/html/config.php is a link or not a regular file, so its database settings were not updated`. The URL update
+  still runs. Such a site can't reach its database after a password rotation until `config.php` is a plain file again.
+- Gibbon's installer (`auto.php`) runs as www-data, without `CLOUVE_OPS_PASSWORD`, because it loads `config.php`, and
+  a site that is installed again (its `clouve/installed/` removed) still has its own. After a new install,
+  `config.php` belongs to www-data, as after any upgrade (an upgrade also gives it mode 755).
+- Nothing the start runs as www-data gets `CLOUVE_OPS_PASSWORD`: the installer, the `chmod` of an upgrade's copy and
+  of the cache cleanup, and cron's PHP all run under `env -u CLOUVE_OPS_PASSWORD`, and so does `update-config.sh`.
+  Any process of www-data's can read another one's environment in `/proc`.
+- After each step that runs something as www-data (the installer, an upgrade's copy, the cache cleanup,
+  `update-config.sh`), the start ends every process of www-data's that is still running (`installer/www-data.sh`, the
+  Moodle image's functions: one SIGKILL to all of them, sent by a process that www-data's processes can't signal, then
+  a check of `/proc` by user id, never by name). When it stopped any, the log says `[clouve-www-data] <step>: stopped
+  <n> process(es) of www-data's that were still running`. When it can't make sure that none is left, it logs a line
+  that ends `so the start stops here: root changes no file while a process of www-data's may run`, and the start
+  stops. No process of www-data's has anything to do before Apache and cron start, and one that the site's own code
+  left behind could otherwise swap folders while root works.
+- `installer/refresh-vendor.sh` does every write, rename and removal from inside the folder it concerns, after the
+  kernel has confirmed that folder's path, so a folder swapped for a link meanwhile moves the folder, not the work.
+- `installer/upgrade.sh` copies the package over the site (at install, and when the version marker is missing) one
+  folder at a time, from inside each folder. A link where the package has a file or a folder is replaced by the
+  package's file or a real folder, and nothing is written through it. The site's own files stay, as with the
+  `cp -prf` it replaces. Then the site goes to www-data with `chown -R` (which doesn't follow links) and `chmod -R
+  755`, which runs as www-data once everything is www-data's.
+- At every start, `uploads/cache` (Twig's compiled templates) is emptied and given to www-data with mode 755, from
+  inside the folder. A link or a file at `uploads/cache` is removed without being followed, and the folder made
+  again. When `uploads/` itself is a link or not a folder, the cache is left alone and the log says `⚠ Warning:
+  /var/www/html/uploads is a link or not a folder, so its cache was not cleared`.
+- A start that is cut off between making a new file and renaming it leaves a file named `.<name>.<16 hex digits>`
+  (beside a marker in `clouve/installed/`, or beside `config.php`). The next start removes such files, from inside the
+  folder, when they are regular files; a link or a folder at such a name is left as it is.
+
+### Known limits
+
+- A site whose `clouve/installed/` folder was removed (not replaced by a link) has one failed start. That start makes
+  the folder and runs Gibbon's installer again, which stops because `config.php` is already there, and the container
+  exits. The next start finds the empty folder, copies this version's code again as after an upgrade, records the
+  marker and serves the site.
+
 ## Features
 
 - ✅ **AI Agent Companion**: Browser-based Claude Code workspace (the upstream `magneto-agent` image, configured via `MAGNETO_AGENT_SKILLS`) with a Gibbon DevOps Skill that can perform upgrades, module installs, backups, diagnostics, and academic-year rollover through natural language.
@@ -842,6 +897,8 @@ The `clv-docker-compose.yml` file contains Clouve-specific extensions for market
 - `image/installer/entrypoint.sh` - Container entrypoint (install/upgrade/config-update + cron + clouve-ops sshd bring-up).
 - `image/installer/gibbon-cron.sh` - Scheduled-tasks dispatcher (invoked by cron).
 - `image/installer/update-config.sh` - Configuration update script.
+- `image/installer/root-paths.sh` - The checks the entrypoint uses for its reads and writes on the site's volume
+  (see "What the start does on the site's volume"). The ownCloud image has the same file.
 - `image/installer/start-clouve-ops-sshd.sh` - Applies the per-pod `CLOUVE_OPS_PASSWORD` to the `clouve-ops` user via `chpasswd`, then `exec`s `sshd -D`.
 - `image/installer/clouve-ops-sshd.conf` - sshd_config drop-in (password-only auth, no root login, only `clouve-ops` allowed).
 

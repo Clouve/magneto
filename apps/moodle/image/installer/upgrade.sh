@@ -54,22 +54,81 @@ STASH_ROOT="$CLOUVE_DIR/upgrade-stash"
 STASH=""                                      # this run's folder in the stash, made when needed
 PICKED_UP=0                                   # 1 when this start picks up an upgrade that was cut off
 
+# reap_www_data: ends every process that the site's PHP left running.
+. "$(dirname -- "${BASH_SOURCE[0]}")/www-data.sh"
+# in_folder and stamp_folders: root's work inside a folder of the volume, and clouve/ and clouve/installed/ as real
+# folders.
+. "$(dirname -- "${BASH_SOURCE[0]}")/stamp.sh"
+
 # Runs a command as www-data, the owner of the code tree, so that this script
-# never runs a plugin file as root.
+# never runs a plugin file as root. su -p keeps the environment, but never
+# CLOUVE_OPS_PASSWORD: the entrypoint unsets it only after this script, and it
+# signs in as clouve-ops, who has passwordless sudo, so plugin code that this
+# runs (version.php, upgrade code) must not see it. It goes before su, so no
+# process of www-data's ever holds it.
+# Every caller then ends what the command left behind with
+# `reap_www_data STEP || exit 1`, a statement of its own right after it, before
+# this script moves, copies or removes anything in clouve/ again: such a process
+# could swap a folder there for a link at that moment, and a reap that can't
+# make sure ends this script. as_www_data itself doesn't reap: it runs inside
+# $( ), where the reap's exit would end only that subshell
+# (tests/moodle-root-paths.test.sh).
 as_www_data() {
-  su -s /bin/bash -p www-data -c "$(printf '%q ' "$@")"
+  env -u CLOUVE_OPS_PASSWORD su -s /bin/bash -p www-data -c "$(printf '%q ' "$@")"
 }
+
+# config.php is www-data's: it is read and changed only through update-config.sh, which never follows a link there
+# and changes it by renaming a new file over it.
+CONFIG_TOOL="$MOODLE_PACKAGE_INSTALLER/update-config.sh"
 
 # A plain relative folder path, as Moodle's plugin folders are.
 plain_path() {
   [[ "$1" =~ ^[a-z0-9_]+(/[a-z0-9_]+)*$ ]]
 }
 
+# The plan (added-plugins.php's output) is the site's to decide: added-plugins.php loads the previous code's core
+# version.php in its own process, and the previous code's lib/components.json and lib/plugins.json name the plugin
+# folders. So root uses a path from the plan only after it has checked every folder on the way to it, on the volume,
+# and a component only when it looks like a plugin's name. Each check runs after reap_www_data has ended every
+# process of www-data's that the last step of the site's PHP left, and no PHP of the site runs again before root has
+# used the path, so nothing can swap a folder for a link between the check and the use: a check of what is there is
+# enough (tests/moodle-root-paths.test.sh).
+
+# parent_of REL: the folder that holds REL, relative to the same folder; empty for a name with no slash.
+parent_of() {
+  if [[ "$1" == */* ]]; then printf '%s' "${1%/*}"; fi
+}
+
+# real_folders BASE REL: status 0 when BASE/REL and every folder on the way to it below BASE are real folders, none
+# of them a link. An empty REL is BASE itself, whose path the caller trusts.
+real_folders() {
+  local path="$1" part parts=()
+  IFS=/ read -r -a parts <<< "$2"
+  for part in ${parts[@]+"${parts[@]}"}; do
+    [[ -n "$part" && "$part" != . && "$part" != .. ]] || return 1
+    path+="/$part"
+    [[ -d "$path" && ! -L "$path" ]] || return 1
+  done
+}
+
+# folders_on_way BASE REL: status 0 when each part of BASE/REL that is there is a real folder, not a link. The parts
+# that aren't there yet are made by mkdir -p, below real folders.
+folders_on_way() {
+  local path="$1" part parts=()
+  IFS=/ read -r -a parts <<< "$2"
+  for part in ${parts[@]+"${parts[@]}"}; do
+    [[ -n "$part" && "$part" != . && "$part" != .. ]] || return 1
+    path+="/$part"
+    [[ -e "$path" || -L "$path" ]] || return 0
+    [[ -d "$path" && ! -L "$path" ]] || return 1
+  done
+}
+
 # The table prefix in config.php ($CFG->prefix), mdl_ when it has none.
 site_prefix() {
   local prefix
-  prefix="$(sed -nE "s/^[[:space:]]*\\\$CFG->prefix[[:space:]]*=[[:space:]]*'([a-z0-9_]*)'.*/\\1/p" \
-    "$MOODLE_INSTALL_PATH/config.php" 2>/dev/null | head -n 1)"
+  prefix="$(bash "$CONFIG_TOOL" --read "$MOODLE_INSTALL_PATH/config.php" 2>/dev/null |
+    sed -nE "s/^[[:space:]]*\\\$CFG->prefix[[:space:]]*=[[:space:]]*'([a-z0-9_]*)'.*/\\1/p" | head -n 1)" || :
   printf '%s' "${prefix:-mdl_}"
 }
 
@@ -79,12 +138,13 @@ site_sql() {
   MYSQL_PWD="${DB_PASSWORD:-}" mysql --skip-ssl -h "${DB_HOST:-}" -u "${DB_USER:-}" "${DB_NAME:-}" -N -B -e "$1"
 }
 
-# Makes this run's folder in the stash, the first time something goes there.
+# Makes this run's folder in the stash, the first time something goes there. own_folders has run: clouve/ is a real
+# folder, and nothing but a real folder is at upgrade-stash.
 make_stash() {
   if [[ -z "$STASH" ]]; then
-    mkdir -p "$STASH_ROOT"
+    mkdir -p -- "$STASH_ROOT"
     STASH="$STASH_ROOT/$(date -u +%Y%m%d-%H%M%S)-$$"
-    mkdir "$STASH"
+    mkdir -- "$STASH"
   fi
 }
 
@@ -94,25 +154,24 @@ code_entries() {
     ! -name config.php ! -name clouve ! -name 'lost+found' -print0
 }
 
-# These must be real folders, so that nothing is ever moved through a link.
-if [[ -L "$CLOUVE_DIR" ]]; then
-  echo "  WARNING: $CLOUVE_DIR is a symbolic link; replacing the link with a folder."
-  link_target="$(readlink -f "$CLOUVE_DIR" || true)"
-  rm -f "$CLOUVE_DIR"
-  mkdir "$CLOUVE_DIR"
-  # Keep the version stamp and install markers, which entrypoint.sh reads and writes.
-  if [[ -n "$link_target" && -d "$link_target/installed" && ! -L "$link_target/installed" ]]; then
-    cp -a "$link_target/installed" "$CLOUVE_DIR/installed"
-  fi
-fi
-for path in "$PREV" "$PARTIAL" "$STASH_ROOT" "$PREV.done"; do
-  if [[ -L "$path" ]]; then
-    echo "  WARNING: $path is a symbolic link; removing the link."
-    rm -f "$path"
-  fi
-done
+# own_folders: clouve/ and the folders this script keeps there must be real folders, so that nothing is ever moved
+# through a link. stamp_folders removes a link (or anything that isn't a folder) at clouve/ or clouve/installed/
+# without following it, and an installed site gets both back, empty: the entrypoint then records the stamp. A link or
+# a file where the previous code, the half-moved code or the stash goes is removed, never followed. It runs here and
+# again after each step of the site's PHP, before root moves anything in clouve/.
+own_folders() {
+  local path
+  stamp_folders "$MOODLE_INSTALL_PATH" || exit 1
+  for path in "$PREV" "$PARTIAL" "$STASH_ROOT" "$PREV.done"; do
+    if [[ -L "$path" || ( -e "$path" && ! -d "$path" ) ]]; then
+      echo "  WARNING: $path is a symbolic link or not a folder; removing it without following it."
+      rm -f -- "$path"
+    fi
+  done
+}
+own_folders
 # What is left of a finished upgrade whose clean-up was cut off.
-rm -rf "$PREV.done"
+rm -rf -- "$PREV.done"
 
 # --- 1. Move the old code aside ------------------------------------------------
 if [[ -d "$PARTIAL" ]]; then
@@ -133,6 +192,7 @@ if [[ ! -d "$PREV" && -f "$MOODLE_INSTALL_PATH/config.php" ]]; then
   chmod 644 "$RECORDED"
   CHECK="$(as_www_data php "$MOODLE_PACKAGE_INSTALLER/added-plugins.php" "$MOODLE_INSTALL_PATH" "$MOODLE_PACKAGE_PATH" \
     "$RECORDED")" || CHECK=""
+  reap_www_data "added-plugins.php" || exit 1
   rm -f "$RECORDED"
   if [[ "$(tail -n 1 <<< "$CHECK")" == end ]] && grep -q $'^stop\t' <<< "$CHECK"; then
     echo "  NOT UPGRADED: this site can't move to the new Moodle as it is, so it keeps running its current code."
@@ -150,6 +210,8 @@ if [[ ! -d "$PREV" && -f "$MOODLE_INSTALL_PATH/config.php" ]]; then
   fi
 fi
 
+# added-plugins.php just ran the site's code: what it left at clouve/ is checked again before the move aside.
+own_folders
 if [[ -d "$PREV" ]]; then
   echo "  Picking up an upgrade that was cut off: the previous code is still in $PREV"
   PICKED_UP=1
@@ -185,33 +247,58 @@ HELD=()            # component<TAB>old path<TAB>reason
 KEEP_PREVIOUS=0    # 1 when the plan can't be trusted: the whole old tree is saved
 if [[ -d "$PREV" ]]; then
   echo "  Looking for plugins that the site's admin added ..."
-  if PLAN="$(as_www_data php "$MOODLE_PACKAGE_INSTALLER/added-plugins.php" "$PREV" "$MOODLE_PACKAGE_PATH")" \
-      && [[ "$(tail -n 1 <<< "$PLAN")" == end ]]; then
+  PLAN="$(as_www_data php "$MOODLE_PACKAGE_INSTALLER/added-plugins.php" "$PREV" "$MOODLE_PACKAGE_PATH")" || PLAN=""
+  reap_www_data "added-plugins.php" || exit 1
+  if [[ "$(tail -n 1 <<< "$PLAN")" == end ]]; then
     while IFS=$'\t' read -r action component old new reason; do
       [[ "$action" == keep || "$action" == skip || "$action" == stop ]] || continue
-      if ! plain_path "$old" || { [[ "$action" == keep ]] && ! plain_path "$new"; }; then
+      if ! [[ "$component" =~ ^[a-z][a-z0-9]*_[a-z0-9_]+$ ]]; then
+        echo "  WARNING: the plan has a line whose component isn't a plugin's name."
+        KEEP_PREVIOUS=1
+        continue
+      fi
+      if ! plain_path "$old" ||
+          { [[ "$action" == keep ]] && { ! plain_path "$new" || [[ "$new" == clouve || "$new" == clouve/* ]]; }; }; then
         echo "  WARNING: $component has an unexpected path in the plan."
         KEEP_PREVIOUS=1
+        continue
+      fi
+      # A plugin is a real folder in the previous code, with no link on the way to it.
+      if ! real_folders "$MOODLE_INSTALL_PATH" "clouve/upgrade-previous/$old"; then
+        echo "[clouve-upgrade] WARNING: $component is held back: $PREV/$old is a link or not a folder, or a" \
+          "folder on the way to it is a link"
+        HELD+=("$component"$'\t'"$old"$'\t'"its folder in the previous code is a link or not a folder")
         continue
       fi
       if [[ "$action" != keep ]]; then
         HELD+=("$component"$'\t'"$old"$'\t'"$reason")
         echo "  Holding back $component ($reason)"
-      elif [[ -e "$MOODLE_INSTALL_PATH/$new" ]]; then
+      elif ! folders_on_way "$MOODLE_INSTALL_PATH" "$(parent_of "$new")"; then
+        echo "[clouve-upgrade] WARNING: $component is held back: a folder on the way to $MOODLE_INSTALL_PATH/$new" \
+          "is a link or not a folder"
+        HELD+=("$component"$'\t'"$old"$'\t'"a folder on the way to its place in the new code is a link or not a folder")
+      elif [[ -e "$MOODLE_INSTALL_PATH/$new" || -L "$MOODLE_INSTALL_PATH/$new" ]]; then
         HELD+=("$component"$'\t'"$old"$'\t'"the new Moodle has its own copy")
         echo "  Holding back $component (the new Moodle has its own copy)"
       else
-        mkdir -p "$(dirname "$MOODLE_INSTALL_PATH/$new")"
-        cp -a "$PREV/$old" "$MOODLE_INSTALL_PATH/$new"
+        # Its files go into a folder made here; cp -a copies a link inside the plugin as a link.
+        [[ -z "$(parent_of "$new")" ]] || mkdir -p -- "$MOODLE_INSTALL_PATH/$(parent_of "$new")"
+        mkdir -- "$MOODLE_INSTALL_PATH/$new"
+        cp -a -- "$PREV/$old/." "$MOODLE_INSTALL_PATH/$new/"
         KEPT+=("$component"$'\t'"$new"$'\t'"$old")
         if [[ "$reason" != - ]]; then
           echo "  WARNING: Kept $component ($new): $reason"
         else
           echo "  Kept $component ($new)"
         fi
-        # A theme based on Classic can't load where Classic is gone: Moodle shows its default theme instead.
+        # A theme based on Classic can't load where Classic is gone: Moodle shows its default theme instead. Its
+        # config.php is the site's: dd reads at most 1 MiB of it, only a regular file and never through a link or
+        # from a pipe (which could hold the start up), and only a yes or a no comes out.
+        theme_config="$MOODLE_INSTALL_PATH/$new/config.php"
         if [[ "$component" == theme_* && ! -e "$MOODLE_INSTALL_PATH/public/theme/classic/version.php" ]] \
-            && grep -qE $'parents.*[\'"]classic[\'"]' "$MOODLE_INSTALL_PATH/$new/config.php" 2>/dev/null; then
+            && [[ -f "$theme_config" && ! -L "$theme_config" ]] \
+            && dd if="$theme_config" iflag=nofollow,nonblock bs=1M count=1 status=none 2>/dev/null |
+               grep -E $'parents.*[\'"]classic[\'"]' > /dev/null; then
           echo "  WARNING: $component is based on the Classic theme, which this Moodle doesn't have: Moodle shows its default theme instead of it until it has a release for this Moodle."
         fi
       fi
@@ -224,25 +311,36 @@ fi
 
 chown -R www-data:www-data "$MOODLE_INSTALL_PATH"/
 
-# Saves the held-back plugins and drops the old code, once Moodle's upgrade is done.
+# Saves the held-back plugins and drops the old code, once Moodle's upgrade is done. Moodle's CLI ran as www-data
+# since the plan was checked, so own_folders and the checks run again first.
 finish_previous() {
+  local entry component old reason
+  own_folders
   [[ -d "$PREV" ]] || return 0
   if (( KEEP_PREVIOUS )); then
     make_stash
-    mv "$PREV" "$STASH/previous"
+    mv -T -- "$PREV" "$STASH/previous"
     echo "  WARNING: the previous code, with every plugin the site's admin added, is saved in $STASH/previous"
     return 0
   fi
-  local entry component old reason
   for entry in ${HELD[@]+"${HELD[@]}"}; do
     IFS=$'\t' read -r component old reason <<< "$entry"
+    if ! real_folders "$MOODLE_INSTALL_PATH" "clouve/upgrade-previous/$old"; then
+      echo "[clouve-upgrade] WARNING: $component isn't saved: $PREV/$old is a link or not a folder, or a folder on" \
+        "the way to it is a link"
+      continue
+    fi
     make_stash
-    mkdir -p "$(dirname "$STASH/$old")"
-    mv "$PREV/$old" "$STASH/$old"
+    if ! folders_on_way "$STASH" "$(parent_of "$old")" || [[ -e "$STASH/$old" || -L "$STASH/$old" ]]; then
+      echo "[clouve-upgrade] WARNING: $component isn't saved: something is already at its place in $STASH"
+      continue
+    fi
+    [[ -z "$(parent_of "$old")" ]] || mkdir -p -- "$STASH/$(parent_of "$old")"
+    mv -T -- "$PREV/$old" "$STASH/$old"
     echo "  WARNING: $component held back ($reason): saved in $STASH/$old"
   done
-  mv "$PREV" "$PREV.done"
-  rm -rf "$PREV.done"
+  mv -T -- "$PREV" "$PREV.done"
+  rm -rf -- "$PREV.done"
 }
 
 # Locate Moodle's CLI dir (5.1+ may nest the codebase under public/).
@@ -261,14 +359,31 @@ if [[ -z "$CLI" || ! -f "$MOODLE_INSTALL_PATH/config.php" ]]; then
   exit 0
 fi
 
-# Run Moodle CLI as www-data so generated cache/lock files are owned correctly.
+# www_cli: Moodle's CLI as www-data so generated cache/lock files are owned correctly, without CLOUVE_OPS_PASSWORD (as
+# as_www_data): Moodle's upgrade runs the plugins' upgrade code. It doesn't reap, so it can run in a pipeline.
+www_cli() {
+  env -u CLOUVE_OPS_PASSWORD su -s /bin/bash -p www-data -c "php -d memory_limit=1024M $1"
+}
+# run_cli: www_cli, then the end of what it left running; a reap that can't make sure ends this script. Never in a
+# pipeline or a $( ), where that exit would end only a subshell.
 run_cli() {
-  su -s /bin/bash -p www-data -c "php -d memory_limit=1024M $1"
+  local rc=0 script="${1%% *}"
+  www_cli "$1" || rc=$?
+  reap_www_data "${script##*/}" || exit 1
+  return "$rc"
 }
 
 # --- 4. Stale-cache purge + maintenance mode ------------------------------------
+# moodledata is www-data's: each cache folder is emptied from inside it (in_folder), by plain names, so a link at the
+# folder or on the way to it is never followed. Such a folder is left as it is, with a warning.
 echo "  Purging stale moodledata caches ..."
-rm -rf "${MOODLEDATA_PATH:?}"/cache/* "${MOODLEDATA_PATH:?}"/localcache/* "${MOODLEDATA_PATH:?}"/temp/* 2>/dev/null || true
+_purge_here() { rm -rf -- ./* 2>/dev/null || true; }
+for cache in cache localcache temp; do
+  if [[ -e "${MOODLEDATA_PATH:?}/$cache" || -L "$MOODLEDATA_PATH/$cache" ]] &&
+      ! in_folder "$MOODLEDATA_PATH/$cache" _purge_here; then
+    echo "[clouve-upgrade] WARNING: $MOODLEDATA_PATH/$cache is a link or not a folder, so it is not emptied"
+  fi
+done
 
 # A start cut off during Moodle's upgrade leaves Moodle's upgrade lock (upgraderunning in its config table) set for up
 # to 5 minutes, and until then every upgrade.php stops with "Site is being upgraded, please retry later". Nothing else
@@ -295,16 +410,30 @@ run_cli "$CLI/maintenance.php --enable" || true
 # Moodle prints "-->component" for each plugin it installs or upgrades, so the last such line before a failure names
 # the plugin it failed on.
 UPGRADE_OUT="$(mktemp)"
+# Its reap comes after the pipeline, in this shell, so a reap that can't make sure ends this script.
 run_upgrade() {
-  run_cli "$CLI/upgrade.php --non-interactive" 2>&1 | tee "$UPGRADE_OUT"
+  local rc=0
+  www_cli "$CLI/upgrade.php --non-interactive" 2>&1 | tee "$UPGRADE_OUT" || rc=$?
+  reap_www_data "upgrade.php" || exit 1
+  return "$rc"
+}
+# take_out <component> <new path>: removes a carried plugin's folder from the new tree. Moodle's upgrade ran as
+# www-data since the copy, so every folder on the way to it is checked first (the folder itself may be a link, which
+# rm removes as a link). Status 1, with a warning, when that check fails: the plugin stays in place.
+take_out() {
+  if ! real_folders "$MOODLE_INSTALL_PATH" "$(parent_of "$2")"; then
+    echo "[clouve-upgrade] WARNING: $1 can't be held back: a folder on the way to $MOODLE_INSTALL_PATH/$2 is a link" \
+      "or not a folder, so it stays in place"
+    return 1
+  fi
+  rm -rf -- "${MOODLE_INSTALL_PATH:?}/$2"
 }
 # hold_back <component> <reason>: takes one carried plugin out of the new tree.
 hold_back() {
   local entry component new old rest=()
-  for entry in "${KEPT[@]}"; do
+  for entry in ${KEPT[@]+"${KEPT[@]}"}; do
     IFS=$'\t' read -r component new old <<< "$entry"
-    if [[ "$component" == "$1" ]]; then
-      rm -rf "${MOODLE_INSTALL_PATH:?}/$new"
+    if [[ "$component" == "$1" ]] && take_out "$component" "$new"; then
       HELD+=("$component"$'\t'"$old"$'\t'"$2")
       echo "  Holding back $component ($2)"
     else
@@ -329,12 +458,16 @@ if ! run_upgrade; then
     fi
     if (( ! upgraded )); then
       echo "  WARNING: Moodle's upgrade failed twice with the added plugins in place. Holding them back and running it once more."
+      still_kept=()
       for entry in ${KEPT[@]+"${KEPT[@]}"}; do
         IFS=$'\t' read -r component new old <<< "$entry"
-        rm -rf "${MOODLE_INSTALL_PATH:?}/$new"
-        HELD+=("$component"$'\t'"$old"$'\t'"Moodle's upgrade failed twice with the added plugins in place")
+        if take_out "$component" "$new"; then
+          HELD+=("$component"$'\t'"$old"$'\t'"Moodle's upgrade failed twice with the added plugins in place")
+        else
+          still_kept+=("$entry")
+        fi
       done
-      KEPT=()
+      KEPT=(${still_kept[@]+"${still_kept[@]}"})
       run_upgrade
     fi
   fi
@@ -348,25 +481,29 @@ rm -f "$UPGRADE_OUT"
 # for the missing theme on every page and fall back with a warning. So, unless the new code has Classic (an admin
 # installed it again), a line that only sets Classic becomes an empty statement and a comment saying why (an if
 # without braces keeps its body), and config.php must still pass php -l, or it is put back as it was. Any other line
-# that sets Classic is left alone and named in the log.
+# that sets Classic is left alone and named in the log. config.php is read and changed through update-config.sh (a link
+# or anything but a regular file there is left alone), and the change takes config.php's place only if php -l passes
+# the new text.
 CONFIG="$MOODLE_INSTALL_PATH/config.php"
 CLASSIC_SET=$'\\$CFG->theme[[:space:]]*=[[:space:]]*[\'"]classic[\'"]'
 CLASSIC_LINE=$'^([[:space:]]*)(\\$CFG->theme[[:space:]]*=[[:space:]]*[\'"]classic[\'"][[:space:]]*;[[:space:]]*((//|#).*)?)$'
-if [[ -f "$CONFIG" && ! -L "$CONFIG" && ! -e "$MOODLE_INSTALL_PATH/public/theme/classic/version.php" ]] \
-    && grep -qE "$CLASSIC_SET" "$CONFIG"; then
-  if grep -qE "$CLASSIC_LINE" "$CONFIG"; then
-    cp -p "$CONFIG" "$CONFIG.clouve-new"
-    sed -i -E "s~$CLASSIC_LINE~\\1; // Moodle 5.3 removed the Classic theme, so Clouve's upgrade turned this line off: \\2~" \
-      "$CONFIG.clouve-new"
-    if php -l "$CONFIG.clouve-new" >/dev/null 2>&1; then
-      mv "$CONFIG.clouve-new" "$CONFIG"
+if [[ ! -e "$MOODLE_INSTALL_PATH/public/theme/classic/version.php" ]] \
+    && CONFIG_TEXT="$(bash "$CONFIG_TOOL" --read "$CONFIG" 2>/dev/null)" && grep -qE "$CLASSIC_SET" <<< "$CONFIG_TEXT"; then
+  if grep -qE "$CLASSIC_LINE" <<< "$CONFIG_TEXT"; then
+    classic_rc=0
+    bash "$CONFIG_TOOL" --edit --php-lint "$CONFIG" sed -E \
+      "s~$CLASSIC_LINE~\\1; // Moodle 5.3 removed the Classic theme, so Clouve's upgrade turned this line off: \\2~" \
+      || classic_rc=$?
+    if (( classic_rc == 0 )); then
       echo "  config.php forced the Classic theme, which this Moodle doesn't have: that line is now a comment."
-    else
-      rm -f "$CONFIG.clouve-new"
+      CONFIG_TEXT="$(bash "$CONFIG_TOOL" --read "$CONFIG" 2>/dev/null)" || CONFIG_TEXT=""
+    elif (( classic_rc == 3 )); then
       echo "  WARNING: config.php fails php -l after the change, so it is left as it was; take out its Classic theme line by hand."
+    else
+      echo "  WARNING: config.php couldn't be changed, so it is left as it was; take out its Classic theme line by hand."
     fi
   fi
-  { grep -nE "$CLASSIC_SET" "$CONFIG" || true; } |
+  { grep -nE "$CLASSIC_SET" <<< "$CONFIG_TEXT" || true; } |
     { grep -vE '^[0-9]+:[[:space:]]*; // Moodle 5.3 removed the Classic theme' || true; } | cut -d: -f1 |
     while read -r line; do
       echo "  WARNING: config.php sets the Classic theme on line $line, which this upgrade doesn't change: change it by hand."
@@ -383,7 +520,7 @@ run_cli "$CLI/maintenance.php --disable" || true
 
 # --- 8. Save the held-back plugins and drop the old code ------------------------
 finish_previous
-if [[ -d "$STASH_ROOT" ]]; then
+if [[ -d "$STASH_ROOT" && ! -L "$STASH_ROOT" ]]; then
   echo "  The stash $STASH_ROOT holds $(du -sh "$STASH_ROOT" | cut -f1) of held-back code from this and earlier upgrades."
 fi
 
