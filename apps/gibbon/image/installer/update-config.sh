@@ -16,13 +16,11 @@ set -e
 
 CONFIG_FILE="$GIBBON_INSTALL_PATH/config.php"
 
-# clv_write_password_line REGEX PREFIX FILE: replaces the line of FILE that matches REGEX (an awk regex) with PREFIX
-# followed by CLV_DB_PASSWORD as a PHP single-quoted string (each \ and ' after a \) and ";". awk reads the value from
-# its environment, so it is never on a command line, and any character in it reads back the same. FILE keeps its owner
-# and mode (tests/installer-db-password.test.sh).
-clv_write_password_line() {
-    local tmp rc
-    tmp="$(mktemp)" || return 1
+# clv_password_line REGEX PREFIX: copies its input to its output, with the line that matches REGEX (an awk regex)
+# replaced by PREFIX followed by CLV_DB_PASSWORD as a PHP single-quoted string (each \ and ' after a \) and ";". awk
+# reads the value from its environment, so it is never on a command line, and any character in it reads back the same
+# (tests/installer-db-password.test.sh).
+clv_password_line() {
     awk -v re="$1" -v prefix="$2" '
         function phpq(s,   i, c, out) {
             out = ""
@@ -35,10 +33,80 @@ clv_write_password_line() {
         }
         $0 ~ re { print prefix phpq(ENVIRON["CLV_DB_PASSWORD"]) ";"; next }
         { print }
-    ' "$3" > "$tmp" && cat "$tmp" > "$3"
-    rc=$?
-    rm -f "$tmp"
-    return "$rc"
+    '
+}
+
+# This script runs as root, and the site's folder belongs to www-data, whose code can put a link, a folder or a pipe
+# at config.php, or swap one in while this script works. sed -i and cat > read and write through a link: a config.php
+# linked to /proc/self/environ became a file holding this script's environment. So config.php is edited only from
+# inside the site's folder (in_folder), only when it is a regular file and not a link, read with O_NOFOLLOW, and the
+# result goes into a new file that this script creates (dd conv=excl) and renames over config.php (mv -fT).
+# Nothing a link points to is read or changed (tests/gibbon-root-paths.test.sh).
+
+# in_folder DIR COMMAND...: runs COMMAND in a subshell inside DIR, once cd -P has moved there and /bin/pwd -P (the
+# kernel's answer, getcwd; bash's builtin pwd only resolves the stored path again) has shown the folder to be DIR
+# itself, with no link on the way. Status 125 when it isn't. The image's root-paths.sh has the same function; this
+# script keeps its own copy because it also runs on its own.
+in_folder() {
+    local dir="$1" want
+    shift
+    want="$(realpath -sm -- "$dir" 2>/dev/null)" || return 125
+    (
+        if ! cd -P -- "$dir" 2>/dev/null || [[ "$(/bin/pwd -P 2>/dev/null)" != "$want" ]]; then
+            exit 125
+        fi
+        "$@"
+    )
+}
+
+# _clear_cache_here: what rm -rf uploads/cache/* did, from inside the folder (in_folder): plain names, and rm -rf
+# removes a link as a link.
+_clear_cache_here() { rm -rf -- ./* 2>/dev/null || true; }
+
+# _config_edit_here: writes the four database settings into config.php, in the site's folder (in_folder). config.php
+# keeps its owner and group (chown -h, which never follows a link), and its mode: the read and write bits come from the
+# umask the new file is made with, and the execute bits (755 after an upgrade) are set by its owner, never by root, so
+# a link swapped in can only lead to the owner's own files. A root-owned config.php keeps only its read and write
+# bits. Status 5 when config.php isn't a regular file (or stops being one), 4 when something replaced the new file
+# before the rename, 1 for anything else.
+_config_edit_here() {
+    local st uid gid mode size rand tmp xmode me
+    set -o pipefail
+    [[ -f config.php && ! -L config.php ]] || return 5
+    st="$(stat -c '%u %g %a %s' -- config.php 2>/dev/null)" || return 5
+    read -r uid gid mode size <<< "$st"
+    [[ "$uid" =~ ^[0-9]+$ && "$gid" =~ ^[0-9]+$ && "$mode" =~ ^[0-7]{1,4}$ && "$size" =~ ^[0-9]+$ ]] || return 5
+    mode=$(( 8#$mode & 8#777 ))
+    rand="$(od -An -N8 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')"
+    [[ "$rand" =~ ^[0-9a-f]{16}$ ]] || return 1
+    tmp=".config.php.$rand"
+    me="$(id -u)"
+    if ! dd if=config.php iflag=nofollow,nonblock status=none 2>/dev/null |
+            sed -e "s/^\$databaseServer = .*$/\$databaseServer = '${DB_HOST}';/" \
+                -e "s/^\$databaseName = .*$/\$databaseName = '${DB_NAME}';/" \
+                -e "s/^\$databaseUsername = .*$/\$databaseUsername = '${DB_USER}';/" |
+            CLV_DB_PASSWORD="$DB_PASSWORD" clv_password_line '^\\$databasePassword = ' '$databasePassword = ' |
+            (umask "$(printf '%03o' $(( ~mode & 8#666 & 8#777 | 8#111 )))" &&
+                dd of="$tmp" conv=excl oflag=nofollow status=none 2>/dev/null) ||
+        # An empty result from a config.php that wasn't empty: a pipe was swapped in, so there is nothing to write.
+        { [[ "$size" -gt 0 && ! -s "$tmp" ]]; } ||
+        { [[ "$uid:$gid" != "$me:$(id -g)" ]] && ! chown -h -- "$uid:$gid" "$tmp" 2>/dev/null; }; then
+        rm -rf -- "$tmp" 2>/dev/null || :
+        return 1
+    fi
+    xmode="$(printf '%o' "$mode")"
+    if (( mode & 8#111 )) && [[ "$uid" != 0 ]]; then
+        if [[ "$me" == "$uid" ]]; then
+            chmod "$xmode" -- "$tmp" 2>/dev/null
+        else
+            env -u CLOUVE_OPS_PASSWORD setpriv --reuid="$uid" --regid="$gid" --clear-groups chmod "$xmode" -- "$tmp" 2>/dev/null
+        fi || { rm -rf -- "$tmp" 2>/dev/null; return 1; }
+    fi
+    if ! mv -fT -- "$tmp" config.php 2>/dev/null; then
+        rm -rf -- "$tmp" 2>/dev/null || :
+        return 1
+    fi
+    [[ -f config.php && ! -L config.php ]] || return 4
 }
 
 echo "============================================================================"
@@ -49,7 +117,10 @@ echo "==========================================================================
 # PART 1: Update config.php with database credentials from environment
 # ============================================================================
 
-if [ -f "$CONFIG_FILE" ]; then
+if [ -L "$CONFIG_FILE" ] || { [ -e "$CONFIG_FILE" ] && [ ! -f "$CONFIG_FILE" ]; }; then
+    # Only its name goes to the log, never what it holds or where a link points.
+    echo "⚠ Warning: $CONFIG_FILE is a link or not a regular file, so its database settings were not updated"
+elif [ -f "$CONFIG_FILE" ]; then
     echo "Found config.php at $CONFIG_FILE"
     
     # Check if environment variables are set
@@ -62,28 +133,32 @@ if [ -f "$CONFIG_FILE" ]; then
         if [ -n "$DB_PASSWORD" ]; then echo "  DB_PASSWORD: (set)"; else echo "  DB_PASSWORD: (not set)"; fi
     else
         echo "Updating database credentials in config.php..."
-        
-        # Use sed to update database configuration values
-        # These sed commands will replace the hardcoded values with environment variable values
-        
-        # Update database server
-        sed -i "s/^\$databaseServer = .*$/\$databaseServer = '${DB_HOST}';/" "$CONFIG_FILE"
-        echo "  ✓ Updated \$databaseServer to: $DB_HOST"
-        
-        # Update database name
-        sed -i "s/^\$databaseName = .*$/\$databaseName = '${DB_NAME}';/" "$CONFIG_FILE"
-        echo "  ✓ Updated \$databaseName to: $DB_NAME"
-        
-        # Update database username
-        sed -i "s/^\$databaseUsername = .*$/\$databaseUsername = '${DB_USER}';/" "$CONFIG_FILE"
-        echo "  ✓ Updated \$databaseUsername to: $DB_USER"
-        
-        # Update database password, off every command line (clv_write_password_line).
-        CLV_DB_PASSWORD="$DB_PASSWORD" clv_write_password_line '^\\$databasePassword = ' '$databasePassword = ' \
-            "$CONFIG_FILE"
-        echo "  ✓ Updated \$databasePassword"
-        
-        echo "Database credentials in config.php updated successfully!"
+
+        # The server, name and user with sed, and the password off every command line (clv_password_line), in one
+        # pass that writes a new config.php (_config_edit_here).
+        rc=0
+        in_folder "$GIBBON_INSTALL_PATH" _config_edit_here || rc=$?
+        case $rc in
+            0)
+                echo "  ✓ Updated \$databaseServer to: $DB_HOST"
+                echo "  ✓ Updated \$databaseName to: $DB_NAME"
+                echo "  ✓ Updated \$databaseUsername to: $DB_USER"
+                echo "  ✓ Updated \$databasePassword"
+                echo "Database credentials in config.php updated successfully!"
+                ;;
+            5)
+                echo "⚠ Warning: $CONFIG_FILE is a link or not a regular file, so its database settings were not updated"
+                ;;
+            *)
+                case $rc in
+                    125) why=": its folder has a link on the way to it" ;;
+                    4) why=": something replaced the new file before it was renamed" ;;
+                    *) why="" ;;
+                esac
+                echo "✗ Error: can't update $CONFIG_FILE$why" >&2
+                exit 1
+                ;;
+        esac
     fi
 else
     echo "config.php not found at $CONFIG_FILE - Gibbon not yet installed, skipping config.php update"
@@ -195,9 +270,9 @@ if [ -f "$CONFIG_FILE" ]; then
                     echo ""
                     echo "URL change detected - clearing Gibbon cache..."
 
-                    # Clear Gibbon's uploads cache
-                    if [ -d "/var/www/html/uploads/cache" ]; then
-                        rm -rf /var/www/html/uploads/cache/* 2>/dev/null || true
+                    # Clear Gibbon's uploads cache, from inside it: a link at uploads/ or uploads/cache fails the folder
+                    # check, and then nothing is removed.
+                    if in_folder "$GIBBON_INSTALL_PATH/uploads/cache" _clear_cache_here; then
                         echo "  ✓ Cleared uploads cache"
                     fi
 

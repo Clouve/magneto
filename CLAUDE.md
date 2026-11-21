@@ -227,6 +227,26 @@ bash tests/persona-ssh-commands.test.sh
 ```bash
 # school-year.sh: the Current school year comes from the install date, not the seed data (no MySQL or Docker needed)
 bash tests/gibbon-school-year.test.sh
+# The start never reads or writes through a link that www-data put on the site's volume (installer/root-paths.sh, the
+# same file as ownCloud's): clouve/ and clouve/installed/ are real folders again (a link is removed, not followed), the
+# install markers count only as regular files and are written into a new file made with O_EXCL and renamed into place,
+# update-config.sh edits config.php only as a regular file (a link, a folder or a pipe there is left with a warning;
+# config.php keeps its owner, group and mode), upgrade.sh copies the package one folder at a time from inside it
+# (copy_tree: a link where the package has a file or a folder is replaced, never written through), the uploads cache
+# is emptied from inside it (a linked uploads/ is left alone), refresh-vendor.sh works from inside each folder, a
+# start removes the .<name>.<16 hex> files a cut-off write left, and the Education Kit's SQL goes into a file made by
+# mktemp, never a fixed name in /tmp. auto.php, each chmod as www-data and cron's PHP run
+# as www-data without CLOUVE_OPS_PASSWORD, and after each www-data step reap_www_data (installer/www-data.sh, whose
+# functions are the Moodle image's word for word) ends every process of www-data's, or stops the start when it can't
+# make sure (each call `reap_www_data STEP || exit 1`, a statement of its own). Unit and static cases need no
+# Docker (shims, and a flipper that exchanges a folder with an outside link, which needs python3); refresh-vendor.sh
+# and reap_www_data in php:8.3-apache; then a real site where www-data plants links at the marker, both folders,
+# config.php (to the process's environment), uploads/cache, uploads, index.php and lib/, leftovers of a cut-off write, a
+# stand-in installer leaves a process that swaps clouve/installed for an outside link, and PHP goes in config.php
+# before a reinstall: nothing outside the volume changes, no password reaches the log or a file www-data can read,
+# the left process is gone, and that PHP never runs as root (./build.sh gibbon first, or --image NAME=REF;
+# --no-docker runs only the first part). Needs Docker
+bash tests/gibbon-root-paths.test.sh [--image <name>=<ref>]... [--no-docker]
 ```
 
 ### Testing the Moodle image
@@ -259,6 +279,66 @@ bash tests/moodle-gibbon-password.test.sh
 # The Moodle and Moodle MySQL images ship no SSH host keys, and each container makes its own (./build.sh moodle first).
 # Needs Docker
 bash tests/moodle-ssh-host-keys.test.sh [--tag <tag>]
+# The entrypoint runs as root and reads the version stamp (clouve/installed/version) from the volume, which www-data can
+# change. installer/stamp.sh takes it only from a regular file of 1 to 18 digits (so -gt can't wrap). Each read, write
+# and removal runs inside its folder after cd -P and a /bin/pwd -P check (getcwd; bash's builtin pwd -P reads the path
+# again, which an atomic exchange can pass), by plain names, so a folder swapped for a link mid-call moves the folder,
+# not the work. It writes the stamp, the release's timestamp and the Gibbon integration's
+# marker into a new file it creates itself (a random name, dd conv=excl, so a link put there fails the write) and
+# renames that into place, so nothing outside the volume is written, removed or has its mode changed through a link (a
+# regular file swapped in before the rename becomes the stamp, which www-data could write anyway), and it removes a
+# link at clouve/ or clouve/installed/ without following it. Unit and static cases need no Docker (shims put links
+# where the work is about to go, and a flipper exchanges a folder with an outside link hundreds of times, which needs
+# python3: without it those cases are skipped with a message); then a real site where www-data plants
+# a command in the stamp, a link to the process's environment, and links at both folders: no command runs, no password reaches
+# the log, nothing outside the volume changes, no upgrade runs and GET / answers 200; and an older stamp of digits
+# still upgrades the site (./build.sh moodle first, or --image NAME=REF; --no-docker runs only the first part). Needs
+# Docker
+bash tests/moodle-version-stamp.test.sh [--image <name>=<ref>]... [--no-docker]
+# Root never runs the site's code: moodle-cron.sh runs cron.php as www-data (runuser), and so do install.sh
+# (install.php), the Education Kit's cache purge and every Moodle CLI run of upgrade.sh, all without
+# CLOUVE_OPS_PASSWORD. After each such step, installer/www-data.sh's reap_www_data ends every process of www-data's: a
+# kill -1 from a process www-data can't signal (perl as root, under env -i, sets its real uid to an unused 65533 and its
+# effective uid to www-data's, its saved uid staying root's), then a /proc check by uid, never by name, that counts a
+# process whose main thread has ended while another thread runs, with one [clouve-www-data] line with the count. A
+# reap that can't make sure none is left ends the start: every call is `reap_www_data STEP || exit 1`, a statement of
+# its own, never in $( ), a pipeline or an if. So nothing the site's code left behind can swap a folder for a link
+# while root works there. A link that code made before its step ended is checked for after the reap: the entrypoint
+# checks clouve/ and clouve/installed/ again after the install, the Education Kit's purge and the upgrade, and
+# upgrade.sh uses a plugin folder from added-plugins.php's plan (which the site's code decides) only when it and every
+# folder on the way to it are real folders, in the old code, the new code and the stash (a refusal is a
+# [clouve-upgrade] warning), and empties moodledata's caches from inside each folder (in_folder). Where
+# root reads or changes a file on the volume, it doesn't follow a link at that file or wait on a pipe there: config.php,
+# the stamp and markers, vendor/'s records, and version.php and an added theme's config.php (dd with nofollow and
+# nonblock; only digits or a yes or a no come out). An installed site whose clouve/installed/ is gone isn't installed
+# again (install.php loads config.php).
+# config.php is read and changed only as a regular file, through update-config.sh --read and --edit: perl opens it with
+# O_NOFOLLOW and checks the open file, and a change is a new file made with O_EXCL, given config.php's owner, group and
+# mode and renamed over it; a link, a folder or a pipe there is left as it is, with one warning, and the start goes on.
+# Static cases, then update-config.sh on this machine (needs perl) with config.php a link to the process's environment or to a
+# secret, a folder or a pipe, and shims that put links where the next read, write or rename goes; refresh-vendor.sh as
+# root in php:8.3-apache with clouve/installed/ or vendor.clouve-new swapped for an outside link mid-run;
+# reap_www_data there on detached, double-forked and forking processes of www-data's and one whose main thread has
+# ended while another runs (nobody's and a root process named www-data left alone), a hammer of www-data's that sends
+# SIGKILL to all it may next to a chain of forks (three times: the chain stops, the reap says so, the hammer ends
+# nothing of the reap's), a reap that must end the start (uid 65533 in use, a process that stays) and one whose listed
+# pid is gone already (under set -e it goes on), static checks that every reap call is `|| exit 1` on its own, 20
+# reaps, install.sh with a
+# stand-in install.php and moodle-cron.sh with a stand-in cron.php, all while pollers of www-data's read every other
+# process's environment for CLOUVE_OPS_PASSWORD (gcc builds the two small C programs); the image's upgrade.sh
+# as root with a plan that names a file read through a link, a plugin folder that is a link, a plugin that is a file and
+# a held-back plugin reached through a link, moodledata/cache a link to root's folder, a link left at clouve/ by
+# added-plugins.php's own run, a link inside a kept plugin on the way to another's place, and links Moodle's upgrade
+# leaves before a plugin is held back or saved and at upgrade-previous.done and upgrade-stash (nothing outside the
+# volumes changes, each refusal is a [clouve-upgrade] warning, the upgrade finishes); then a real site (cron
+# every minute) where a probe in config.php and in an added plugin's version.php records who runs them: cron never as
+# root, no PHP sees CLOUVE_OPS_PASSWORD during an upgrade, a config.php linked to the process's environment leaks nothing and
+# is left a link, a removed clouve/installed/ runs no PHP as root, and in an upgrade where each step's PHP leaves a
+# detached process that swaps clouve/ for an outside link as soon as root makes clouve/upgrade-previous.partial (and
+# reads the others' environments), no swap happens, none of them sees CLOUVE_OPS_PASSWORD, and every such process is
+# gone. About 8 minutes (./build.sh moodle first, or --image NAME=REF; --no-docker runs only the static and config.php
+# cases). Needs Docker
+bash tests/moodle-root-paths.test.sh [--image <name>=<ref>]... [--no-docker]
 ```
 
 ### Testing Gibbon's and Moodle's PHP libraries
@@ -269,8 +349,10 @@ bash tests/moodle-ssh-host-keys.test.sh [--tag <tag>]
 # put there (apps/gibbon/README.md and apps/moodle/README.md, "The PHP libraries on an installed site"). Its cases as
 # root in php:8.3-apache with no network: the package-list id and file list (packages under vendor/composer/
 # included), the swap, a vendor/ whose list or files someone changed left alone, other versions skipped, cut-off
-# starts finished, links, hard links and pipes never followed, a full disk, a leftover that can't be removed. Needs
-# Docker
+# starts finished, links, hard links and pipes never followed, a full disk, a leftover that can't be removed. Every
+# write, rename and removal runs from inside its folder after a /bin/pwd -P check, and the image's vendor/ is copied
+# into a folder the script has just made (tests/gibbon-root-paths.test.sh and tests/moodle-root-paths.test.sh swap
+# folders for links mid-run). Needs Docker
 bash tests/vendor-refresh.test.sh
 # The built images: the fixed versions and no other package changed, upstream's id and file list recorded, then a
 # site the old images installed starts on the new ones (vendor/ refreshed once); Gibbon signs in, serves its Twig
@@ -286,6 +368,22 @@ bash tests/php-vendor.test.sh [--image <name>=<ref>]... [--old-ref <commit>] [gi
 # passes the manifest's health check and ownCloud's own integrity check (with a control that the check runs); and a
 # site ownCloud 10.16.0 installed on MariaDB 11.4 moves to the current images with its files. Needs Docker
 bash tests/owncloud-image.test.sh [--image <name>=<ref>]...
+# Root never follows www-data's links on the data volume. The wrapper reads its domain marker
+# (/mnt/data/.owncloud_domain) only as a regular file, with O_NOFOLLOW and O_NONBLOCK, logs the old domain only when it
+# is a host name, writes the marker into a new file that replaces a link without following it (installer/root-paths.sh,
+# the same file as Gibbon's), runs occ without CLOUVE_OPS_PASSWORD and then ends every process of www-data's
+# (installer/www-data.sh; the start stops when it can't make sure). Three of ownCloud's own start steps are Clouve's
+# copies, each behind a checksum of upstream's script (the build stops when a new base image changes one; upstream's
+# stay at /clouve/app/upstream/):
+# 25-chown.sh (find -P ... -execdir chown -h, so a link never gives its target to www-data), and 20-config.sh and
+# 45-php.sh (overwrite.config.php and objectstore.config.php go through safe_put, from inside the checked config
+# folder; a linked config folder stops the start with a line that names it). Static cases, the helpers and the copied
+# steps in the image (each gives real files the owner, group, mode and content upstream's gives them), then a real
+# install where www-data plants a link to a root-only file at the marker, text that isn't a host name, an older domain
+# (the domain change still runs), links to root's files in /etc at two depths, links, dangling links, pipes and
+# cut-off leftovers at the two config files, a pipe and a link to a folder at the marker, and the config folder as a
+# link. --no-docker runs only the static cases. Needs Docker
+bash tests/owncloud-domain-marker.test.sh [--image <name>=<ref>]... [--no-docker]
 # The gate before an ownCloud listing version goes to an environment. First list every ownCloud and owncloud-mariadb
 # image that environment's ownCloud deployments run, paused ones included (read-only: kubectl get on each cluster
 # context, and a registry lookup per image; it prints references and digests only). It exits 1 when a context can't

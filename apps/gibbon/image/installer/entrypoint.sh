@@ -8,6 +8,76 @@ export GIBBON_INSTALL_PATH="/var/www/html"
 export GIBBON_PACKAGE_INSTALLER="/clouve/gibbon/installer"
 export INSTALLED_VERSIONS_PATH="/var/www/html/clouve/installed"
 
+# Root's reads and writes on the site's volume, which belongs to www-data: in_folder, plain_file, safe_write,
+# remove_entry and make_folder never follow a link there (tests/gibbon-root-paths.test.sh).
+# shellcheck source-path=SCRIPTDIR source=root-paths.sh
+. "$GIBBON_PACKAGE_INSTALLER/root-paths.sh"
+# reap_www_data: after each step that runs something as www-data, and before root touches files again, every process
+# of www-data's still running is ended (installer/www-data.sh, the Moodle image's functions). Each call is a statement
+# of its own, `reap_www_data STEP || exit 1`: a reap that can't make sure none is left stops the start.
+# shellcheck source-path=SCRIPTDIR source=www-data.sh
+. "$GIBBON_PACKAGE_INSTALLER/www-data.sh"
+
+# state_folders: clouve/ and clouve/installed/ hold the install markers and the PHP libraries' record, so they must be
+# real folders, or the markers would be read and written wherever a link points. A link at either, or anything else
+# that isn't a folder, is removed without being followed, with a warning that names it. A site that is installed (it
+# has config.php) gets both folders back, empty: its start then copies this version's code again and records it, as
+# after an upgrade, instead of installing Gibbon over the site. A site without config.php installs as a new one.
+state_folders() {
+  local dir
+  for dir in "$GIBBON_INSTALL_PATH/clouve" "$INSTALLED_VERSIONS_PATH"; do
+    if [[ -L "$dir" || ( -e "$dir" && ! -d "$dir" ) ]]; then
+      echo "⚠ Warning: $dir is a link or not a folder, so it is removed without being followed"
+      if ! remove_entry "$dir"; then
+        echo "✗ Error: can't remove $dir" >&2
+        exit 1
+      fi
+      if [[ -e "$GIBBON_INSTALL_PATH/config.php" || -L "$GIBBON_INSTALL_PATH/config.php" ]] &&
+          ! { make_folder "$GIBBON_INSTALL_PATH/clouve" && make_folder "$INSTALLED_VERSIONS_PATH"; }; then
+        echo "✗ Error: can't make $INSTALLED_VERSIONS_PATH" >&2
+        exit 1
+      fi
+    fi
+  done
+}
+
+# clear_uploads_cache: empties uploads/cache (Twig's compiled templates) as rm -rf uploads/cache/* did, and gives it to
+# www-data with mode 755, without following a link: uploads/ holds the school's files, so when it isn't a real folder
+# the cache is left alone, with a warning; a link or a file at uploads/cache is removed, not followed, and the folder
+# made again. The rest runs from inside the folder: rm on plain names, chown -hR, and chmod -R as www-data once
+# everything there is www-data's, so a link swapped in can only lead chmod to www-data's own files.
+clear_uploads_cache() {
+  local uploads="$GIBBON_INSTALL_PATH/uploads" cache="$GIBBON_INSTALL_PATH/uploads/cache"
+  if ! in_folder "$uploads" true; then
+    echo "⚠ Warning: $uploads is a link or not a folder, so its cache was not cleared"
+    return 0
+  fi
+  if [[ -L "$cache" || ( -e "$cache" && ! -d "$cache" ) ]]; then
+    echo "⚠ Warning: $cache is a link or not a folder, so it is removed without being followed"
+    if ! remove_entry "$cache"; then
+      echo "✗ Error: can't remove $cache" >&2
+      exit 1
+    fi
+  fi
+  if ! { make_folder "$cache" && in_folder "$cache" _clear_uploads_cache_here; }; then
+    echo "✗ Error: can't clear $cache" >&2
+    exit 1
+  fi
+}
+_clear_uploads_cache_here() {
+  rm -rf -- ./* && chown -hR www-data:www-data . && env -u CLOUVE_OPS_PASSWORD runuser -u www-data -- chmod -R 755 .
+}
+
+# marker_present FILE: FILE is a regular file and not a link. Something else there (a link, a folder) doesn't count,
+# and a warning names it.
+marker_present() {
+  plain_file "$1" && return 0
+  if [[ -e "$1" || -L "$1" ]]; then
+    echo "⚠ Warning: $1 is a link or not a regular file, so it is ignored"
+  fi
+  return 1
+}
+
 echo "TIMESTAMP=$TIMESTAMP"
 echo "GIBBON_VERSION=$GIBBON_VERSION"
 
@@ -23,18 +93,29 @@ while ! mysqladmin ping -h"$DB_HOST" --skip-ssl --silent; do
 done
 echo "Mysql server $DB_HOST DB is up!"
 
+state_folders
+# What a start cut off between making a new file and renaming it left (safe_write's and update-config.sh's).
+clear_temp_files "$INSTALLED_VERSIONS_PATH" "$GIBBON_VERSION" .moodle-integration-setup
+clear_temp_files "$GIBBON_INSTALL_PATH" config.php
+
 if [[ ! -d "$INSTALLED_VERSIONS_PATH" ]]; then
   echo "##################################################################"
   echo "INITIALIZING Gibbon $GIBBON_VERSION"
 
   echo "Creating $INSTALLED_VERSIONS_PATH directory ..."
-  mkdir -p "$INSTALLED_VERSIONS_PATH"
+  if ! { make_folder "$GIBBON_INSTALL_PATH/clouve" && make_folder "$INSTALLED_VERSIONS_PATH"; }; then
+    echo "✗ Error: can't make $INSTALLED_VERSIONS_PATH" >&2
+    exit 1
+  fi
 
   "$GIBBON_PACKAGE_INSTALLER"/install.sh
+  # The installer ran the site's PHP as www-data: nothing of it may still run while root goes on, and a folder it may
+  # have swapped for a link is put right again.
+  reap_www_data "the installer" || exit 1
+  state_folders
 
   echo "Marking installed version $GIBBON_VERSION ..."
-  touch "$INSTALLED_VERSIONS_PATH/$GIBBON_VERSION"
-  echo "$TIMESTAMP" > "$INSTALLED_VERSIONS_PATH/$GIBBON_VERSION"
+  safe_write "$INSTALLED_VERSIONS_PATH/$GIBBON_VERSION" "$TIMESTAMP"
 
   echo "##################################################################"
 
@@ -56,14 +137,15 @@ if [[ ! -d "$INSTALLED_VERSIONS_PATH" ]]; then
       echo "ℹ ENABLE_MOODLE_INTEGRATION is not set to 'true', skipping integration setup"
     else
       # Check if integration was already completed
-      if [[ -f "$INSTALLED_VERSIONS_PATH/.moodle-integration-setup" ]]; then
+      if marker_present "$INSTALLED_VERSIONS_PATH/.moodle-integration-setup"; then
         echo "ℹ Moodle integration already configured (marker file exists), skipping"
       else
         echo "Creating Moodle integration views..."
 
-        # Concatenate all SQL parts in order
+        # Concatenate all SQL parts in order, in a new file of root's that only root can read, with a name no one
+        # can know before.
         echo "Collecting SQL parts..."
-        > /tmp/gibbon-integration.sql  # Create empty file
+        integration_sql="$(mktemp)"
 
         part_num=1
         while true; do
@@ -75,8 +157,8 @@ if [[ ! -d "$INSTALLED_VERSIONS_PATH" ]]; then
           fi
 
           echo "  Found part $part_num"
-          echo "$var_value" >> /tmp/gibbon-integration.sql
-          echo "" >> /tmp/gibbon-integration.sql  # Add newline between parts
+          echo "$var_value" >> "$integration_sql"
+          echo "" >> "$integration_sql"  # Add newline between parts
           part_num=$((part_num + 1))
         done
 
@@ -84,7 +166,7 @@ if [[ ! -d "$INSTALLED_VERSIONS_PATH" ]]; then
 
         # Execute SQL to create views
         echo "Executing SQL to create integration views..."
-        if MYSQL_PWD="$DB_PASSWORD" mysql --skip-ssl -h "$DB_HOST" -u "$DB_USER" "$DB_NAME" < /tmp/gibbon-integration.sql 2>&1; then
+        if MYSQL_PWD="$DB_PASSWORD" mysql --skip-ssl -h "$DB_HOST" -u "$DB_USER" "$DB_NAME" < "$integration_sql" 2>&1; then
           echo "✓ Integration views created successfully"
 
           # Verify views were created
@@ -109,18 +191,17 @@ if [[ ! -d "$INSTALLED_VERSIONS_PATH" ]]; then
           fi
 
           # Mark integration as completed
-          touch "$INSTALLED_VERSIONS_PATH/.moodle-integration-setup"
-          echo "$TIMESTAMP" > "$INSTALLED_VERSIONS_PATH/.moodle-integration-setup"
+          safe_write "$INSTALLED_VERSIONS_PATH/.moodle-integration-setup" "$TIMESTAMP"
 
           echo "✓ Gibbon-to-Moodle integration setup completed successfully!"
         else
           echo "✗ Error: Failed to create integration views"
-          rm -f /tmp/gibbon-integration.sql
+          rm -f "$integration_sql"
           echo "  Continuing with startup..."
         fi
 
         # Cleanup
-        rm -f /tmp/gibbon-integration.sql
+        rm -f "$integration_sql"
       fi
     fi
 
@@ -128,15 +209,16 @@ if [[ ! -d "$INSTALLED_VERSIONS_PATH" ]]; then
   fi
 fi
 
-if [[ ! -f "$INSTALLED_VERSIONS_PATH/$GIBBON_VERSION" && -d "$GIBBON_PACKAGE_PATH" ]]; then
+if ! marker_present "$INSTALLED_VERSIONS_PATH/$GIBBON_VERSION" && [[ -d "$GIBBON_PACKAGE_PATH" ]]; then
   echo "##################################################################"
   echo "UPGRADING Gibbon to $GIBBON_VERSION"
 
   "$GIBBON_PACKAGE_INSTALLER"/upgrade.sh
+  reap_www_data "the upgrade's copy" || exit 1
+  state_folders
 
   echo "Marking installed version $GIBBON_VERSION ..."
-  touch "$INSTALLED_VERSIONS_PATH/$GIBBON_VERSION"
-  echo "$TIMESTAMP" > "$INSTALLED_VERSIONS_PATH/$GIBBON_VERSION"
+  safe_write "$INSTALLED_VERSIONS_PATH/$GIBBON_VERSION" "$TIMESTAMP"
 
   echo "##################################################################"
 fi
@@ -145,9 +227,8 @@ fi
 "$GIBBON_PACKAGE_INSTALLER"/refresh-vendor.sh gibbon "$GIBBON_PACKAGE_PATH" "$GIBBON_INSTALL_PATH" "$INSTALLED_VERSIONS_PATH"
 
 echo "Clearing uploads cache ..."
-rm -rf /var/www/html/uploads/cache/*
-chown -R www-data:www-data /var/www/html/uploads/cache
-chmod -R 755 /var/www/html/uploads/cache
+clear_uploads_cache
+reap_www_data "the cache cleanup" || exit 1
 
 # ============================================================================
 # UPDATE CONFIGURATION ON EVERY STARTUP
@@ -161,7 +242,10 @@ echo "##################################################################"
 echo "UPDATING CONFIGURATION FROM ENVIRONMENT VARIABLES"
 echo "##################################################################"
 
-"$GIBBON_PACKAGE_INSTALLER"/update-config.sh
+# Without CLOUVE_OPS_PASSWORD: update-config.sh doesn't need it, so nothing it runs can show it. It can run chmod as
+# config.php's owner (www-data), so what that left is ended too.
+env -u CLOUVE_OPS_PASSWORD "$GIBBON_PACKAGE_INSTALLER"/update-config.sh
+reap_www_data "update-config.sh" || exit 1
 
 echo "##################################################################"
 echo ""

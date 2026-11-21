@@ -31,6 +31,20 @@ DOMAIN_MARKER="$OWNCLOUD_DATA_DIR/.owncloud_domain"
 # Set error handling
 set -e
 
+# Root's reads and writes on the data volume, which belongs to www-data: safe_read and safe_write never follow a link
+# there, and never wait on a pipe (tests/owncloud-domain-marker.test.sh).
+# shellcheck source-path=SCRIPTDIR source=root-paths.sh
+. /clouve/app/installer/root-paths.sh
+# reap_www_data: ends every process of www-data's that occ left running (www-data.sh).
+# shellcheck source-path=SCRIPTDIR source=www-data.sh
+. /clouve/app/installer/www-data.sh
+
+# looks_like_host TEXT: TEXT is a host name, with a port or without (letters, digits, dots and hyphens, then :port).
+# The marker's old domain goes to the log only then: the volume is www-data's, so the marker may hold anything.
+looks_like_host() {
+    [[ ${#1} -le 259 && "$1" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(:[0-9]{1,5})?$ ]]
+}
+
 echo -e "${YELLOW}[INFO]${NC} Starting ownCloud initialization..."
 
 # ============================================================================
@@ -83,11 +97,20 @@ fi
 if [ "$OWNCLOUD_INSTALLED" = true ] && [ -n "$OWNCLOUD_DOMAIN" ]; then
     echo -e "${YELLOW}[INFO]${NC} Checking if OWNCLOUD_DOMAIN has changed..."
 
-    # Read the previously stored domain from the marker file
+    # Read the previously stored domain from the marker file: only a regular file, never through a link, at most 300
+    # bytes, and only a host name counts. Anything else there is named in the log, and its contents never are.
     PREVIOUS_DOMAIN=""
-    if [ -f "$DOMAIN_MARKER" ]; then
-        PREVIOUS_DOMAIN=$(cat "$DOMAIN_MARKER" 2>/dev/null || echo "")
-        echo -e "${YELLOW}[INFO]${NC} Previous domain from marker: $PREVIOUS_DOMAIN"
+    if [ -e "$DOMAIN_MARKER" ] || [ -L "$DOMAIN_MARKER" ]; then
+        if MARKER_TEXT="$(safe_read "$DOMAIN_MARKER" 300)"; then
+            if [ "$MARKER_TEXT" = "$OWNCLOUD_DOMAIN" ] || looks_like_host "$MARKER_TEXT"; then
+                PREVIOUS_DOMAIN="$MARKER_TEXT"
+                echo -e "${YELLOW}[INFO]${NC} Previous domain from marker: $PREVIOUS_DOMAIN"
+            else
+                echo -e "${YELLOW}[WARNING]${NC} $DOMAIN_MARKER doesn't hold a host name, so it is ignored"
+            fi
+        else
+            echo -e "${YELLOW}[WARNING]${NC} $DOMAIN_MARKER is a link or not a regular file, so it is ignored"
+        fi
     else
         echo -e "${YELLOW}[INFO]${NC} No domain marker file found (first run after initialization)"
     fi
@@ -107,7 +130,7 @@ if [ "$OWNCLOUD_INSTALLED" = true ] && [ -n "$OWNCLOUD_DOMAIN" ]; then
             # Set the overwrite.cli.url to the new domain
             # This is the URL that ownCloud will use for CLI operations and redirects
             echo -e "${YELLOW}[INFO]${NC} Updating overwrite.cli.url..."
-            /usr/bin/occ config:system:set overwrite.cli.url --value="http://$OWNCLOUD_DOMAIN" 2>&1 || true
+            env -u CLOUVE_OPS_PASSWORD /usr/bin/occ config:system:set overwrite.cli.url --value="http://$OWNCLOUD_DOMAIN" 2>&1 || true
 
             # Update trusted domains
             # First, get the current trusted domains and check if we need to add the new one
@@ -117,10 +140,13 @@ if [ "$OWNCLOUD_INSTALLED" = true ] && [ -n "$OWNCLOUD_DOMAIN" ]; then
             NEW_DOMAIN_HOST=$(echo "$OWNCLOUD_DOMAIN" | cut -d':' -f1)
 
             # Set trusted domain at index 0 (the primary domain)
-            /usr/bin/occ config:system:set trusted_domains 0 --value="$NEW_DOMAIN_HOST" 2>&1 || true
+            env -u CLOUVE_OPS_PASSWORD /usr/bin/occ config:system:set trusted_domains 0 --value="$NEW_DOMAIN_HOST" 2>&1 || true
 
             # Also set the full domain with port at index 1
-            /usr/bin/occ config:system:set trusted_domains 1 --value="$OWNCLOUD_DOMAIN" 2>&1 || true
+            env -u CLOUVE_OPS_PASSWORD /usr/bin/occ config:system:set trusted_domains 1 --value="$OWNCLOUD_DOMAIN" 2>&1 || true
+            # occ ran the apps' code as www-data: nothing of it may still run when root goes on with the volume, and a
+            # reap that can't make sure stops the start.
+            reap_www_data "the domain update" || exit 1
 
             echo -e "${GREEN}[SUCCESS]${NC} ownCloud domain updated successfully!"
         else
@@ -130,8 +156,10 @@ if [ "$OWNCLOUD_INSTALLED" = true ] && [ -n "$OWNCLOUD_DOMAIN" ]; then
         echo -e "${GREEN}[INFO]${NC} OWNCLOUD_DOMAIN unchanged: $OWNCLOUD_DOMAIN"
     fi
 
-    # Always update the domain marker file with the current domain
-    echo "$OWNCLOUD_DOMAIN" > "$DOMAIN_MARKER"
+    # Always update the domain marker file with the current domain: into a new file that replaces whatever is there,
+    # a link included, without following it (safe_write). First, what a start cut off before the rename left.
+    clear_temp_files "$OWNCLOUD_DATA_DIR" .owncloud_domain
+    safe_write "$DOMAIN_MARKER" "$OWNCLOUD_DOMAIN"
     echo -e "${YELLOW}[INFO]${NC} Updated domain marker file"
 else
     echo -e "${YELLOW}[INFO]${NC} Skipping domain update check (first-time installation or OWNCLOUD_DOMAIN not set)"
